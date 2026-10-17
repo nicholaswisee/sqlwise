@@ -1,0 +1,24 @@
+package views
+
+templ Layout(title string, assets Assets) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<title>{ title }</title>
+			if assets.Dev {
+				<script type="module" src="http://localhost:5173/@vite/client"></script>
+				<script type="module" src="http://localhost:5173/web/src/main.ts"></script>
+			} else {
+				for _, css := range assets.CSS {
+					<link rel="stylesheet" href={ css }/>
+				}
+				<script type="module" src={ assets.JS }></script>
+			}
+		</head>
+		<body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+			{ children... }
+		</body>
+	</html>
+}
