@@ -1,0 +1,25 @@
+{
+  "name": "wiseql",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "go:generate": "go tool templ generate",
+    "go:test": "go test ./...",
+    "go:build": "go build -o bin/wiseql ./cmd/server",
+    "build:all": "vp run go:generate && vp build && vp run go:build",
+    "ci": "vp check && vp run go:generate && vp run go:test && vp build"
+  },
+  "dependencies": {
+    "alpinejs": "^3.17.4",
+    "htmx.org": "^2.0.11"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/alpinejs": "^3.17.0",
+    "@types/node": "^26.6.5",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite-plus": "^1.3.0"
+  }
+}
