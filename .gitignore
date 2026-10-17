@@ -1,0 +1,14 @@
+node_modules/
+web/dist/
+coverage/
+bin/
+tmp/
+*.test
+coverage.out
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+.DS_Store
+*.log

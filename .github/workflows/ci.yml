@@ -1,0 +1,47 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@v1.21.2
+        with:
+          node-version: "lts"
+          cache: true
+          run-install: true
+
+      - name: Check frontend
+        run: vp check
+
+      - name: Generate templ
+        run: go tool templ generate
+
+      - name: Go format check
+        run: |
+          files=$(gofmt -l $(find cmd internal -name '*.go'))
+          if [ -n "$files" ]; then echo "$files"; exit 1; fi
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go test
+        run: go test -race ./...
+
+      - name: Build assets
+        run: vp build
+
+      - name: Build Go server
+        run: go build -o bin/wiseql ./cmd/server
