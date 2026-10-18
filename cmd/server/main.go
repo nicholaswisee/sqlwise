@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/a-h/templ"
 	"github.com/gin-gonic/gin"
@@ -25,7 +26,14 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	if err := router.Run(":" + port); err != nil {
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("start WiseQL server: %v", err)
 	}
 }
@@ -44,9 +52,6 @@ func newRouter(assets views.Assets) *gin.Engine {
 	router.GET("/", func(c *gin.Context) {
 		render(c, views.Home(assets))
 	})
-	router.GET("/fragments/status", func(c *gin.Context) {
-		render(c, views.ServerStatus())
-	})
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"service": "wiseql", "status": "ok"})
 	})
@@ -56,7 +61,8 @@ func newRouter(assets views.Assets) *gin.Engine {
 func render(c *gin.Context, component templ.Component) {
 	var body bytes.Buffer
 	if err := component.Render(c.Request.Context(), &body); err != nil {
-		c.String(http.StatusInternalServerError, "render page: %v", err)
+		log.Printf("render page: %v", err)
+		c.String(http.StatusInternalServerError, "internal server error")
 		return
 	}
 	c.Data(http.StatusOK, "text/html; charset=utf-8", body.Bytes())

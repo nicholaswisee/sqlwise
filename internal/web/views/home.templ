@@ -2,36 +2,20 @@ package views
 
 templ Home(assets Assets) {
 	@Layout("WiseQL", assets) {
-		<main class="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-12 sm:px-10 sm:py-20">
+		<div class="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-12 sm:px-10 sm:py-20">
 			<header class="flex items-center justify-between border-b border-slate-800 pb-6">
 				<a href="/" class="text-sm font-semibold tracking-[0.18em] text-cyan-300">WISEQL</a>
-				<span class="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400">Milestone 1 foundation</span>
+				<span class="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400">IF3110 Milestone 1</span>
 			</header>
-			<section class="grid flex-1 content-center gap-10 py-16 md:grid-cols-[1.1fr_0.9fr] md:items-center">
-				<div class="space-y-6">
+			<main class="flex flex-1 items-center py-20">
+				<div class="max-w-2xl space-y-6">
 					<p class="text-xs font-medium uppercase tracking-[0.24em] text-cyan-300">PostgreSQL workspace</p>
-					<div class="space-y-3">
-						<h1 class="text-5xl font-semibold tracking-tight sm:text-6xl">WiseQL</h1>
-						<p class="max-w-xl text-lg leading-8 text-slate-400">PostgreSQL Management Platform</p>
-					</div>
-					<p class="max-w-xl leading-7 text-slate-400">A server-rendered foundation for inspecting databases and managing SQL changes with care.</p>
+					<h1 class="text-5xl font-semibold tracking-tight sm:text-6xl">WiseQL</h1>
+					<p class="text-xl leading-8 text-slate-200">PostgreSQL Management Platform</p>
+					<p class="max-w-xl leading-7 text-slate-400">A starting point for managed access, database exploration, and controlled schema changes.</p>
 				</div>
-				<div class="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-2xl shadow-black/20">
-					<div>
-						<p class="text-sm font-medium text-slate-100">Server fragment</p>
-						<p class="mt-1 text-sm text-slate-400">Load a small HTML response from Go.</p>
-					</div>
-					<button class="rounded-lg bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300" hx-get="/fragments/status" hx-target="#status" hx-swap="innerHTML">Check server status</button>
-					<div id="status" class="min-h-6 text-sm text-slate-400">Status has not been checked yet.</div>
-				</div>
-			</section>
-			<section class="max-w-2xl border-t border-slate-800 py-8" x-data="{ open: false }">
-				<button class="flex w-full items-center justify-between py-2 text-left text-sm font-medium" type="button" x-on:click="open = !open" x-bind:aria-expanded="open.toString()">
-					<span>About this foundation</span>
-					<span class="text-cyan-300" x-text="open ? '−' : '+'"></span>
-				</button>
-				<p class="max-w-xl pb-2 text-sm leading-6 text-slate-400" x-cloak x-show="open">Pages and fragments are rendered by Go with templ. HTMX requests targeted HTML updates, while Alpine keeps this disclosure state in the browser.</p>
-			</section>
-		</main>
+			</main>
+			<footer class="border-t border-slate-800 pt-6 text-sm text-slate-500">IF3110 Web Application Development</footer>
+		</div>
 	}
 }

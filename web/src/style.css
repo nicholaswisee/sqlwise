@@ -1,6 +1,2 @@
 @import "tailwindcss";
 @source "../../internal/web/views";
-
-[x-cloak] {
-  display: none !important;
-}

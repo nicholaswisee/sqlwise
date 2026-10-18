@@ -41,28 +41,14 @@ func TestHome(t *testing.T) {
 	if contentType := response.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
 		t.Fatalf("Content-Type = %q, want text/html", contentType)
 	}
-	for _, expected := range []string{"<!doctype html>", "WiseQL", `hx-get="/fragments/status"`, `hx-target="#status"`, `hx-swap="innerHTML"`} {
+	for _, expected := range []string{"<!doctype html>", "WiseQL", "PostgreSQL Management Platform", "IF3110"} {
 		if !strings.Contains(response.Body.String(), expected) {
 			t.Errorf("home response does not contain %q", expected)
 		}
 	}
-}
-
-func TestStatusFragment(t *testing.T) {
-	router := newRouter(views.Assets{Dev: true})
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/fragments/status", nil))
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
-	}
-	body := response.Body.String()
-	if !strings.Contains(body, "WiseQL server is responding.") {
-		t.Fatalf("fragment body = %q, missing status content", body)
-	}
-	for _, forbidden := range []string{"<!DOCTYPE html>", "<html", "<head", "<body"} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("fragment contains full document element %q", forbidden)
+	for _, unsupported := range []string{"hx-get=", "x-data=", "Check server status"} {
+		if strings.Contains(response.Body.String(), unsupported) {
+			t.Errorf("home response contains demo interaction %q", unsupported)
 		}
 	}
 }
