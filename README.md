@@ -1,46 +1,68 @@
 # WiseQL
 
-WiseQL is a PostgreSQL management platform foundation for IF3110 Web Application Development Milestone 1. It is deliberately **not an SPA**: Go and `templ` render full documents and HTMX fragments, while Vite+ builds browser assets and Alpine handles local presentation state.
+WiseQL is the starting point for an IF3110 PostgreSQL management platform. Go and `templ` render application pages on the server. Vite+ builds the Tailwind CSS and browser assets.
 
-## Prerequisites
+## Project structure
 
-- Go 1.24 or newer
-- Node.js LTS and Vite+ (`vp`)
-- Docker Compose for the local PostgreSQL environment
+```text
+.
+├── .github/workflows/ci.yml       # Generate, check, test, and build
+├── cmd/server/                    # Go HTTP entrypoint and route tests
+├── internal/web/views/            # templ layout, entry page, and asset loader
+├── web/src/                       # Vite entry and Tailwind stylesheet
+├── compose.yaml                   # Optional local PostgreSQL service
+├── .env.example                   # Development environment example
+├── go.mod, go.sum                  # Go module and dependencies
+├── package.json, pnpm-lock.yaml   # Frontend tooling and dependencies
+├── vite.config.ts, tsconfig.json  # Asset build and TypeScript configuration
+└── README.md
+```
+
+Generated `*_templ.go` files are committed alongside their `.templ` sources. `web/dist`, `bin`, `node_modules`, and `.env` are ignored by Git.
 
 ## Local development
 
+Install the Go version specified in `go.mod`, Node.js LTS, and Vite+ (`vp`). From the repository root, run the asset server:
+
 ```sh
-cp .env.example .env
 vp install
-go tool templ generate
-docker compose up -d
 vp dev
 ```
 
-In another terminal, load the example variables and start Go with `set -a; . ./.env; set +a; go run ./cmd/server`. The Go server does not load `.env` files itself. Open the application at <http://localhost:8080/>. Vite+ serves assets and HMR on port 5173. PostgreSQL is bound to `127.0.0.1:5433`; Compose creates `wiseql_platform` for future platform metadata. The demonstration target database, `wiseql_demo`, can be created with:
-
-```sh
-docker compose exec -T postgres psql -U wiseql -d wiseql_platform -c 'CREATE DATABASE wiseql_demo;'
-```
-
-The committed `.env.example` contains development-only values. Copy it to `.env` for local overrides; `.env` is ignored by Git. The bootstrap server does not yet open a PostgreSQL connection.
-
-## Build and verify
+In another terminal, generate the templates and start Go:
 
 ```sh
 go tool templ generate
-vp check
+go run ./cmd/server
+```
+
+Open <http://localhost:8080/>. Vite+ runs on port 5173 for assets and HMR; Go serves the application page on port 8080. The entry page does not require a database connection.
+
+PostgreSQL is available for future development at `127.0.0.1:5433` with the development-only values in `.env.example`:
+
+```sh
+docker compose up -d postgres
+```
+
+The server reads environment variables directly; it does not load `.env` files. Copy `.env.example` to `.env` and source it in your shell when you need custom local values.
+
+## Checks and production build
+
+```sh
+go tool templ generate
 go test ./...
 go vet ./...
+vp check
 vp build
 go build -o bin/wiseql ./cmd/server
 ```
 
-For an end-to-end local build, run `vp run build:all`. Set `APP_ENV=production` to load `web/dist/.vite/manifest.json` and serve the compiled assets. Deploy `web/dist` alongside the Go binary; assets are not embedded in the binary. CI regenerates templ sources, checks Go formatting, vets and tests Go code, then builds both asset and server outputs.
+Set `APP_ENV=production` when running the binary with `web/dist` present in the working directory. The static assets are deployed alongside the Go binary. CI runs the generation, checks, tests, and builds.
 
-## Scope
+## Members
 
-This is infrastructure and interaction scaffolding only. Authentication and sessions, backend-enforced group and database permissions, connection management, schema inspection, transactional versioned migrations, history, and PostgreSQL integration tests remain future work. Alpine state and HTMX requests must never be used as authorization decisions.
-
-Planned modules are `internal/auth`, `internal/access`, `internal/database`, and `internal/migration`.
+| Student ID | Name                           |
+| ---------- | ------------------------------ |
+| 13524034   | Jason Edward Salim             |
+| 13524037   | Nicholas Wise Saragih Sumbayak |
+| 13524106   | Michael James Liman            |
