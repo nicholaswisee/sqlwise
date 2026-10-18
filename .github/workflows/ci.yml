@@ -29,6 +29,13 @@ jobs:
       - name: Generate templ
         run: go tool templ generate
 
+      - name: Check generated templ files
+        run: |
+          if [ -n "$(git status --porcelain -- internal/web/views)" ]; then
+            git status --short -- internal/web/views
+            exit 1
+          fi
+
       - name: Go format check
         run: |
           files=$(gofmt -l $(find cmd internal -name '*.go'))
