@@ -1,6 +1,6 @@
-# WiseQL
+# wisedbv: sql database viewer client
 
-WiseQL is the starting point for an IF3110 PostgreSQL management platform. Go and `templ` render application pages on the server. Vite+ builds the Tailwind CSS and browser assets.
+wisedbv is the starting point for an IF3110 PostgreSQL management platform. Go and `templ` render application pages on the server. Vite+ builds the Tailwind CSS and browser assets.
 
 ## Project structure
 
