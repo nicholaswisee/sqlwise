@@ -11,7 +11,7 @@ import (
 )
 
 func TestHealth(t *testing.T) {
-	router := newRouter(views.Assets{Dev: true})
+	router := newRouter(views.Assets{Dev: true}, nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
 
@@ -31,7 +31,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestHome(t *testing.T) {
-	router := newRouter(views.Assets{Dev: true})
+	router := newRouter(views.Assets{Dev: true}, nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 
