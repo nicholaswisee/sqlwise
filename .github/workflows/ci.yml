@@ -6,6 +6,20 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: sqlwise_test
+          POSTGRES_PASSWORD: sqlwise_ci_only
+          POSTGRES_DB: sqlwise_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sqlwise_test -d sqlwise_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,10 +59,15 @@ jobs:
         run: go vet ./...
 
       - name: Go test
-        run: go test -race ./...
+        env:
+          TEST_DATABASE_URL: postgres://sqlwise_test:sqlwise_ci_only@localhost:5432/sqlwise_test?sslmode=disable
+        run: go test -race -shuffle=on -count=1 ./...
 
       - name: Build assets
         run: vp build
 
       - name: Build Go server
         run: go build -o bin/sqlwise ./cmd/server
+
+      - name: Build administrator setup
+        run: go build -o bin/sqlwise-admin ./cmd/admin
