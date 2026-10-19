@@ -3,15 +3,15 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: wiseql
-      POSTGRES_PASSWORD: wiseql_dev_only
-      POSTGRES_DB: wiseql_platform
+      POSTGRES_USER: sqlwise
+      POSTGRES_PASSWORD: sqlwise_dev_only
+      POSTGRES_DB: sqlwise_platform
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wiseql -d wiseql_platform"]
+      test: ["CMD-SHELL", "pg_isready -U sqlwise -d sqlwise_platform"]
       interval: 5s
       timeout: 5s
       retries: 5

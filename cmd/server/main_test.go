@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"wiseql/internal/web/views"
+	"sqlwise/internal/web/views"
 )
 
 func TestHealth(t *testing.T) {
@@ -25,8 +25,8 @@ func TestHealth(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode health response: %v", err)
 	}
-	if body.Service != "wiseql" || body.Status != "ok" {
-		t.Fatalf("health body = %+v, want service=wiseql status=ok", body)
+	if body.Service != "sqlwise" || body.Status != "ok" {
+		t.Fatalf("health body = %+v, want service=sqlwise status=ok", body)
 	}
 }
 
@@ -41,7 +41,7 @@ func TestHome(t *testing.T) {
 	if contentType := response.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
 		t.Fatalf("Content-Type = %q, want text/html", contentType)
 	}
-	for _, expected := range []string{"<!doctype html>", "WiseQL", "PostgreSQL Management Platform", "IF3110"} {
+	for _, expected := range []string{"<!doctype html>", "sqlwise", "PostgreSQL Management Platform", "IF3110"} {
 		if !strings.Contains(response.Body.String(), expected) {
 			t.Errorf("home response does not contain %q", expected)
 		}

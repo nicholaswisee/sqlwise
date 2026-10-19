@@ -9,7 +9,7 @@ import (
 
 	"github.com/a-h/templ"
 	"github.com/gin-gonic/gin"
-	"wiseql/internal/web/views"
+	"sqlwise/internal/web/views"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("start WiseQL server: %v", err)
+		log.Fatalf("start sqlwise server: %v", err)
 	}
 }
 
@@ -53,7 +53,7 @@ func newRouter(assets views.Assets) *gin.Engine {
 		render(c, views.Home(assets))
 	})
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"service": "wiseql", "status": "ok"})
+		c.JSON(http.StatusOK, gin.H{"service": "sqlwise", "status": "ok"})
 	})
 	return router
 }

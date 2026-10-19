@@ -51,4 +51,4 @@ jobs:
         run: vp build
 
       - name: Build Go server
-        run: go build -o bin/wiseql ./cmd/server
+        run: go build -o bin/sqlwise ./cmd/server
