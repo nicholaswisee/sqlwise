@@ -34,7 +34,8 @@ func (h *Auth) Register(router *gin.Engine) {
 }
 
 func (h *Auth) loginPage(c *gin.Context) {
-	if _, err := h.service.Session(c.Request.Context(), cookieValue(c, sessionCookie)); err == nil {
+	if session, err := h.service.Session(c.Request.Context(), cookieValue(c, sessionCookie)); err == nil {
+		h.setReplacement(c, session.Replacement)
 		c.Redirect(http.StatusSeeOther, "/account")
 		return
 	} else if !errors.Is(err, auth.ErrSession) {
@@ -88,7 +89,15 @@ func (h *Auth) account(c *gin.Context) {
 		h.failure(c, err)
 		return
 	}
+	h.setReplacement(c, session.Replacement)
 	Render(c, http.StatusOK, views.Account(h.assets, session.Principal.Username, session.CSRFToken))
+}
+
+func (h *Auth) setReplacement(c *gin.Context, replacement *auth.IssuedSession) {
+	if replacement == nil {
+		return
+	}
+	h.setCookie(c, &http.Cookie{Name: sessionCookie, Value: replacement.Token, Expires: replacement.ExpiresAt})
 }
 
 func (h *Auth) logout(c *gin.Context) {

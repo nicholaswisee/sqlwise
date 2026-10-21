@@ -2,8 +2,10 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -12,14 +14,25 @@ type Service struct {
 	now           func() time.Time
 	dummyHash     string
 	passwordSlots chan struct{}
+	random        io.Reader
 }
 
 func NewService(store *Store, now func() time.Time) (*Service, error) {
+	return NewServiceWithRandom(store, now, rand.Reader)
+}
+
+func NewServiceWithRandom(store *Store, now func() time.Time, random io.Reader) (*Service, error) {
+	if random == nil {
+		random = rand.Reader
+	}
 	dummy, err := HashPassword("invalid-user timing placeholder")
 	if err != nil {
 		return nil, err
 	}
-	return &Service{store: store, now: now, dummyHash: dummy, passwordSlots: make(chan struct{}, 2)}, nil
+	if now == nil {
+		now = time.Now
+	}
+	return &Service{store: store, now: now, dummyHash: dummy, passwordSlots: make(chan struct{}, 2), random: random}, nil
 }
 
 func (s *Service) LoginChallenge(ctx context.Context, token string) (IssuedSession, error) {
@@ -30,7 +43,7 @@ func (s *Service) LoginChallenge(ctx context.Context, token string) (IssuedSessi
 	if !errors.Is(err, ErrSession) {
 		return IssuedSession{}, err
 	}
-	return s.store.createChallenge(ctx, s.now())
+	return s.store.createChallenge(ctx, s.now(), s.random)
 }
 
 func (s *Service) ValidateLoginCSRF(ctx context.Context, token, csrf string) error {
@@ -81,22 +94,15 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (IssuedSessio
 		return IssuedSession{}, ErrCredentials
 	}
 	return s.store.promote(ctx, promotion{user: user, challengeToken: request.ChallengeToken,
-		previousToken: request.PreviousSessionToken, now: s.now()})
+		previousToken: request.PreviousSessionToken, clock: s.now, random: s.random})
 }
 
 func (s *Service) Session(ctx context.Context, token string) (Session, error) {
-	return s.store.session(ctx, token, s.now())
+	return s.store.session(ctx, token, s.now, s.random)
 }
 
 func (s *Service) Logout(ctx context.Context, token, csrf string) error {
-	session, err := s.Session(ctx, token)
-	if err != nil {
-		return err
-	}
-	if !ValidCSRF(session.CSRFToken, csrf) {
-		return ErrCSRF
-	}
-	return s.store.revoke(ctx, token)
+	return s.store.logout(ctx, token, csrf, s.now)
 }
 
 func ValidCSRF(expected, actual string) bool {

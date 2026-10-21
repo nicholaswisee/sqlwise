@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 );
 
 ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS family_id text REFERENCES auth_session_families(id);
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS alias_until timestamptz;
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS authz_epoch bigint NOT NULL DEFAULT 0;
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS rotated_at timestamptz;
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS successor_hash bytea;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_sessions_successor_hash_fkey' AND connamespace = current_schema()::regnamespace) THEN
+        ALTER TABLE auth_sessions ADD CONSTRAINT auth_sessions_successor_hash_fkey
+            FOREIGN KEY (successor_hash) REFERENCES auth_sessions(token_hash) ON DELETE SET NULL
+            DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+END $$;
 
 INSERT INTO auth_session_families (id, user_id, created_at, last_seen_at, absolute_expires_at, csrf_token)
 SELECT encode(s.token_hash, 'hex'), s.user_id, s.created_at, s.last_seen_at, s.expires_at, s.csrf_token
@@ -45,3 +56,5 @@ WHERE s.user_id IS NOT NULL AND s.family_id IS NULL;
 CREATE INDEX IF NOT EXISTS auth_sessions_user_id_idx ON auth_sessions (user_id);
 CREATE INDEX IF NOT EXISTS auth_sessions_expires_at_idx ON auth_sessions (expires_at);
 CREATE INDEX IF NOT EXISTS auth_sessions_family_id_idx ON auth_sessions (family_id);
+CREATE UNIQUE INDEX IF NOT EXISTS auth_sessions_one_current_per_family_idx
+    ON auth_sessions (family_id) WHERE family_id IS NOT NULL AND rotated_at IS NULL;

@@ -203,8 +203,8 @@ func TestLogoutRevokesEveryFamilyToken(t *testing.T) {
 	}
 	siblingDigest, _ := digestToken(sibling.Token)
 	if _, err := pool.Exec(t.Context(), `INSERT INTO auth_sessions
-		(token_hash, user_id, family_id, csrf_token, created_at, last_seen_at, expires_at)
-		SELECT $1, user_id, id, csrf_token, now(), now(), absolute_expires_at
+		(token_hash, user_id, family_id, csrf_token, created_at, last_seen_at, expires_at, alias_until, rotated_at)
+		SELECT $1, user_id, id, csrf_token, now(), now(), absolute_expires_at, now() + interval '1 hour', now()
 		FROM auth_session_families WHERE id = $2`, siblingDigest, familyID); err != nil {
 		t.Fatal(err)
 	}
@@ -252,8 +252,8 @@ func TestLoginWithPreviousTokenRevokesPreviousFamily(t *testing.T) {
 	}
 	siblingDigest, _ := digestToken(sibling.Token)
 	if _, err := pool.Exec(t.Context(), `INSERT INTO auth_sessions
-		(token_hash, user_id, family_id, csrf_token, created_at, last_seen_at, expires_at)
-		SELECT $1, user_id, id, csrf_token, now(), now(), absolute_expires_at
+		(token_hash, user_id, family_id, csrf_token, created_at, last_seen_at, expires_at, alias_until, rotated_at)
+		SELECT $1, user_id, id, csrf_token, now(), now(), absolute_expires_at, now() + interval '1 hour', now()
 		FROM auth_session_families WHERE id = $2`, siblingDigest, familyID); err != nil {
 		t.Fatal(err)
 	}
