@@ -10,11 +10,8 @@ import (
 	"sqlwise/internal/web/views"
 )
 
-func (h *Auth) security(c *gin.Context) {
-	c.Header("Cache-Control", "no-store")
-	c.Header("Referrer-Policy", "no-referrer")
-	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("X-Frame-Options", "DENY")
+func (h *Auth) loginSecurity(c *gin.Context) {
+	h.securityHeaders(c)
 	if c.Request.URL.RawQuery != "" {
 		Render(c, http.StatusBadRequest, views.AuthError(h.assets, "Submit credentials using the sign-in form."))
 		c.Abort()
@@ -42,6 +39,25 @@ func (h *Auth) security(c *gin.Context) {
 	c.Next()
 }
 
+func (h *Auth) securityHeaders(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Referrer-Policy", "no-referrer")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("X-Frame-Options", "DENY")
+}
+
+func (h *Auth) rejectSession(c *gin.Context) {
+	if c.Request.Method == http.MethodGet && c.GetHeader("HX-Request") != "true" {
+		c.Redirect(http.StatusSeeOther, "/login")
+		c.Abort()
+		return
+	}
+	if c.GetHeader("HX-Request") == "true" {
+		c.Header("HX-Redirect", "/login")
+	}
+	c.AbortWithStatus(http.StatusUnauthorized)
+}
+
 func (h *Auth) failure(c *gin.Context, err error) {
 	status, message := http.StatusServiceUnavailable, "Sign-in is temporarily unavailable. Please try again."
 	switch {
@@ -52,7 +68,13 @@ func (h *Auth) failure(c *gin.Context, err error) {
 	case errors.Is(err, auth.ErrBusy):
 		c.Header("Retry-After", "1")
 	}
+	// Templ cannot render a cancelled request; preserve the safe failure status.
+	if c.Request.Context().Err() != nil {
+		c.AbortWithStatus(status)
+		return
+	}
 	Render(c, status, views.AuthError(h.assets, message))
+	c.Abort()
 }
 
 func (h *Auth) setCookie(c *gin.Context, cookie *http.Cookie) {

@@ -26,16 +26,16 @@ func NewAuth(service *auth.Service, assets views.Assets, secure bool) *Auth {
 }
 
 func (h *Auth) Register(router *gin.Engine) {
-	group := router.Group("", h.security)
-	group.GET("/login", h.loginPage)
-	group.POST("/login", h.login)
-	group.GET("/account", h.account)
-	group.POST("/logout", h.logout)
+	login := router.Group("", h.loginSecurity)
+	login.GET("/login", h.loginPage)
+	login.POST("/login", h.login)
+	protected := router.Group("")
+	protected.GET("/account", h.RequireSession(), h.account)
+	protected.POST("/logout", h.requireSession(true), h.logout)
 }
 
 func (h *Auth) loginPage(c *gin.Context) {
-	if session, err := h.service.Session(c.Request.Context(), cookieValue(c, sessionCookie)); err == nil {
-		h.setReplacement(c, session.Replacement)
+	if _, err := h.service.ReadOnlySession(c.Request.Context(), cookieValue(c, sessionCookie)); err == nil {
 		c.Redirect(http.StatusSeeOther, "/account")
 		return
 	} else if !errors.Is(err, auth.ErrSession) {
@@ -80,16 +80,7 @@ func (h *Auth) login(c *gin.Context) {
 }
 
 func (h *Auth) account(c *gin.Context) {
-	session, err := h.service.Session(c.Request.Context(), cookieValue(c, sessionCookie))
-	if errors.Is(err, auth.ErrSession) {
-		c.Redirect(http.StatusSeeOther, "/login")
-		return
-	}
-	if err != nil {
-		h.failure(c, err)
-		return
-	}
-	h.setReplacement(c, session.Replacement)
+	session := c.MustGet("auth_session").(auth.Session)
 	Render(c, http.StatusOK, views.Account(h.assets, session.Principal.Username, session.CSRFToken))
 }
 

@@ -5,21 +5,33 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/net/html"
 	"sqlwise/internal/auth"
+	"sqlwise/internal/handlers"
 	"sqlwise/internal/testdb"
 	"sqlwise/internal/web/views"
 )
 
 type authFixture struct {
-	router http.Handler
+	router *gin.Engine
+	guard  *handlers.Auth
 	pool   *pgxpool.Pool
-	now    *time.Time
+	now    *authClock
 }
+
+type authClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *authClock) Now() time.Time          { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
+func (c *authClock) Advance(d time.Duration) { c.mu.Lock(); defer c.mu.Unlock(); c.now = c.now.Add(d) }
 
 func newAuthFixture(t *testing.T) authFixture {
 	t.Helper()
@@ -35,12 +47,14 @@ func newAuthFixture(t *testing.T) authFixture {
 	if err := store.BootstrapAdmin(t.Context(), credentials); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
-	service, err := auth.NewService(store, func() time.Time { return now })
+	now := &authClock{now: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)}
+	service, err := auth.NewService(store, now.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return authFixture{router: newRouter(views.Assets{Dev: true}, service), pool: pool, now: &now}
+	guard := handlers.NewAuth(service, views.Assets{Dev: true}, false)
+	router := newRouter(views.Assets{Dev: true}, service)
+	return authFixture{router: router, guard: guard, pool: pool, now: now}
 }
 
 type authRequest struct {

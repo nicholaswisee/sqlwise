@@ -1,11 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestLoginAndLogout(t *testing.T) {
@@ -101,7 +105,7 @@ func TestLoginRejectsCSRFAndCrossOriginRequests(t *testing.T) {
 			case "fetch-site":
 				input.headers = map[string]string{"Sec-Fetch-Site": "cross-site"}
 			case "expired":
-				*f.now = f.now.Add(10 * time.Minute)
+				f.now.Advance(10 * time.Minute)
 			case "query":
 				input.path += "?password=must-not-be-accepted"
 				want = 400
@@ -142,5 +146,95 @@ func TestAccountAndLogoutRequireSessionAndCSRF(t *testing.T) {
 	}
 	if f.do(authRequest{method: "GET", path: "/logout", cookies: []*http.Cookie{cookie}}).Code != 404 {
 		t.Fatal("GET logout route exposed")
+	}
+}
+
+func TestSessionGuardDistinguishesPageAndHTMXAndAllowsQueries(t *testing.T) {
+	f := newAuthFixture(t)
+	page := f.do(authRequest{method: "GET", path: "/account?limit=20"})
+	if page.Code != http.StatusSeeOther || page.Header().Get("Location") != "/login" {
+		t.Fatalf("anonymous page: status=%d location=%q", page.Code, page.Header().Get("Location"))
+	}
+	fragment := f.do(authRequest{method: "GET", path: "/account?limit=20", headers: map[string]string{"HX-Request": "true"}})
+	if fragment.Code != http.StatusUnauthorized || fragment.Header().Get("HX-Redirect") != "/login" {
+		t.Fatalf("anonymous fragment: status=%d HX-Redirect=%q", fragment.Code, fragment.Header().Get("HX-Redirect"))
+	}
+	login := f.do(f.loginRequest(t))
+	cookie := responseCookie(t, login, "sqlwise_session")
+	account := f.do(authRequest{method: "GET", path: "/account?limit=20", cookies: []*http.Cookie{cookie}})
+	if account.Code != http.StatusOK {
+		t.Fatalf("query rejected for protected session: %d", account.Code)
+	}
+}
+
+func TestSessionGuardCSRFAndOriginAcrossUnsafeMethods(t *testing.T) {
+	f := newAuthFixture(t)
+	effects := 0
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		f.router.Handle(method, "/guard-test", f.guard.RequireSession(), func(c *gin.Context) { effects++; c.Status(http.StatusNoContent) })
+	}
+	login := f.do(f.loginRequest(t))
+	cookie := responseCookie(t, login, "sqlwise_session")
+	account := f.do(authRequest{method: http.MethodGet, path: "/account", cookies: []*http.Cookie{cookie}})
+	csrf := formCSRF(t, account)
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		for _, test := range []struct {
+			name    string
+			headers map[string]string
+			want    int
+		}{
+			{"valid", map[string]string{"X-CSRF-Token": csrf}, http.StatusNoContent},
+			{"missing", nil, http.StatusForbidden},
+			{"cross-origin", map[string]string{"X-CSRF-Token": csrf, "Origin": "https://attacker.example"}, http.StatusForbidden},
+		} {
+			t.Run(method+"/"+test.name, func(t *testing.T) {
+				before := effects
+				response := f.do(authRequest{method: method, path: "/guard-test", cookies: []*http.Cookie{cookie}, headers: test.headers})
+				wantEffects := before
+				if test.want == http.StatusNoContent {
+					wantEffects++
+				}
+				if effects != wantEffects {
+					t.Fatalf("effects=%d want %d", effects, wantEffects)
+				}
+				if response.Code != test.want {
+					t.Fatalf("status=%d, want %d", response.Code, test.want)
+				}
+			})
+		}
+	}
+}
+
+func TestLoginStatusProbeDoesNotTouchOrRotateSession(t *testing.T) {
+	f := newAuthFixture(t)
+	login := f.do(f.loginRequest(t))
+	cookie := responseCookie(t, login, "sqlwise_session")
+	raw, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(raw)
+	if _, err := f.pool.Exec(t.Context(), `UPDATE auth_sessions SET created_at=created_at-interval '16 minutes' WHERE token_hash=$1`, digest[:]); err != nil {
+		t.Fatal(err)
+	}
+	var before time.Time
+	if err := f.pool.QueryRow(t.Context(), `SELECT last_seen_at FROM auth_session_families WHERE id=(SELECT family_id FROM auth_sessions WHERE token_hash=$1)`, digest[:]).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	response := f.do(authRequest{method: http.MethodGet, path: "/login", cookies: []*http.Cookie{cookie}})
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/account" {
+		t.Fatalf("status probe=%d, location=%q", response.Code, response.Header().Get("Location"))
+	}
+	for _, setCookie := range response.Result().Cookies() {
+		if setCookie.Name == "sqlwise_session" {
+			t.Fatal("status probe rotated authenticated session")
+		}
+	}
+	var after time.Time
+	if err := f.pool.QueryRow(t.Context(), `SELECT last_seen_at FROM auth_session_families WHERE id=(SELECT family_id FROM auth_sessions WHERE token_hash=$1)`, digest[:]).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.Equal(before) {
+		t.Fatalf("status probe touched idle activity: before=%s after=%s", before, after)
 	}
 }
