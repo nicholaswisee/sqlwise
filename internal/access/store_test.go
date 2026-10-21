@@ -2,6 +2,7 @@ package access
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,12 @@ func TestApplySchemaEnforcesGroupAndGrantConstraints(t *testing.T) {
 	}
 	_, err = pool.Exec(t.Context(), `INSERT INTO groups (id, name) VALUES ('g2', 'Operators')`)
 	requireSQLState(t, err, "23505")
+	for _, name := range []string{"   ", strings.Repeat("a", 129)} {
+		_, err = pool.Exec(t.Context(), `INSERT INTO database_registrations (id, name) VALUES ('invalid-db', $1)`, name)
+		requireSQLState(t, err, "23514")
+		_, err = pool.Exec(t.Context(), `INSERT INTO groups (id, name) VALUES ('invalid-group', $1)`, name)
+		requireSQLState(t, err, "23514")
+	}
 
 	_, err = pool.Exec(t.Context(), `INSERT INTO group_memberships (user_id, group_id) VALUES ('u-missing', 'g1')`)
 	requireSQLState(t, err, "23503")
