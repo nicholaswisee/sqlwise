@@ -31,6 +31,7 @@ func (h *Auth) Register(router *gin.Engine) {
 	login.POST("/login", h.login)
 	protected := router.Group("")
 	protected.GET("/account", h.RequireSession(), h.account)
+	protected.GET("/account/session", h.RequireSession(), h.accountSession)
 	protected.POST("/logout", h.requireSession(true), h.logout)
 }
 
@@ -84,6 +85,14 @@ func (h *Auth) account(c *gin.Context) {
 	Render(c, http.StatusOK, views.Account(h.assets, session.Principal.Username, session.CSRFToken))
 }
 
+func (h *Auth) accountSession(c *gin.Context) {
+	if c.GetHeader("HX-Request") != "true" {
+		c.Redirect(http.StatusSeeOther, "/account")
+		return
+	}
+	Render(c, http.StatusOK, views.SessionStatus())
+}
+
 func (h *Auth) setReplacement(c *gin.Context, replacement *auth.IssuedSession) {
 	if replacement == nil {
 		return
@@ -97,5 +106,10 @@ func (h *Auth) logout(c *gin.Context) {
 		return
 	}
 	h.setCookie(c, &http.Cookie{Name: sessionCookie, MaxAge: -1, Expires: time.Unix(1, 0)})
+	if c.GetHeader("HX-Request") == "true" {
+		c.Header("HX-Redirect", "/login")
+		c.Status(http.StatusNoContent)
+		return
+	}
 	c.Redirect(http.StatusSeeOther, "/login")
 }

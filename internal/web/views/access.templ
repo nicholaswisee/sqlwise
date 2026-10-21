@@ -141,9 +141,6 @@ templ AccessAccount(assets Assets, data AccessAccountData) {
 				</ul>
 			}
 		</section>
-		<form method="post" action="/logout" class="mt-8">
-			<input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
-			<button type="submit" class="min-h-12 w-full rounded-lg bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-300 active:bg-cyan-500 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-300">Sign out</button>
-		</form>
+		@LogoutForm(data.CSRFToken)
 	}
 }
