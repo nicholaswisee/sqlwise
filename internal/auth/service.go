@@ -4,9 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"io"
 	"time"
+	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type Service struct {
@@ -107,6 +112,134 @@ func (s *Service) ReadOnlySession(ctx context.Context, token string) (Session, e
 
 func (s *Service) Logout(ctx context.Context, token, csrf string) error {
 	return s.store.logout(ctx, token, csrf, s.now)
+}
+
+// Now returns the service's injected clock value for coordinated mutations.
+func (s *Service) Now() time.Time { return s.now() }
+
+func (s *Service) adminTransaction(ctx context.Context, mutate func(tx pgx.Tx, now time.Time) error) error {
+	return pgx.BeginFunc(ctx, s.store.pool, func(tx pgx.Tx) error {
+		if err := LockAuthz(ctx, tx, true); err != nil {
+			return err
+		}
+		actor, err := s.ValidateContext(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if !actor.IsPlatformAdmin {
+			return ErrSession
+		}
+		return mutate(tx, s.now())
+	})
+}
+
+func (s *Service) CreateUser(ctx context.Context, credentials Credentials) (Principal, error) {
+	validated, err := ParseCredentials(credentials.username, credentials.password)
+	if err != nil || utf8.RuneCountInString(credentials.password) < 12 {
+		return Principal{}, ErrInvalidInput
+	}
+	actor, err := s.ValidateContextFresh(ctx)
+	if err != nil {
+		return Principal{}, err
+	}
+	if !actor.IsPlatformAdmin {
+		return Principal{}, ErrSession
+	}
+	select {
+	case s.passwordSlots <- struct{}{}:
+	default:
+		return Principal{}, ErrBusy
+	}
+	hash, err := HashPassword(validated.password)
+	<-s.passwordSlots
+	if err != nil {
+		return Principal{}, err
+	}
+	idBytes := make([]byte, 16)
+	randomMu.Lock()
+	_, err = io.ReadFull(s.random, idBytes)
+	randomMu.Unlock()
+	if err != nil {
+		return Principal{}, err
+	}
+	id := hex.EncodeToString(idBytes)
+	var principal Principal
+	err = s.adminTransaction(ctx, func(tx pgx.Tx, now time.Time) error {
+		_, err = tx.Exec(ctx, `INSERT INTO users(id,username,password_hash,active,created_at,updated_at) VALUES($1,$2,$3,true,$4,$4)`, id, validated.username, hash, now)
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_username_key" {
+				return ErrUsernameTaken
+			}
+			return err
+		}
+		principal = Principal{UserID: id, Username: validated.username}
+		return nil
+	})
+	if err != nil {
+		return Principal{}, err
+	}
+	return principal, nil
+}
+
+func (s *Service) SetUserActive(ctx context.Context, userID string, active bool) error {
+	return s.adminTransaction(ctx, func(tx pgx.Tx, now time.Time) error {
+		var previous bool
+		if err := tx.QueryRow(ctx, `SELECT active FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&previous); errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserNotFound
+		} else if err != nil {
+			return err
+		}
+		if previous == active {
+			return nil
+		}
+		if active {
+			_, err := tx.Exec(ctx, `UPDATE users SET active=true,authz_epoch=authz_epoch+1,updated_at=$2 WHERE id=$1`, userID, now)
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE users SET active=false,updated_at=$2 WHERE id=$1`, userID, now); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE auth_session_families SET revoked_at=$2 WHERE user_id=$1 AND revoked_at IS NULL`, userID, now)
+		return err
+	})
+}
+
+func (s *Service) SetPlatformAdmin(ctx context.Context, userID string, admin bool) error {
+	return s.adminTransaction(ctx, func(tx pgx.Tx, now time.Time) error {
+		var previous bool
+		if err := tx.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&previous); errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserNotFound
+		} else if err != nil {
+			return err
+		}
+		if previous == admin {
+			return nil
+		}
+		if admin {
+			_, err := tx.Exec(ctx, `UPDATE users SET is_platform_admin=true,authz_epoch=authz_epoch+1,updated_at=$2 WHERE id=$1`, userID, now)
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE users SET is_platform_admin=false,updated_at=$2 WHERE id=$1`, userID, now); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE auth_session_families SET revoked_at=$2 WHERE user_id=$1 AND revoked_at IS NULL`, userID, now)
+		return err
+	})
+}
+
+func (s *Service) RevokeUserSessions(ctx context.Context, userID string) error {
+	return s.adminTransaction(ctx, func(tx pgx.Tx, now time.Time) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)`, userID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrUserNotFound
+		}
+		_, err := tx.Exec(ctx, `UPDATE auth_session_families SET revoked_at=$2 WHERE user_id=$1 AND revoked_at IS NULL`, userID, now)
+		return err
+	})
 }
 
 func ValidCSRF(expected, actual string) bool {

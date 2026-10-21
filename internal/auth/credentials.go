@@ -8,12 +8,14 @@ import (
 )
 
 var (
-	ErrInvalidInput = errors.New("invalid username or password")
-	ErrCredentials  = errors.New("invalid credentials")
-	ErrAdminExists  = errors.New("an administrator already exists")
-	ErrSession      = errors.New("invalid or expired session")
-	ErrCSRF         = errors.New("invalid CSRF token")
-	ErrBusy         = errors.New("authentication is busy")
+	ErrInvalidInput  = errors.New("invalid username or password")
+	ErrCredentials   = errors.New("invalid credentials")
+	ErrUserNotFound  = errors.New("user not found")
+	ErrUsernameTaken = errors.New("username already exists")
+	ErrAdminExists   = errors.New("an administrator already exists")
+	ErrSession       = errors.New("invalid or expired session")
+	ErrCSRF          = errors.New("invalid CSRF token")
+	ErrBusy          = errors.New("authentication is busy")
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{2,63}$`)

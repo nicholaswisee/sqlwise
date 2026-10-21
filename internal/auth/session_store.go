@@ -248,16 +248,23 @@ func (s *Store) session(ctx context.Context, token string, clock func() time.Tim
 		copy(tokenDigest[:], digest)
 		session.proof = &sessionProof{digest: tokenDigest, epoch: tokenEpoch, userID: uid, familyID: family}
 		if alias != nil && alias.After(now) {
+			if tokenEpoch != userEpoch {
+				session.Principal.IsPlatformAdmin = false
+			}
 			return nil
 		}
 		if alias != nil {
 			return ErrSession
 		}
 		if readOnly {
+			if tokenEpoch != userEpoch {
+				session.Principal.IsPlatformAdmin = false
+			}
 			return nil
 		}
 		var successorHash []byte
-		if now.Sub(*created) >= RotationInterval {
+		staleEpoch := tokenEpoch != userEpoch
+		if staleEpoch || now.Sub(*created) >= RotationInterval {
 			next, err := newSessionWithReader(now, SessionLifetime, random)
 			if err != nil {
 				return err
@@ -287,6 +294,9 @@ func (s *Store) session(ctx context.Context, token string, clock func() time.Tim
 				return err
 			}
 			session.Replacement = &next
+			if staleEpoch {
+				session.Principal.IsPlatformAdmin = false
+			}
 		} else {
 			if _, err := tx.Exec(ctx, `UPDATE auth_session_families SET last_seen_at=$2 WHERE id=$1`, family, now); err != nil {
 				return err
