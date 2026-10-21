@@ -110,6 +110,11 @@ func (s *Store) promote(ctx context.Context, request promotion) (IssuedSession, 
 		return IssuedSession{}, err
 	}
 	issued.Principal = request.user.principal
+	var familyBytes [16]byte
+	if _, err := rand.Read(familyBytes[:]); err != nil {
+		return IssuedSession{}, fmt.Errorf("generate session family: %w", err)
+	}
+	familyID := base64.RawURLEncoding.EncodeToString(familyBytes[:])
 	digest, err := digestToken(issued.Token)
 	if err != nil {
 		return IssuedSession{}, err
@@ -126,17 +131,24 @@ func (s *Store) promote(ctx context.Context, request promotion) (IssuedSession, 
 		if result.RowsAffected() != 1 {
 			return ErrSession
 		}
-		result, err = tx.Exec(ctx, `INSERT INTO auth_sessions (token_hash, user_id, csrf_token, created_at, last_seen_at, expires_at)
-			SELECT $1, id, $2, $3, $3, $4 FROM users WHERE id = $5 AND active AND password_hash = $6`,
-			digest, issued.CSRFToken, request.now, issued.ExpiresAt, issued.Principal.UserID, request.user.passwordHash)
+		result, err = tx.Exec(ctx, `INSERT INTO auth_session_families
+			(id, user_id, created_at, last_seen_at, absolute_expires_at, csrf_token)
+			SELECT $1, id, $3, $3, $4, $2 FROM users WHERE id = $5 AND active AND password_hash = $6`,
+			familyID, issued.CSRFToken, request.now, issued.ExpiresAt, issued.Principal.UserID, request.user.passwordHash)
 		if err != nil {
 			return err
 		}
 		if result.RowsAffected() != 1 {
 			return ErrCredentials
 		}
+		if _, err := tx.Exec(ctx, `INSERT INTO auth_sessions
+			(token_hash, user_id, family_id, csrf_token, created_at, last_seen_at, expires_at)
+			VALUES ($1, $2, $3, $4, $5, $5, $6)`, digest, issued.Principal.UserID, familyID, issued.CSRFToken, request.now, issued.ExpiresAt); err != nil {
+			return err
+		}
 		if previous, err := digestToken(request.previousToken); err == nil {
-			if _, err := tx.Exec(ctx, "DELETE FROM auth_sessions WHERE token_hash = $1", previous); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE auth_session_families SET revoked_at = $2
+				WHERE id = (SELECT family_id FROM auth_sessions WHERE token_hash = $1) AND revoked_at IS NULL`, previous, request.now); err != nil {
 				return err
 			}
 		}
@@ -154,10 +166,11 @@ func (s *Store) session(ctx context.Context, token string, now time.Time) (Sessi
 		return Session{}, err
 	}
 	var session Session
-	err = s.pool.QueryRow(ctx, `UPDATE auth_sessions AS s SET last_seen_at = $2
-		FROM users AS u WHERE s.token_hash = $1 AND s.user_id = u.id AND u.active
-		AND s.expires_at > $2 AND s.last_seen_at > $3
-		RETURNING u.id, u.username, u.is_platform_admin, s.csrf_token, s.expires_at`, digest, now, now.Add(-IdleTimeout)).
+	err = s.pool.QueryRow(ctx, `UPDATE auth_session_families AS f SET last_seen_at = $2
+		FROM auth_sessions AS s, users AS u WHERE s.token_hash = $1 AND s.family_id = f.id
+		AND s.user_id = u.id AND f.user_id = u.id AND u.active AND f.revoked_at IS NULL
+		AND f.absolute_expires_at > $2 AND f.last_seen_at > $3
+		RETURNING u.id, u.username, u.is_platform_admin, f.csrf_token, f.absolute_expires_at`, digest, now, now.Add(-IdleTimeout)).
 		Scan(&session.Principal.UserID, &session.Principal.Username, &session.Principal.IsPlatformAdmin,
 			&session.CSRFToken, &session.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -174,7 +187,8 @@ func (s *Store) revoke(ctx context.Context, token string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, "DELETE FROM auth_sessions WHERE token_hash = $1", digest); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE auth_session_families SET revoked_at = now()
+		WHERE id = (SELECT family_id FROM auth_sessions WHERE token_hash = $1) AND revoked_at IS NULL`, digest); err != nil {
 		return fmt.Errorf("revoke session: %w", err)
 	}
 	return nil
