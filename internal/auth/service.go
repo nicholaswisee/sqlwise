@@ -98,7 +98,11 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (IssuedSessio
 }
 
 func (s *Service) Session(ctx context.Context, token string) (Session, error) {
-	return s.store.session(ctx, token, s.now, s.random)
+	return s.store.session(ctx, token, s.now, s.random, false)
+}
+
+func (s *Service) ReadOnlySession(ctx context.Context, token string) (Session, error) {
+	return s.store.session(ctx, token, s.now, s.random, true)
 }
 
 func (s *Service) Logout(ctx context.Context, token, csrf string) error {

@@ -29,6 +29,7 @@ type Session struct {
 	Replacement    *IssuedSession
 	presentedToken string
 	authzEpoch     int64
+	proof          *sessionProof
 }
 
 func (s Session) PresentedToken() string { return s.presentedToken }
@@ -206,7 +207,7 @@ func (s *Store) promote(ctx context.Context, request promotion) (IssuedSession, 
 	return issued, nil
 }
 
-func (s *Store) session(ctx context.Context, token string, clock func() time.Time, random io.Reader) (Session, error) {
+func (s *Store) session(ctx context.Context, token string, clock func() time.Time, random io.Reader, readOnly bool) (Session, error) {
 	digest, err := digestToken(token)
 	if err != nil {
 		return Session{}, err
@@ -243,11 +244,17 @@ func (s *Store) session(ctx context.Context, token string, clock func() time.Tim
 			return ErrSession
 		}
 		session.Principal.UserID, session.ExpiresAt, session.authzEpoch, session.presentedToken = uid, *absolute, tokenEpoch, token
+		var tokenDigest [32]byte
+		copy(tokenDigest[:], digest)
+		session.proof = &sessionProof{digest: tokenDigest, epoch: tokenEpoch, userID: uid, familyID: family}
 		if alias != nil && alias.After(now) {
 			return nil
 		}
 		if alias != nil {
 			return ErrSession
+		}
+		if readOnly {
+			return nil
 		}
 		var successorHash []byte
 		if now.Sub(*created) >= RotationInterval {
