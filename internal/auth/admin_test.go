@@ -532,3 +532,68 @@ func mustUserHash(t *testing.T, store *Store, id string) string {
 	}
 	return hash
 }
+
+func TestAdminRenameAndPasswordChangeInvalidateSessionEvidence(t *testing.T) {
+	store := NewStore(testdb.Open(t))
+	if err := store.ApplySchema(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	adminCreds := mustCredentials(t, "admin", "test login passphrase")
+	if err := store.BootstrapAdmin(t.Context(), adminCreds); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := NewService(store, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := loginForAdminTest(t, svc, adminCreds)
+	adminSession, err := svc.Session(t.Context(), admin.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminCtx, err := svc.BindSession(t.Context(), adminSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userCreds := mustCredentials(t, "managed.user", "old password long enough")
+	user, err := svc.CreateUser(adminCtx, userCreds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued := loginForAdminTest(t, svc, userCreds)
+	if err := svc.RenameUser(adminCtx, user.UserID, "renamed.user"); err != nil {
+		t.Fatal(err)
+	}
+	users, err := svc.ListAdminUsers(adminCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, u := range users {
+		if u.ID == user.UserID && u.Username == "renamed.user" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("renamed user absent: %+v", users)
+	}
+	stale, err := svc.Session(t.Context(), issued.Token)
+	if err != nil || stale.Replacement == nil || stale.Principal.Username != "renamed.user" || stale.Replacement.Principal.Username != "renamed.user" {
+		t.Fatalf("rename did not epoch-refresh session identity: %+v %v", stale, err)
+	}
+	if err := svc.UpdateUserPassword(adminCtx, user.UserID, "new password long enough"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Session(t.Context(), issued.Token); !errors.Is(err, ErrSession) {
+		t.Fatalf("password change preserved old family: %v", err)
+	}
+	if _, err := svc.LoginChallenge(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RenameUser(adminCtx, user.UserID, "!"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid username error=%v", err)
+	}
+	if _, err := svc.ListAdminUsers(t.Context()); !errors.Is(err, ErrSession) {
+		t.Fatalf("unauthenticated user list error=%v", err)
+	}
+}
