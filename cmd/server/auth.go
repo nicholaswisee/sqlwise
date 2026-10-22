@@ -13,7 +13,7 @@ import (
 func connectAuth() (*auth.Service, *pgxpool.Pool, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		return nil, nil, errors.New("DATABASE_URL is required; follow the administrator setup in README.md")
+		return nil, nil, errors.New("DATABASE_URL is required; configure the platform database before starting the server")
 	}
 	config, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
