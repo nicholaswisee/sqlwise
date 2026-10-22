@@ -1,15 +1,16 @@
 package main
 
 import (
-	"bytes"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/a-h/templ"
 	"github.com/gin-gonic/gin"
-	"wiseql/internal/web/views"
+	"sqlwise/internal/auth"
+	"sqlwise/internal/handlers"
+	"sqlwise/internal/web/views"
 )
 
 func main() {
@@ -21,7 +22,12 @@ func main() {
 		log.Fatalf("load frontend assets: %v", err)
 	}
 
-	router := newRouter(assets)
+	service, pool, err := connectAuth()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer pool.Close()
+	router := newRouter(assets, service)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -34,36 +40,39 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("start WiseQL server: %v", err)
+		log.Fatalf("start sqlwise server: %v", err)
 	}
 }
 
-func newRouter(assets views.Assets) *gin.Engine {
+func newRouter(assets views.Assets, service *auth.Service) *gin.Engine {
 	router := gin.New()
 	if err := router.SetTrustedProxies(nil); err != nil {
 		panic(err)
 	}
-	router.Use(gin.Logger(), gin.Recovery())
+	router.Use(gin.LoggerWithFormatter(func(p gin.LogFormatterParams) string {
+		return fmt.Sprintf("http method=%s status=%d\n", p.Method, p.StatusCode)
+	}), func(c *gin.Context) {
+		defer func() {
+			if recover() != nil {
+				log.Print("http request failed")
+				c.AbortWithStatus(http.StatusInternalServerError)
+			}
+		}()
+		c.Next()
+	})
 
 	if os.Getenv("APP_ENV") == "production" {
 		router.Static("/assets", "./web/dist/assets")
 	}
 
 	router.GET("/", func(c *gin.Context) {
-		render(c, views.Home(assets))
+		handlers.Render(c, http.StatusOK, views.Home(assets))
 	})
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"service": "wiseql", "status": "ok"})
+		c.JSON(http.StatusOK, gin.H{"service": "sqlwise", "status": "ok"})
 	})
-	return router
-}
-
-func render(c *gin.Context, component templ.Component) {
-	var body bytes.Buffer
-	if err := component.Render(c.Request.Context(), &body); err != nil {
-		log.Printf("render page: %v", err)
-		c.String(http.StatusInternalServerError, "internal server error")
-		return
+	if service != nil {
+		handlers.NewAuth(service, assets, os.Getenv("APP_ENV") == "production").Register(router)
 	}
-	c.Data(http.StatusOK, "text/html; charset=utf-8", body.Bytes())
+	return router
 }

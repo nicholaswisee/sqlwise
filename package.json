@@ -1,12 +1,12 @@
 {
-  "name": "wiseql",
+  "name": "sqlwise",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "go:generate": "go tool templ generate",
     "go:test": "go test ./...",
-    "go:build": "go build -o bin/wiseql ./cmd/server",
+    "go:build": "go build -o bin/sqlwise ./cmd/server",
     "build:all": "vp run go:generate && vp build && vp run go:build",
     "ci": "vp check && vp run go:generate && vp run go:test && vp build"
   },

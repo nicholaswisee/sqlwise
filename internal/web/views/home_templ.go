@@ -41,13 +41,13 @@ func Home(assets Assets) templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-12 sm:px-10 sm:py-20\"><header class=\"flex items-center justify-between border-b border-slate-800 pb-6\"><a href=\"/\" class=\"text-sm font-semibold tracking-[0.18em] text-cyan-300\">WISEQL</a> <span class=\"rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400\">IF3110 Milestone 1</span></header><main class=\"flex flex-1 items-center py-20\"><div class=\"max-w-2xl space-y-6\"><p class=\"text-xs font-medium uppercase tracking-[0.24em] text-cyan-300\">PostgreSQL workspace</p><h1 class=\"text-5xl font-semibold tracking-tight sm:text-6xl\">WiseQL</h1><p class=\"text-xl leading-8 text-slate-200\">PostgreSQL Management Platform</p><p class=\"max-w-xl leading-7 text-slate-400\">A starting point for managed access, database exploration, and controlled schema changes.</p></div></main><footer class=\"border-t border-slate-800 pt-6 text-sm text-slate-500\">IF3110 Web Application Development</footer></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-12 sm:px-10 sm:py-20\"><header class=\"flex items-center justify-between border-b border-slate-800 pb-6\"><a href=\"/\" class=\"text-sm font-semibold tracking-[0.18em] text-cyan-300\">sqlwise</a> <span class=\"rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400\">IF3110 Milestone 1</span></header><main class=\"flex flex-1 items-center py-20\"><div class=\"max-w-2xl space-y-6\"><p class=\"text-xs font-medium uppercase tracking-[0.24em] text-cyan-300\">PostgreSQL workspace</p><h1 class=\"text-5xl font-semibold tracking-tight sm:text-6xl\">sqlwise</h1><p class=\"text-xl leading-8 text-slate-200\">PostgreSQL Management Platform</p><p class=\"max-w-xl leading-7 text-slate-400\">A starting point for managed access, database exploration, and controlled schema changes.</p><a href=\"/login\" class=\"inline-block rounded-lg bg-cyan-400 px-6 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-300 active:bg-cyan-500 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-300\">Sign in</a></div></main><footer class=\"border-t border-slate-800 pt-6 text-sm text-slate-500\">IF3110 Web Application Development</footer></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = Layout("WiseQL", assets).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = Layout("sqlwise", assets).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
