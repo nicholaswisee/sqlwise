@@ -280,7 +280,7 @@ func TestPolicyMutationInvalidationMatrix(t *testing.T) {
 			}
 			if !tc.increase {
 				// All removed/disabled policies can be re-enabled, never resurrecting a family.
-				for _, err := range []error{f.mutations.AddMembership(f.ctx["admin"], "one", "g"), f.mutations.SetGrant(f.ctx["admin"], "g", "db", Edit), f.mutations.SetGroupActive(f.ctx["admin"], "g", true), f.mutations.SetDatabaseActive(f.ctx["admin"], "db", true)} {
+				for _, err := range []error{f.mutations.AddMembership(f.ctx["admin"], "one", "g"), f.mutations.SetDatabaseActive(f.ctx["admin"], "db", true), f.mutations.SetGrant(f.ctx["admin"], "g", "db", Edit), f.mutations.SetGroupActive(f.ctx["admin"], "g", true)} {
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -645,5 +645,32 @@ func TestPolicyAndSeparateSessionRotationLockOrder(t *testing.T) {
 				t.Fatalf("fresh permission=%v,%v", p, err)
 			}
 		})
+	}
+}
+
+func TestGrantCannotBeSetForInactiveRegistrationButCanBeRemoved(t *testing.T) {
+	f := newPolicyFixture(t)
+	if err := f.mutations.SetDatabaseActive(f.ctx["admin"], "db", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mutations.SetGrant(f.ctx["admin"], "g", "db", Edit); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SetGrant for inactive database error=%v, want ErrNotFound", err)
+	}
+	var permission string
+	if err := f.pool.QueryRow(t.Context(), `SELECT permission FROM group_database_grants WHERE group_id='g' AND database_id='db'`).Scan(&permission); err != nil {
+		t.Fatal(err)
+	}
+	if permission != "view" {
+		t.Fatalf("rejected grant changed existing permission to %q", permission)
+	}
+	if err := f.mutations.RemoveGrant(f.ctx["admin"], "g", "db"); err != nil {
+		t.Fatalf("RemoveGrant for inactive database: %v", err)
+	}
+	var exists bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM group_database_grants WHERE group_id='g' AND database_id='db')`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("grant remains after cleanup")
 	}
 }
