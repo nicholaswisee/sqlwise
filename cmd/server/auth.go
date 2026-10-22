@@ -29,9 +29,14 @@ func connectAuth() (*auth.Service, *pgxpool.Pool, error) {
 	if err != nil {
 		return nil, nil, errors.New("could not initialize platform database pool")
 	}
-	if _, err := pool.Exec(ctx, "SELECT token_hash FROM auth_sessions LIMIT 0"); err != nil {
+	if _, err := pool.Exec(ctx, `SELECT s.token_hash, s.family_id, s.alias_until, s.rotated_at,
+		s.successor_hash, s.authz_epoch, f.id, f.revoked_at, u.authz_epoch
+		FROM auth_sessions s
+		LEFT JOIN auth_session_families f ON f.id = s.family_id
+		LEFT JOIN users u ON u.id = s.user_id
+		LIMIT 0`); err != nil {
 		pool.Close()
-		return nil, nil, errors.New("authentication schema unavailable; check DATABASE_URL and run administrator setup")
+		return nil, nil, errors.New("authentication schema unavailable; run go run ./cmd/admin -schema-only")
 	}
 	service, err := auth.NewService(auth.NewStore(pool), time.Now)
 	if err != nil {
