@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
 	"sqlwise/internal/handlers"
 	"sqlwise/internal/web/views"
@@ -27,7 +28,8 @@ func main() {
 		log.Fatal(err)
 	}
 	defer pool.Close()
-	router := newRouter(assets, service)
+	policy := access.NewService(access.NewStore(pool), service)
+	router := newRouter(assets, service, policy)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -44,7 +46,7 @@ func main() {
 	}
 }
 
-func newRouter(assets views.Assets, service *auth.Service) *gin.Engine {
+func newRouter(assets views.Assets, service *auth.Service, policies ...*access.Service) *gin.Engine {
 	router := gin.New()
 	if err := router.SetTrustedProxies(nil); err != nil {
 		panic(err)
@@ -72,7 +74,15 @@ func newRouter(assets views.Assets, service *auth.Service) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"service": "sqlwise", "status": "ok"})
 	})
 	if service != nil {
-		handlers.NewAuth(service, assets, os.Getenv("APP_ENV") == "production").Register(router)
+		var policy *access.Service
+		if len(policies) > 0 {
+			policy = policies[0]
+		}
+		authHandler := handlers.NewAuth(service, assets, os.Getenv("APP_ENV") == "production", policy)
+		authHandler.Register(router)
+		if policy != nil {
+			handlers.NewAccessAdmin(authHandler, policy, assets).Register(router)
+		}
 	}
 	return router
 }
