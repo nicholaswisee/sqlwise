@@ -1,0 +1,370 @@
+package views
+
+templ DatabaseShell(title string, assets Assets, nav DatabaseNav) {
+	@Layout(title+" | "+nav.Name+" | sqlwise", assets) {
+		<main class="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+			<header class="mb-8 flex flex-wrap items-center justify-between gap-4">
+				<nav aria-label="Breadcrumb" class="flex flex-wrap items-center gap-2 text-sm text-slate-400">
+					<a href="/account" class="rounded-lg py-2 text-cyan-300 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-300">Account</a>
+					<span aria-hidden="true">/</span>
+					<span class="break-all text-slate-200">{ nav.Name }</span>
+				</nav>
+				<p class="break-words text-sm text-slate-400">
+					Signed in as <strong class="text-slate-200">{ nav.Username }</strong>
+					if nav.CanEdit {
+						<span class="ml-2 rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300">View + Edit</span>
+					} else {
+						<span class="ml-2 rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300">View only</span>
+					}
+				</p>
+			</header>
+			<nav aria-label="Database sections" class="mb-8 flex gap-2 border-b border-slate-800">
+				@sectionTab("Migrations", migrationsURL(nav.ID), nav.Active == "migrations")
+				@sectionTab("Schema diff", schemaDiffURL(nav.ID), nav.Active == "schema-diff")
+			</nav>
+			{ children... }
+		</main>
+	}
+}
+
+templ sectionTab(label, href string, active bool) {
+	if active {
+		<a href={ templ.SafeURL(href) } aria-current="page" class="-mb-px border-b-2 border-cyan-300 px-3 py-3 text-sm font-semibold text-slate-100">{ label }</a>
+	} else {
+		<a href={ templ.SafeURL(href) } class="-mb-px border-b-2 border-transparent px-3 py-3 text-sm text-slate-400 hover:text-slate-200 focus-visible:outline-2 focus-visible:outline-cyan-300">{ label }</a>
+	}
+}
+
+templ alert(message string) {
+	if message != "" {
+		<p role="alert" class="mt-4 rounded-lg bg-rose-950 p-4 text-sm leading-6 text-rose-200">{ message }</p>
+	}
+}
+
+templ notice(message string) {
+	if message != "" {
+		<p role="status" class="mt-4 rounded-lg border border-slate-800 bg-slate-900 p-4 text-sm leading-6 text-slate-200">{ message }</p>
+	}
+}
+
+templ statusBadge(status string) {
+	<span class={ statusClass(status) }>{ statusLabel(status) }</span>
+}
+
+templ sqlBlock(sql string) {
+	<pre class="max-h-[32rem] overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-sm leading-6 whitespace-pre text-slate-200"><code>{ sql }</code></pre>
+}
+
+templ sqlField(id, value string, readonly bool) {
+	<textarea id={ id } name="sql" rows="14" required spellcheck="false" autocapitalize="none" maxlength="262144" readonly?={ readonly } class="w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-sm leading-6 text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300">{ value }</textarea>
+}
+
+const primaryButton = "min-h-12 rounded-lg bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-300 active:bg-cyan-500 disabled:cursor-wait disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-300"
+
+const inputClass = "min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-base text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+
+templ MigrationHistory(assets Assets, data MigrationHistoryData) {
+	@DatabaseShell("Migrations", assets, data.Nav) {
+		<div class="flex flex-wrap items-end justify-between gap-4">
+			<div>
+				<h1 class="text-3xl font-semibold tracking-tight">Migrations</h1>
+				<p class="mt-2 text-sm text-slate-400">Current applied version: <strong class="text-slate-200">{ version(data.CurrentVersion) }</strong></p>
+			</div>
+		</div>
+		@alert(data.Error)
+		if data.Nav.CanEdit {
+			<section aria-labelledby="new-heading" class="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
+				<h2 id="new-heading" class="text-xl font-semibold">New migration</h2>
+				<p class="mt-2 text-sm text-slate-400">Saving creates a draft. Nothing runs until you review and execute it.</p>
+				<form method="post" action={ templ.SafeURL(migrationsURL(data.Nav.ID)) } class="mt-5 space-y-4">
+					<input type="hidden" name="csrf_token" value={ data.Nav.CSRFToken }/>
+					<div class="space-y-2"><label for="new-title" class="block text-sm font-medium text-slate-200">Title</label><input id="new-title" name="title" type="text" required maxlength="200" value={ data.Form.Title } class={ inputClass }/></div>
+					<div class="space-y-2"><label for="new-sql" class="block text-sm font-medium text-slate-200">SQL</label>@sqlField("new-sql", data.Form.SQL, false)</div>
+					<button type="submit" class={ primaryButton }>Save draft</button>
+				</form>
+			</section>
+		}
+		<section aria-labelledby="drafts-heading" class="mt-8">
+			<h2 id="drafts-heading" class="text-xl font-semibold">Migrations</h2>
+			if len(data.Drafts) == 0 {
+				<p class="mt-4 rounded-lg border border-dashed border-slate-800 p-6 text-sm text-slate-400">No migrations yet.</p>
+			} else {
+				<ul class="mt-4 divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-900">
+					for _, d := range data.Drafts {
+						<li class="flex flex-wrap items-center justify-between gap-3 p-4">
+							<div class="min-w-0">
+								<a href={ templ.SafeURL(migrationURL(data.Nav.ID, d.ID)) } class="break-words font-medium text-cyan-300 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-cyan-300">{ d.Title }</a>
+								<p class="mt-1 text-xs text-slate-400">Revision { itoa64(d.Revision) } · updated { d.UpdatedAt } by { d.UpdatedBy }</p>
+							</div>
+							{{ label, class := draftState(d) }}
+							<span class={ class }>{ label }</span>
+						</li>
+					}
+				</ul>
+			}
+		</section>
+		<section aria-labelledby="history-heading" class="mt-10">
+			<h2 id="history-heading" class="text-xl font-semibold">Execution history</h2>
+			<p class="mt-2 text-sm text-slate-400">Every attempt is kept, newest first. Applied versions increase only on success.</p>
+			@attemptTable(data.Nav.ID, data.Attempts, true)
+		</section>
+	}
+}
+
+templ attemptTable(databaseID string, attempts []MigrationAttemptRow, showMigration bool) {
+	if len(attempts) == 0 {
+		<p class="mt-4 rounded-lg border border-dashed border-slate-800 p-6 text-sm text-slate-400">No executions yet.</p>
+	} else {
+		<div class="mt-4 overflow-x-auto rounded-2xl border border-slate-800">
+			<table class="w-full min-w-[44rem] text-left text-sm">
+				<thead class="bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
+					<tr>
+						<th scope="col" class="px-4 py-3">Version</th>
+						<th scope="col" class="px-4 py-3">Status</th>
+						if showMigration {
+							<th scope="col" class="px-4 py-3">Migration</th>
+						}
+						<th scope="col" class="px-4 py-3">Executor</th>
+						<th scope="col" class="px-4 py-3">Started</th>
+						<th scope="col" class="px-4 py-3">Finished</th>
+						<th scope="col" class="px-4 py-3"><span class="sr-only">Details</span></th>
+					</tr>
+				</thead>
+				<tbody class="divide-y divide-slate-800">
+					for _, a := range attempts {
+						<tr class="align-top">
+							<td class="px-4 py-3 font-mono">
+								if a.AppliedVersion > 0 {
+									{ version(a.AppliedVersion) }
+								} else {
+									<span class="text-slate-400">candidate { version(a.CandidateVersion) }</span>
+								}
+							</td>
+							<td class="px-4 py-3">
+								@statusBadge(a.Status)
+								if a.Error != "" {
+									<p class="mt-2 max-w-md break-words text-xs leading-5 text-slate-400">{ a.Error }</p>
+								}
+							</td>
+							if showMigration {
+								<td class="break-words px-4 py-3"><a href={ templ.SafeURL(migrationURL(databaseID, a.MigrationID)) } class="text-cyan-300 underline underline-offset-4">{ a.MigrationTitle }</a></td>
+							}
+							<td class="break-all px-4 py-3">{ a.Executor }</td>
+							<td class="whitespace-nowrap px-4 py-3 text-slate-300">{ a.StartedAt }</td>
+							<td class="whitespace-nowrap px-4 py-3 text-slate-300">{ a.FinishedAt }</td>
+							<td class="px-4 py-3"><a href={ templ.SafeURL(attemptURL(databaseID, a.MigrationID, a.ID)) } class="text-cyan-300 underline underline-offset-4">SQL and details</a></td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+templ MigrationDetail(assets Assets, data MigrationDetailData) {
+	@DatabaseShell(data.Draft.Title, assets, data.Nav) {
+		<a href={ templ.SafeURL(migrationsURL(data.Nav.ID)) } class="text-sm text-cyan-300 underline underline-offset-4">All migrations</a>
+		<h1 class="mt-3 break-words text-3xl font-semibold tracking-tight">{ data.Draft.Title }</h1>
+		<dl class="mt-4 grid gap-x-6 gap-y-2 text-sm text-slate-400 sm:grid-cols-2">
+			<div><dt class="inline">Status: </dt><dd class="inline text-slate-200">
+				if data.Draft.AppliedVersion > 0 {
+					Applied as { version(data.Draft.AppliedVersion) } (read-only)
+				} else {
+					Draft revision { itoa64(data.Draft.Revision) }
+				}
+			</dd></div>
+			<div><dt class="inline">Dialect: </dt><dd class="inline text-slate-200">{ data.Draft.Dialect }</dd></div>
+			<div><dt class="inline">Created: </dt><dd class="inline text-slate-200">{ data.Draft.CreatedAt } by { data.Draft.CreatedBy }</dd></div>
+			<div><dt class="inline">Updated: </dt><dd class="inline text-slate-200">{ data.Draft.UpdatedAt } by { data.Draft.UpdatedBy }</dd></div>
+		</dl>
+		@notice(data.Notice)
+		if data.Blocked != "" {
+			<p role="alert" class="mt-4 rounded-lg border border-amber-700 bg-amber-950 p-4 text-sm leading-6 text-amber-100">{ data.Blocked }</p>
+		}
+		<div id="execution-result" aria-live="polite">
+			if data.Result != nil {
+				@ExecutionResult(*data.Result)
+			}
+		</div>
+		if data.Nav.CanEdit && data.Draft.AppliedVersion == 0 {
+			<section aria-labelledby="edit-heading" class="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
+				<h2 id="edit-heading" class="text-xl font-semibold">Edit SQL</h2>
+				<form method="post" action={ templ.SafeURL(migrationURL(data.Nav.ID, data.Draft.ID)) } hx-patch={ migrationURL(data.Nav.ID, data.Draft.ID) } hx-target="#edit-result" hx-headers={ csrfHeaders(data.Nav.CSRFToken) } hx-disabled-elt="find button" hx-on::before-swap={ templ.JSUnsafeFuncCall(errorSwap) } class="mt-5 space-y-4">
+					<input type="hidden" name="csrf_token" value={ data.Nav.CSRFToken }/>
+					<input type="hidden" name="expected_revision" value={ itoa64(data.Draft.Revision) }/>
+					<div class="space-y-2"><label for="edit-title" class="block text-sm font-medium text-slate-200">Title</label><input id="edit-title" name="title" type="text" required maxlength="200" value={ data.Form.Title } class={ inputClass }/></div>
+					<div class="space-y-2"><label for="edit-sql" class="block text-sm font-medium text-slate-200">SQL</label>@sqlField("edit-sql", data.Form.SQL, false)</div>
+					<div id="edit-result" aria-live="polite">@alert(data.EditError)</div>
+					<button type="submit" class={ primaryButton }>Save revision { itoa64(data.Draft.Revision + 1) }</button>
+				</form>
+			</section>
+		} else {
+			<section aria-labelledby="sql-heading" class="mt-8">
+				<h2 id="sql-heading" class="text-xl font-semibold">SQL</h2>
+				<div class="mt-4">@sqlBlock(data.Draft.SQL)</div>
+			</section>
+		}
+		if data.Nav.CanEdit && data.Draft.AppliedVersion == 0 {
+			<section aria-labelledby="execute-heading" class="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
+				<h2 id="execute-heading" class="text-xl font-semibold">Execute</h2>
+				<p class="mt-2 text-sm leading-6 text-slate-400">
+					Runs saved revision { itoa64(data.Draft.Revision) } (SHA-256 <code class="font-mono text-slate-300">{ shortHash(data.Draft.SQLHash) }</code>) in one transaction as
+					<strong class="text-slate-200">{ version(data.CurrentVersion + 1) }</strong>. Any error rolls back every statement. Unsaved edits above are not executed.
+				</p>
+				<details class="mt-4">
+					<summary class="cursor-pointer text-sm text-cyan-300">Review the SQL that will run</summary>
+					<div class="mt-3">@sqlBlock(data.Draft.SQL)</div>
+				</details>
+				<form method="post" action={ templ.SafeURL(migrationURL(data.Nav.ID, data.Draft.ID) + "/execute") } hx-post={ migrationURL(data.Nav.ID, data.Draft.ID) + "/execute" } hx-target="#execution-result" hx-headers={ csrfHeaders(data.Nav.CSRFToken) } hx-disabled-elt="find button" hx-indicator="#execute-progress" hx-on::before-swap={ templ.JSUnsafeFuncCall(errorSwap) } class="mt-5 flex flex-wrap items-center gap-4">
+					<input type="hidden" name="csrf_token" value={ data.Nav.CSRFToken }/>
+					<input type="hidden" name="expected_revision" value={ itoa64(data.Draft.Revision) }/>
+					<input type="hidden" name="expected_version" value={ itoa64(data.CurrentVersion) }/>
+					<input type="hidden" name="expected_sql_hash" value={ data.Draft.SQLHash }/>
+					<button type="submit" class={ primaryButton }>Execute as { version(data.CurrentVersion + 1) }</button>
+					<span id="execute-progress" class="htmx-indicator text-sm text-slate-400" role="status">Executing… this can take up to 10 seconds.</span>
+				</form>
+			</section>
+		}
+		<section aria-labelledby="attempts-heading" class="mt-10">
+			<h2 id="attempts-heading" class="text-xl font-semibold">Attempts</h2>
+			@attemptTable(data.Nav.ID, data.Attempts, false)
+		</section>
+	}
+}
+
+templ ExecutionResult(r ExecutionResultView) {
+	if r.Attempt != nil && r.Attempt.Status == "succeeded" {
+		<div role="status" class="mt-4 rounded-lg border border-emerald-800 bg-emerald-950 p-4 text-sm leading-6 text-emerald-100">
+			<p class="font-semibold">Applied as { version(r.Attempt.AppliedVersion) }.</p>
+			<p>{ itoa64(int64(r.Attempt.StatementCount)) } statements committed. <a href={ templ.SafeURL(attemptURL(r.DatabaseID, r.MigrationID, r.Attempt.ID)) } class="underline underline-offset-4">View attempt</a></p>
+		</div>
+	} else {
+		<div role="alert" class="mt-4 rounded-lg border border-rose-800 bg-rose-950 p-4 text-sm leading-6 text-rose-100">
+			if r.Attempt != nil {
+				<p class="flex flex-wrap items-center gap-2 font-semibold">@statusBadge(r.Attempt.Status) Candidate { version(r.Attempt.CandidateVersion) }</p>
+			}
+			<p class="mt-1 break-words">{ r.Message }</p>
+			if r.Attempt != nil {
+				<p class="mt-1"><a href={ templ.SafeURL(attemptURL(r.DatabaseID, r.MigrationID, r.Attempt.ID)) } class="underline underline-offset-4">View attempt</a> · <a href={ templ.SafeURL(migrationURL(r.DatabaseID, r.MigrationID)) } class="underline underline-offset-4">Reload migration</a></p>
+			} else {
+				<p class="mt-1"><a href={ templ.SafeURL(migrationURL(r.DatabaseID, r.MigrationID)) } class="underline underline-offset-4">Reload migration</a></p>
+			}
+		</div>
+	}
+}
+
+templ EditResult(message string) {
+	@alert(message)
+}
+
+templ AttemptDetail(assets Assets, data AttemptDetailData) {
+	@DatabaseShell("Attempt", assets, data.Nav) {
+		{{ a := data.Attempt }}
+		<a href={ templ.SafeURL(migrationURL(data.Nav.ID, a.MigrationID)) } class="text-sm text-cyan-300 underline underline-offset-4">Back to { a.MigrationTitle }</a>
+		<h1 class="mt-3 flex flex-wrap items-center gap-3 text-3xl font-semibold tracking-tight">
+			if a.AppliedVersion > 0 {
+				Version { itoa64(a.AppliedVersion) }
+			} else {
+				Candidate version { itoa64(a.CandidateVersion) }
+			}
+			@statusBadge(a.Status)
+		</h1>
+		<dl class="mt-6 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+			<div><dt class="text-slate-400">Executor</dt><dd class="break-all text-slate-200">{ a.Executor }</dd></div>
+			<div><dt class="text-slate-400">Draft revision</dt><dd class="text-slate-200">{ itoa64(a.DraftRevision) }</dd></div>
+			<div><dt class="text-slate-400">Started</dt><dd class="text-slate-200">{ a.StartedAt }</dd></div>
+			<div><dt class="text-slate-400">Finished</dt><dd class="text-slate-200">{ a.FinishedAt }</dd></div>
+			<div><dt class="text-slate-400">Statements</dt><dd class="text-slate-200">{ itoa64(int64(a.StatementCount)) }</dd></div>
+			<div><dt class="text-slate-400">SQL SHA-256</dt><dd class="break-all font-mono text-xs text-slate-200">{ a.SQLHash }</dd></div>
+			if a.Reconciled {
+				<div class="sm:col-span-2"><dt class="text-slate-400">Reconciliation</dt><dd class="text-slate-200">Outcome confirmed from the target execution receipt.</dd></div>
+			}
+		</dl>
+		if a.Error != "" {
+			<p role="alert" class="mt-6 rounded-lg bg-rose-950 p-4 text-sm leading-6 text-rose-200">{ a.Error }</p>
+		}
+		<h2 class="mt-8 text-xl font-semibold">Executed SQL (immutable)</h2>
+		<div class="mt-4">@sqlBlock(a.SQL)</div>
+	}
+}
+
+templ SchemaDiff(assets Assets, data SchemaDiffData) {
+	@DatabaseShell("Schema diff", assets, data.Nav) {
+		<h1 class="text-3xl font-semibold tracking-tight">Schema diff</h1>
+		<p class="mt-2 max-w-3xl text-sm leading-6 text-slate-400">Compare the live schema with a desired snapshot. Preview never changes the database. Supported additions become a draft you can review and edit before executing.</p>
+		<form method="post" action={ templ.SafeURL(schemaDiffURL(data.Nav.ID) + "/preview") } hx-post={ schemaDiffURL(data.Nav.ID) + "/preview" } hx-target="#diff-result" hx-headers={ csrfHeaders(data.Nav.CSRFToken) } hx-disabled-elt="find button" hx-indicator="#diff-progress" hx-on::before-swap={ templ.JSUnsafeFuncCall(errorSwap) } class="mt-6 space-y-4">
+			<input type="hidden" name="csrf_token" value={ data.Nav.CSRFToken }/>
+			<div class="space-y-2">
+				<label for="desired" class="block text-sm font-medium text-slate-200">Desired snapshot (JSON)</label>
+				<p id="desired-help" class="text-xs leading-5 text-slate-400">One schema per snapshot. Each column needs name, type and nullable; default is optional. Generation supports CREATE TABLE and ADD COLUMN with common types; other changes are reported as warnings.</p>
+				<textarea id="desired" name="desired" rows="18" required spellcheck="false" aria-describedby="desired-help" class="w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-sm leading-6 text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300">{ data.Desired }</textarea>
+			</div>
+			<div class="flex flex-wrap items-center gap-4">
+				<button type="submit" class={ primaryButton }>Preview changes</button>
+				<span id="diff-progress" class="htmx-indicator text-sm text-slate-400" role="status">Reading live schema…</span>
+			</div>
+		</form>
+		<div id="diff-result" aria-live="polite" class="mt-8">
+			@SchemaDiffResult(data)
+		</div>
+	}
+}
+
+templ SchemaDiffResult(data SchemaDiffData) {
+	@alert(data.Error)
+	if p := data.Proposal; p != nil {
+		<section aria-labelledby="changes-heading" class="rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
+			<h2 id="changes-heading" class="text-xl font-semibold">Changes in schema { p.Schema }</h2>
+			if len(p.Changes) == 0 {
+				<p class="mt-4 text-sm text-slate-300">The live schema already matches the desired snapshot.</p>
+			} else {
+				<ul class="mt-4 space-y-2 text-sm">
+					for _, c := range p.Changes {
+						<li class="flex flex-wrap items-start gap-2 break-words">
+							if c.Destructive {
+								<span class="rounded-full bg-amber-950 px-2 py-0.5 text-xs font-semibold text-amber-200 ring-1 ring-amber-700">Destructive</span>
+							}
+							<span class="text-slate-200">{ c.Text }</span>
+						</li>
+					}
+				</ul>
+			}
+			if len(p.Warnings) > 0 {
+				<h3 class="mt-6 text-base font-semibold">Warnings</h3>
+				<ul class="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-amber-100">
+					for _, w := range p.Warnings {
+						<li class="break-words">{ w }</li>
+					}
+				</ul>
+			}
+			if p.SQL != "" {
+				<h3 class="mt-6 text-base font-semibold">Candidate SQL</h3>
+				<div class="mt-3">@sqlBlock(p.SQL)</div>
+				if data.Nav.CanEdit {
+					<form method="post" action={ templ.SafeURL(schemaDiffURL(data.Nav.ID) + "/draft") } class="mt-5 flex flex-wrap items-end gap-4">
+						<input type="hidden" name="csrf_token" value={ data.Nav.CSRFToken }/>
+						<input type="hidden" name="desired" value={ data.Desired }/>
+						<input type="hidden" name="source_fingerprint" value={ p.SourceFingerprint }/>
+						<div class="min-w-64 flex-1 space-y-2"><label for="draft-title" class="block text-sm font-medium text-slate-200">Draft title</label><input id="draft-title" name="title" type="text" maxlength="200" value={ data.Title } placeholder={ "Schema diff for " + p.Schema } class={ inputClass }/></div>
+						<button type="submit" class={ primaryButton }>Use as draft</button>
+					</form>
+					<p class="mt-3 text-xs text-slate-400">Creates an editable draft only. It is not executed.</p>
+				} else {
+					<p class="mt-4 text-sm text-slate-400">View + Edit access is required to turn this into a draft.</p>
+				}
+			} else if len(p.Changes) > 0 {
+				<p class="mt-6 text-sm text-slate-400">No SQL was generated for these changes. Write a migration manually if they are intended.</p>
+			}
+		</section>
+	}
+}
+
+templ DatabaseError(assets Assets, message string) {
+	@Layout("Unable to continue | sqlwise", assets) {
+		<main class="mx-auto flex min-h-screen w-full max-w-xl flex-col justify-center px-4 py-12 sm:px-6">
+			<h1 class="text-2xl font-semibold tracking-tight">Unable to continue</h1>
+			<p role="alert" class="mt-4 break-words text-sm leading-6 text-rose-200">{ message }</p>
+			<a href="/account" class="mt-6 inline-block rounded-lg py-3 text-sm text-cyan-300 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-300">Back to account</a>
+		</main>
+	}
+}
