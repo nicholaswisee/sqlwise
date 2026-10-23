@@ -24,6 +24,8 @@ func TestSplitPostgresKeepsQuotedBodiesIntact(t *testing.T) {
 		{"tagged-dollar", "DO $body$ BEGIN PERFORM '$$;'; END $body$; SELECT 1", []string{"DO $body$ BEGIN PERFORM '$$;'; END $body$", "SELECT 1"}},
 		{"identifier-with-dollar", "SELECT a$b$c FROM t; SELECT 2", []string{"SELECT a$b$c FROM t", "SELECT 2"}},
 		{"positional", "SELECT a FROM t WHERE b = $1; SELECT 2", []string{"SELECT a FROM t WHERE b = $1", "SELECT 2"}},
+		{"other-schema", "DELETE FROM other_schema.migration_receipts; SELECT 1; DROP SCHEMA internal_data CASCADE",
+			[]string{"DELETE FROM other_schema.migration_receipts", "SELECT 1", "DROP SCHEMA internal_data CASCADE"}},
 		{"reserved-in-comment", "-- not sqlwise_internal\nSELECT 1 /* sqlwise_internal */", []string{"-- not sqlwise_internal\nSELECT 1 /* sqlwise_internal */"}},
 		{"begin-atomic", "CREATE OR REPLACE FUNCTION f(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT CASE WHEN x > 0 THEN 1 ELSE 0 END; SELECT 2; END; SELECT 3",
 			[]string{"CREATE OR REPLACE FUNCTION f(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT CASE WHEN x > 0 THEN 1 ELSE 0 END; SELECT 2; END", "SELECT 3"}},
@@ -47,33 +49,44 @@ func TestSplitPostgresKeepsQuotedBodiesIntact(t *testing.T) {
 	}
 }
 
+// Rejections are asserted by type and location, the parts callers use; the
+// wording comes from PostgreSQL's parser and may change between versions.
 func TestSplitPostgresRejectsMalformedScripts(t *testing.T) {
-	for _, tc := range []struct{ name, sql, reason string }{
-		{"empty", "  \n", "no statements"},
-		{"comments-only", "-- nothing\n/* here */", "no statements"},
-		{"string", "SELECT 'oops", "unterminated quoted string"},
-		{"identifier", `SELECT "oops`, "unterminated quoted identifier"},
-		{"comment", "SELECT 1 /* /* */", "unterminated /* comment"},
-		{"dollar", "DO $$ BEGIN", "unterminated dollar"},
-		{"atomic", "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1;", "syntax error at end of input"},
-		{"meta", `\connect other`, "meta-command"},
-		{"meta-later-line", "SELECT 1;\n\\dt", "line 2: psql meta-command"},
-		{"syntax", "CREATE TABLE a (id int);\nALTER TABLE a ADD COLUM b int;", "line 2: syntax error at or near"},
-		{"keyword-typo", "SELEC 1", "syntax error"},
-		{"nul", "SELECT 1\x00", "NUL"},
-		{"utf8", "SELECT '\xff'", "UTF-8"},
-		{"size", "SELECT '" + strings.Repeat("x", MaxSQLBytes) + "'", "exceeds"},
-		{"count", strings.Repeat("SELECT 1;", MaxStatements+1), "more than"},
-		{"reserved", "DELETE FROM sqlwise_internal.migration_receipts", "reserved"},
-		{"reserved-quoted", `DROP TABLE "SQLWISE_INTERNAL"."x"; SELECT 1`, "reserved"},
-		{"reserved-mixed-case", "drop schema SqlWise_Internal cascade", "reserved"},
-		{"reserved-dynamic", "DO $$ BEGIN EXECUTE 'drop schema sqlwise_internal cascade'; END $$", "reserved"},
+	for _, tc := range []struct {
+		name, sql string
+		statement int    // 1-based statement reported, 0 for the whole script
+		line      string // line prefix reported for parse errors, if any
+	}{
+		{name: "empty", sql: "  \n"},
+		{name: "comments-only", sql: "-- nothing\n/* here */"},
+		{name: "string", sql: "SELECT 'oops", line: "line 1:"},
+		{name: "identifier", sql: `SELECT "oops`, line: "line 1:"},
+		{name: "comment", sql: "SELECT 1 /* /* */", line: "line 1:"},
+		{name: "dollar", sql: "DO $$ BEGIN", line: "line 1:"},
+		{name: "atomic", sql: "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1;", line: "line 1:"},
+		{name: "meta", sql: `\connect other`, line: "line 1:"},
+		{name: "meta-later-line", sql: "SELECT 1;\n\\dt", line: "line 2:"},
+		{name: "syntax", sql: "CREATE TABLE a (id int);\nALTER TABLE a ADD COLUM b int;", line: "line 2:"},
+		{name: "keyword-typo", sql: "SELEC 1", line: "line 1:"},
+		{name: "nul", sql: "SELECT 1\x00"},
+		{name: "utf8", sql: "SELECT '\xff'"},
+		{name: "size", sql: "SELECT '" + strings.Repeat("x", MaxSQLBytes) + "'"},
+		{name: "count", sql: strings.Repeat("SELECT 1;", MaxStatements+1)},
+		// Valid SQL rejected only for the receipt schema; "other-schema" in
+		// TestSplitPostgresKeepsQuotedBodiesIntact accepts the same shapes.
+		{name: "reserved", sql: "DELETE FROM sqlwise_internal.migration_receipts", statement: 1},
+		{name: "reserved-quoted", sql: `SELECT 1; DROP TABLE "SQLWISE_INTERNAL"."x"`, statement: 2},
+		{name: "reserved-mixed-case", sql: "drop schema SqlWise_Internal cascade", statement: 1},
+		{name: "reserved-dynamic", sql: "DO $$ BEGIN EXECUTE 'drop schema sqlwise_internal cascade'; END $$", statement: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := SplitPostgres(tc.sql)
+			statements, err := SplitPostgres(tc.sql)
 			var sqlErr *SQLError
-			if !errors.As(err, &sqlErr) || !strings.Contains(err.Error(), tc.reason) {
-				t.Fatalf("error = %v, want reason containing %q", err, tc.reason)
+			if !errors.As(err, &sqlErr) {
+				t.Fatalf("SplitPostgres = %q, %v; want *SQLError", texts(statements), err)
+			}
+			if sqlErr.Statement != tc.statement || !strings.HasPrefix(sqlErr.Reason, tc.line) {
+				t.Fatalf("error = statement %d %q, want statement %d with prefix %q", sqlErr.Statement, sqlErr.Reason, tc.statement, tc.line)
 			}
 		})
 	}
@@ -95,8 +108,10 @@ func TestValidatePostgresRejectsUnsupportedStatements(t *testing.T) {
 	}
 	for _, sql := range rejected {
 		t.Run(sql, func(t *testing.T) {
-			if _, err := ParsePostgres("SELECT 1;\n" + sql); err == nil || !strings.HasPrefix(err.Error(), "statement 2:") {
-				t.Fatalf("ParsePostgres(%q) error = %v, want statement 2 rejection", sql, err)
+			_, err := ParsePostgres("SELECT 1;\n" + sql)
+			var sqlErr *SQLError
+			if !errors.As(err, &sqlErr) || sqlErr.Statement != 2 {
+				t.Fatalf("ParsePostgres(%q) error = %v, want statement 2 rejected", sql, err)
 			}
 		})
 	}
