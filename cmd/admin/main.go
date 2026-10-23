@@ -14,6 +14,7 @@ import (
 	"golang.org/x/term"
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
+	"sqlwise/internal/migration"
 )
 
 func main() {
@@ -26,7 +27,7 @@ func main() {
 func run() error {
 	username := flag.String("username", "", "Username for the first platform administrator (3-64 letters, digits, _, . or -)")
 	stdin := flag.Bool("password-stdin", false, "Read the password from standard input instead of a hidden terminal prompt")
-	schemaOnly := flag.Bool("schema-only", false, "Initialize authentication and access schemas without creating an administrator")
+	schemaOnly := flag.Bool("schema-only", false, "Initialize authentication, access, and migration schemas without creating an administrator")
 	flag.Parse()
 	var usernameSet, stdinSet bool
 	flag.Visit(func(f *flag.Flag) {
@@ -83,8 +84,11 @@ func run() error {
 	if err := access.NewStore(pool).ApplySchema(ctx); err != nil {
 		return errors.New("could not initialize access schema; check database connectivity and permissions")
 	}
+	if err := migration.NewStore(pool).ApplySchema(ctx); err != nil {
+		return errors.New("could not initialize migration schema; check database connectivity and permissions")
+	}
 	if *schemaOnly {
-		fmt.Fprintln(os.Stdout, "Authentication and access schemas initialized.")
+		fmt.Fprintln(os.Stdout, "Authentication, access, and migration schemas initialized.")
 		return nil
 	}
 	if err := store.BootstrapAdmin(ctx, credentials); err != nil {
