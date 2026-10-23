@@ -6,9 +6,11 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/net/html"
+	"sqlwise/internal/migration"
 	"sqlwise/internal/migration/migrationtest"
 	"sqlwise/internal/web/views"
 )
@@ -73,13 +75,40 @@ func (f *databaseFixture) do(r dbRequest) *httptest.ResponseRecorder {
 	return recorder
 }
 
-func (f *databaseFixture) count(t *testing.T, sql string) int {
+// history reads db-a's drafts and attempts through the migration service.
+func (f *databaseFixture) history(t *testing.T) migration.History {
 	t.Helper()
-	var n int
-	if err := f.platform.Pool.QueryRow(t.Context(), sql).Scan(&n); err != nil {
+	h, err := migration.NewService(migration.NewStore(f.platform.Pool), f.platform.Access, nil, time.Now).History(f.editor.Ctx, "db-a")
+	if err != nil {
 		t.Fatal(err)
 	}
-	return n
+	return h
+}
+
+// text returns the visible text of an HTML document, with markup and
+// attributes removed and whitespace collapsed, as a user would read it.
+func text(t *testing.T, body string) string {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	var visit func(*html.Node)
+	visit = func(n *html.Node) {
+		if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style") {
+			return
+		}
+		if n.Type == html.TextNode {
+			b.WriteString(n.Data)
+			b.WriteByte(' ')
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			visit(c)
+		}
+	}
+	visit(doc)
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 func expectStatus(t *testing.T, response *httptest.ResponseRecorder, want int) {
@@ -169,7 +198,7 @@ func TestMigrationRoutesEnforceCSRFAndPermissions(t *testing.T) {
 			expectStatus(t, f.do(r), http.StatusForbidden)
 		})
 	}
-	if f.count(t, `SELECT count(*) FROM migration_drafts`) != 0 {
+	if len(f.history(t).Drafts) != 0 {
 		t.Fatal("rejected request created a draft")
 	}
 	created := f.do(dbRequest{method: "POST", path: "/databases/db-a/migrations", user: &f.editor, form: create})
@@ -186,10 +215,15 @@ func TestMigrationRoutesEnforceCSRFAndPermissions(t *testing.T) {
 
 	// Denied executions never open the target.
 	expectStatus(t, f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.editor, form: execute, noCSRF: true}), http.StatusForbidden)
-	expectStatus(t, f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.viewer, form: execute}), http.StatusForbidden)
-	expectStatus(t, f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.viewer, form: execute, hx: true}), http.StatusForbidden)
+	for _, hx := range []bool{false, true} {
+		denied := f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.viewer, form: execute, hx: hx})
+		expectStatus(t, denied, http.StatusForbidden)
+		if !strings.Contains(denied.Body.String(), "You do not have permission") {
+			t.Fatalf("hx=%v denial has no message: %.200s", hx, denied.Body.String())
+		}
+	}
 	expectStatus(t, f.do(dbRequest{method: "PATCH", path: location, user: &f.viewer, form: url.Values{"expected_revision": {"1"}, "title": {"x"}, "sql": {"SELECT 1"}}}), http.StatusForbidden)
-	if f.targets.Opens() != 0 || f.count(t, `SELECT count(*) FROM migration_attempts`) != 0 {
+	if f.targets.Opens() != 0 || len(f.history(t).Attempts) != 0 {
 		t.Fatal("denied execution reached the target")
 	}
 
@@ -226,9 +260,6 @@ func TestMigrationEditorFlowOverHTTP(t *testing.T) {
 	}
 	if strings.Contains(page.Body.String(), "<script>x</script>") {
 		t.Fatal("SQL rendered unescaped")
-	}
-	if !strings.Contains(page.Body.String(), `hx-on::before-swap="if (event.detail.xhr.status &gt;= 400)`) {
-		t.Fatal("HTMX error swap handler missing")
 	}
 
 	// Validation keeps input; stale revisions conflict both as form and fragment.
@@ -278,13 +309,14 @@ func TestMigrationEditorFlowOverHTTP(t *testing.T) {
 		form: url.Values{"expected_revision": {"3"}, "expected_version": {"0"}, "expected_sql_hash": {hash}}})
 	expectStatus(t, resubmit, http.StatusConflict)
 	expectStatus(t, f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.editor, form: url.Values{"expected_revision": {"x"}}}), http.StatusUnprocessableEntity)
-	if f.count(t, `SELECT count(*) FROM migration_attempts`) != 2 {
-		t.Fatal("unexpected attempt count")
+	if n := len(f.history(t).Attempts); n != 2 {
+		t.Fatalf("history has %d attempts, want the failed and the applied one", n)
 	}
 
 	history := f.do(dbRequest{method: "GET", path: "/databases/db-a/migrations", user: &f.viewer})
-	for _, want := range []string{"Current applied version: <strong class=\"text-slate-200\">v1</strong>", "Succeeded", "Failed, rolled back", "editor"} {
-		if !strings.Contains(history.Body.String(), want) {
+	historyText := text(t, history.Body.String())
+	for _, want := range []string{"Current applied version: v1", "Succeeded", "Failed, rolled back", "editor"} {
+		if !strings.Contains(historyText, want) {
 			t.Errorf("history lacks %q", want)
 		}
 	}
@@ -304,8 +336,8 @@ func TestMigrationEditorFlowOverHTTP(t *testing.T) {
 	visit(doc)
 	attempt := f.do(dbRequest{method: "GET", path: attemptPath, user: &f.viewer})
 	expectStatus(t, attempt, http.StatusOK)
-	if !strings.Contains(attempt.Body.String(), "Executed SQL (immutable)") {
-		t.Fatal("attempt detail missing SQL")
+	if shown := text(t, attempt.Body.String()); !strings.Contains(shown, strings.Join(strings.Fields(stored), " ")) {
+		t.Fatalf("attempt detail does not show the executed SQL: %s", shown)
 	}
 }
 
@@ -317,7 +349,7 @@ func TestSchemaDiffRoutes(t *testing.T) {
 	preview := f.do(dbRequest{method: "POST", path: "/databases/db-a/schema-diff/preview", user: &f.viewer, form: url.Values{"desired": {desired}}, hx: true})
 	expectStatus(t, preview, http.StatusOK)
 	body := preview.Body.String()
-	if strings.Contains(body, "<html") || !strings.Contains(body, `CREATE TABLE &#34;public&#34;.&#34;made_by_diff&#34;`) || strings.Contains(body, "Use as draft") {
+	if strings.Contains(body, "<html") || !strings.Contains(text(t, body), `CREATE TABLE "public"."made_by_diff"`) || strings.Contains(body, "Use as draft") {
 		t.Fatalf("viewer preview fragment: %s", body)
 	}
 	fingerprint := ""
@@ -335,7 +367,7 @@ func TestSchemaDiffRoutes(t *testing.T) {
 	expectStatus(t, f.do(dbRequest{method: "POST", path: "/databases/db-a/schema-diff/draft", user: &f.editor, form: draftForm, noCSRF: true}), http.StatusForbidden)
 	stale := url.Values{"desired": {desired}, "source_fingerprint": {strings.Repeat("0", 64)}}
 	expectStatus(t, f.do(dbRequest{method: "POST", path: "/databases/db-a/schema-diff/draft", user: &f.editor, form: stale}), http.StatusConflict)
-	if f.count(t, `SELECT count(*) FROM migration_drafts`) != 0 {
+	if len(f.history(t).Drafts) != 0 {
 		t.Fatal("denied or stale request created a draft")
 	}
 	created := f.do(dbRequest{method: "POST", path: "/databases/db-a/schema-diff/draft", user: &f.editor, form: draftForm})
@@ -344,7 +376,7 @@ func TestSchemaDiffRoutes(t *testing.T) {
 	if sql, _ := field(t, draft.Body.String(), "sql"); !strings.Contains(sql, `CREATE TABLE "public"."made_by_diff"`) {
 		t.Fatalf("draft SQL = %q", sql)
 	}
-	if f.count(t, `SELECT count(*) FROM migration_attempts`) != 0 {
+	if len(f.history(t).Attempts) != 0 {
 		t.Fatal("Use as draft auto-executed")
 	}
 }
