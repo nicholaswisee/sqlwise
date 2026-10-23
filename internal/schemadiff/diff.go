@@ -109,17 +109,17 @@ func Compare(current, desired Snapshot) []Change {
 	return changes
 }
 
-func byName(tables []normalTable) map[string]normalTable {
-	out := make(map[string]normalTable, len(tables))
+func byName(tables []Table) map[string]Table {
+	out := make(map[string]Table, len(tables))
 	for _, t := range tables {
 		out[t.Name] = t
 	}
 	return out
 }
 
-func compareTable(was, want normalTable) []Change {
+func compareTable(was, want Table) []Change {
 	var changes []Change
-	current := make(map[string]normalColumn, len(was.Columns))
+	current := make(map[string]Column, len(was.Columns))
 	for _, c := range was.Columns {
 		current[c.Name] = c
 	}
@@ -181,7 +181,7 @@ func compareDefinitions(table string, was, want []Definition, add, remove, alter
 	return changes
 }
 
-func columnSummary(c normalColumn) string {
+func columnSummary(c Column) string {
 	summary := c.Type
 	if !c.Nullable {
 		summary += " NOT NULL"

@@ -368,33 +368,15 @@ func stringLiteral(text string) (literal, cast string, ok bool) {
 	return "", "", false
 }
 
-type normalColumn struct {
-	Name     string  `json:"name"`
-	Type     string  `json:"type"`
-	Nullable bool    `json:"nullable"`
-	Default  *string `json:"default,omitempty"`
-}
-
-type normalTable struct {
-	Name        string         `json:"name"`
-	Columns     []normalColumn `json:"columns"`
-	PrimaryKey  []string       `json:"primaryKey"`
-	Indexes     []Definition   `json:"indexes"`
-	Constraints []Definition   `json:"constraints"`
-}
-
 // normalize returns comparison-ready tables sorted by name, with canonical
 // types and defaults; column order is preserved.
-func (s Snapshot) normalize() []normalTable {
-	tables := make([]normalTable, 0, len(s.Tables))
+func (s Snapshot) normalize() []Table {
+	tables := make([]Table, 0, len(s.Tables))
 	for _, t := range s.Tables {
-		n := normalTable{Name: t.Name, PrimaryKey: slices.Clone(t.PrimaryKey), Indexes: sortedDefinitions(t.Indexes), Constraints: sortedDefinitions(t.Constraints)}
-		if n.PrimaryKey == nil {
-			n.PrimaryKey = []string{}
-		}
+		n := Table{Name: t.Name, PrimaryKey: slices.Clone(t.PrimaryKey), Indexes: sortedDefinitions(t.Indexes), Constraints: sortedDefinitions(t.Constraints)}
 		for _, c := range t.Columns {
 			typ, _ := parseType(c.Type)
-			column := normalColumn{Name: c.Name, Type: typ.canonical, Nullable: c.Nullable}
+			column := Column{Name: c.Name, Type: typ.canonical, Nullable: c.Nullable}
 			if c.Default != nil {
 				if d := parseDefault(*c.Default, typ); d.canonical != "NULL" {
 					column.Default = &d.canonical
@@ -404,7 +386,7 @@ func (s Snapshot) normalize() []normalTable {
 		}
 		tables = append(tables, n)
 	}
-	slices.SortFunc(tables, func(a, b normalTable) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(tables, func(a, b Table) int { return strings.Compare(a.Name, b.Name) })
 	return tables
 }
 
@@ -423,9 +405,9 @@ func (s Snapshot) Fingerprint() string {
 	encoder := json.NewEncoder(&body)
 	encoder.SetEscapeHTML(false)
 	_ = encoder.Encode(struct {
-		Dialect string        `json:"dialect"`
-		Schema  string        `json:"schema"`
-		Tables  []normalTable `json:"tables"`
+		Dialect string  `json:"dialect"`
+		Schema  string  `json:"schema"`
+		Tables  []Table `json:"tables"`
 	}{s.Dialect, s.Schema, s.normalize()})
 	sum := sha256.Sum256(body.Bytes())
 	return hex.EncodeToString(sum[:])
