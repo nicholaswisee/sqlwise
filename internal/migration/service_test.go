@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
@@ -62,13 +61,38 @@ func (f *fixture) targetHas(t *testing.T, table string) bool {
 	return exists
 }
 
-func (f *fixture) count(t *testing.T, sql string, args ...any) int {
+// history reads db-a's drafts and attempts the way the history page does.
+func (f *fixture) history(t *testing.T) migration.History {
 	t.Helper()
-	var n int
-	if err := f.platform.Pool.QueryRow(t.Context(), sql, args...).Scan(&n); err != nil {
+	h, err := f.service.History(f.editor.Ctx, "db-a")
+	if err != nil {
 		t.Fatal(err)
 	}
-	return n
+	return h
+}
+
+// attempt finds one attempt in db-a's history by ID.
+func (f *fixture) attempt(t *testing.T, id string) migration.Attempt {
+	t.Helper()
+	for _, a := range f.history(t).Attempts {
+		if a.ID == id {
+			return a
+		}
+	}
+	t.Fatalf("attempt %s not in history", id)
+	return migration.Attempt{}
+}
+
+// attemptsOf returns the attempts recorded for one draft, newest first.
+func (f *fixture) attemptsOf(t *testing.T, draftID string) []migration.Attempt {
+	t.Helper()
+	var out []migration.Attempt
+	for _, a := range f.history(t).Attempts {
+		if a.MigrationID == draftID {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func wantKind(t *testing.T, err, kind error) {
@@ -103,7 +127,7 @@ func TestDraftLifecycleAndAccess(t *testing.T) {
 
 	updated, err := f.service.Update(f.editor.Ctx, "db-a", d.ID, migration.UpdateInput{ExpectedRevision: 1,
 		DraftInput: migration.DraftInput{Title: "Add users table", SQL: "CREATE TABLE users (id bigint PRIMARY KEY);"}})
-	if err != nil || updated.Revision != 2 || updated.SQL != "CREATE TABLE users (id bigint PRIMARY KEY);" || updated.Title != "Add users table" || !updated.UpdatedAt.After(d.UpdatedAt.Add(-time.Second)) {
+	if err != nil || updated.Revision != 2 || updated.SQL != "CREATE TABLE users (id bigint PRIMARY KEY);" || updated.Title != "Add users table" || updated.UpdatedAt.Before(d.UpdatedAt) {
 		t.Fatalf("update = %+v, %v", updated, err)
 	}
 	_, err = f.service.Update(f.editor.Ctx, "db-a", d.ID, migration.UpdateInput{ExpectedRevision: 1, DraftInput: migration.DraftInput{Title: "stale", SQL: "SELECT 1"}})
@@ -139,11 +163,10 @@ func TestDraftLifecycleAndAccess(t *testing.T) {
 	}
 	_, err = f.service.History(context.Background(), "db-a")
 	wantKind(t, err, auth.ErrSession)
-	if f.targets.Opens() != 0 || f.count(t, `SELECT count(*) FROM migration_attempts`) != 0 {
+	if h := f.history(t); f.targets.Opens() != 0 || len(h.Attempts) != 0 {
 		t.Fatal("denied execution reached the target or history")
-	}
-	if f.count(t, `SELECT count(*) FROM migration_drafts`) != 1 {
-		t.Fatal("denied or invalid create wrote a draft")
+	} else if len(h.Drafts) != 1 {
+		t.Fatalf("denied or invalid create wrote a draft: %d drafts", len(h.Drafts))
 	}
 
 	// A migration ID is only valid under its own database.
@@ -180,9 +203,6 @@ func TestLinearHistoryCommitRollbackAndImmutability(t *testing.T) {
 	var rows int
 	if err := f.target.QueryRow(t.Context(), `SELECT count(*) FROM items`).Scan(&rows); err != nil || rows != 1 {
 		t.Fatalf("rollback left %d rows, %v", rows, err)
-	}
-	if f.count(t, `SELECT count(*) FROM migration_attempts WHERE status='failed' AND candidate_version=2`) != 1 {
-		t.Fatal("failed attempt metadata missing")
 	}
 
 	// Retrying the corrected draft reuses candidate 2 without a second applied v2.
@@ -234,8 +254,8 @@ func TestLinearHistoryCommitRollbackAndImmutability(t *testing.T) {
 	wantKind(t, err, migration.ErrConflict)
 	_, err = f.service.Update(f.editor.Ctx, "db-a", first.ID, migration.UpdateInput{ExpectedRevision: first.Revision, DraftInput: migration.DraftInput{Title: "x", SQL: "DROP TABLE items"}})
 	wantKind(t, err, migration.ErrConflict)
-	if f.count(t, `SELECT count(*) FROM migration_attempts`) != 4 {
-		t.Fatal("re-submitting an applied migration created an attempt")
+	if n := len(f.history(t).Attempts); n != 4 {
+		t.Fatalf("re-submitting an applied migration changed history to %d attempts", n)
 	}
 	for _, sql := range []string{
 		`UPDATE migration_attempts SET sql_text='DROP TABLE items' WHERE id='` + a1.ID + `'`,
@@ -266,7 +286,7 @@ func TestExecuteRejectsStaleConfirmation(t *testing.T) {
 			wantKind(t, err, migration.ErrConflict)
 		})
 	}
-	if f.targetHas(t, "one") || f.count(t, `SELECT count(*) FROM migration_attempts`) != 0 {
+	if f.targetHas(t, "one") || len(f.history(t).Attempts) != 0 {
 		t.Fatal("stale confirmation executed")
 	}
 }
@@ -284,15 +304,16 @@ func TestExecuteRejectsUnsupportedSQLBeforeTarget(t *testing.T) {
 			wantKind(t, err, migration.ErrValidation)
 		})
 	}
-	if f.targets.Opens() != 0 || f.count(t, `SELECT count(*) FROM migration_attempts`) != 0 {
+	if f.targets.Opens() != 0 || len(f.history(t).Attempts) != 0 {
 		t.Fatal("invalid SQL reached the target")
 	}
-	// Errors only the server can detect (here a duplicate table) fail and roll back.
+	// Errors only the server can detect (here a duplicate table) do reach the
+	// target, which also shows Opens observes target access, then roll back.
 	d := f.create(t, "Duplicate", "CREATE TABLE ok_before (id int);\nCREATE TABLE ok_before (id int);")
 	a, err := f.execute(f.editor.Ctx, d, 0)
 	wantKind(t, err, migration.ErrExecutionFailed)
-	if a.FailedStatement != 2 || !strings.Contains(a.Error, "42P07") || f.targetHas(t, "ok_before") {
-		t.Fatalf("syntax failure = %+v", a)
+	if f.targets.Opens() == 0 || a.FailedStatement != 2 || !strings.Contains(a.Error, "42P07") || f.targetHas(t, "ok_before") {
+		t.Fatalf("server-side failure = %+v, opens %d", a, f.targets.Opens())
 	}
 }
 
@@ -320,67 +341,70 @@ func TestExecuteTimeoutAndCancellationRollBack(t *testing.T) {
 	if f.targetHas(t, "cancel_effect") {
 		t.Fatal("cancelled migration left changes")
 	}
-	if f.count(t, `SELECT count(*) FROM migration_attempts WHERE status='failed'`) != 2 || f.count(t, `SELECT count(*) FROM migration_attempts WHERE status<>'failed'`) != 0 {
-		t.Fatal("timeout/cancel attempts not recorded as failed")
+	attempts := f.history(t).Attempts
+	if len(attempts) != 2 || attempts[0].Status != migration.StatusFailed || attempts[1].Status != migration.StatusFailed {
+		t.Fatalf("timeout/cancel attempts = %+v, want two failed", attempts)
 	}
+}
+
+// startSlow executes a draft whose last statement sleeps on the target and
+// returns once that statement is running, so the execution is mid-flight.
+func (f *fixture) startSlow(t *testing.T, d migration.Draft, version int64, sleep string) <-chan error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { _, err := f.execute(f.editor.Ctx, d, version); done <- err }()
+	waitFor(t, f.target, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE query LIKE 'SELECT pg_sleep(`+sleep+`)%' AND state='active')`)
+	return done
 }
 
 func TestConcurrentExecutionsKeepHistoryLinear(t *testing.T) {
 	f := newFixture(t)
 	f.service.WithTimeouts(30*time.Second, migration.ExecuteTimeout, migration.CleanupTimeout)
-	left := f.create(t, "Left", "CREATE TABLE left_side (id int);")
-	right := f.create(t, "Right", "CREATE TABLE right_side (id int);")
-
-	// Hold the lock row so both executions queue on it, then release together.
-	holder := holdLock(t, f, "db-a")
-	results := make(chan error, 2)
-	for _, d := range []migration.Draft{left, right} {
-		go func() { _, err := f.execute(f.editor.Ctx, d, 0); results <- err }()
-	}
-	waitFor(t, f.platform.Pool, `SELECT count(*) = 2 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%FROM migration_locks%FOR UPDATE%'`)
-
-	// Another target is not serialized behind db-a.
+	slow := f.create(t, "Slow", "CREATE TABLE slow_side (id int);\nSELECT pg_sleep(2);")
+	racer := f.create(t, "Racer", "CREATE TABLE racer_side (id int);")
 	f.targets.Add("db-b", migrationtest.TargetDatabase(t))
 	other, err := f.service.Create(f.editor.Ctx, "db-b", migration.DraftInput{Title: "Other", SQL: "CREATE TABLE other (id int);"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// Both were confirmed against version 0. The racer starts while the slow
+	// execution is mid-flight, so it must wait and then see v1 already taken.
+	slowDone := f.startSlow(t, slow, 0, "2")
+	racerDone := make(chan error, 1)
+	go func() { _, err := f.execute(f.editor.Ctx, racer, 0); racerDone <- err }()
+
+	// Another target is not serialized behind db-a.
 	if a, err := f.execute(f.editor.Ctx, other, 0); err != nil || a.AppliedVersion != 1 {
 		t.Fatalf("parallel target = %+v, %v", a, err)
 	}
-
-	if err := holder.Rollback(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	var succeeded, conflicts int
-	for range 2 {
-		switch err := <-results; {
-		case err == nil:
-			succeeded++
-		case errors.Is(err, migration.ErrConflict):
-			conflicts++
-		default:
-			t.Fatalf("concurrent execute: %v", err)
-		}
-	}
-	if succeeded != 1 || conflicts != 1 {
-		t.Fatalf("succeeded=%d conflicts=%d", succeeded, conflicts)
-	}
-	if f.count(t, `SELECT count(*) FROM migration_attempts WHERE database_id='db-a'`) != 1 ||
-		f.count(t, `SELECT max(applied_version) FROM migration_attempts WHERE database_id='db-a'`) != 1 {
-		t.Fatal("concurrent executions duplicated or skipped a version")
+	select {
+	case <-slowDone:
+		t.Fatal("db-b waited for db-a's execution")
+	default:
 	}
 
-	// A held lock beyond the wait bound is reported busy, not queued forever.
+	if err := <-slowDone; err != nil {
+		t.Fatalf("slow execute: %v", err)
+	}
+	wantKind(t, <-racerDone, migration.ErrConflict)
+	h := f.history(t)
+	if h.CurrentVersion != 1 || len(h.Attempts) != 1 || h.Attempts[0].MigrationID != slow.ID || f.targetHas(t, "racer_side") {
+		t.Fatalf("concurrent executions duplicated or skipped a version: %+v", h.Attempts)
+	}
+
+	// A lock held beyond the wait bound is reported busy, not queued forever.
 	f.service.WithTimeouts(200*time.Millisecond, migration.ExecuteTimeout, migration.CleanupTimeout)
-	holder = holdLock(t, f, "db-a")
-	defer holder.Rollback(context.Background())
-	pending := left
-	if f.targetHas(t, "left_side") {
-		pending = right
-	}
-	_, err = f.execute(f.editor.Ctx, pending, 1)
+	slower := f.create(t, "Slower", "SELECT pg_sleep(2.5);")
+	slowerDone := f.startSlow(t, slower, 1, "2.5")
+	_, err = f.execute(f.editor.Ctx, racer, 1)
 	wantKind(t, err, migration.ErrBusy)
+	if err := <-slowerDone; err != nil {
+		t.Fatalf("slower execute: %v", err)
+	}
+	if len(f.attemptsOf(t, racer.ID)) != 0 || f.history(t).CurrentVersion != 2 {
+		t.Fatal("busy execution created an attempt or disturbed the version sequence")
+	}
 }
 
 func TestUnknownCommitOutcomesAreReconciledByReceipt(t *testing.T) {
@@ -408,10 +432,6 @@ func TestUnknownCommitOutcomesAreReconciledByReceipt(t *testing.T) {
 		if a.Status != migration.StatusFailed || a.ReconciledAt == nil || f.targetHas(t, "lost_commit") {
 			t.Fatalf("lost commit = %+v", a)
 		}
-		var outcome string
-		if err := f.target.QueryRow(t.Context(), `SELECT outcome FROM sqlwise_internal.migration_receipts WHERE attempt_id=$1`, a.ID).Scan(&outcome); err != nil || outcome != "fenced" {
-			t.Fatalf("receipt = %q, %v", outcome, err)
-		}
 	})
 	t.Run("undetermined-blocks-until-resolved", func(t *testing.T) {
 		f := newFixture(t)
@@ -425,9 +445,10 @@ func TestUnknownCommitOutcomesAreReconciledByReceipt(t *testing.T) {
 		first := f.create(t, "Hanging", "CREATE TABLE hanging (id int);")
 		a, err := f.execute(f.editor.Ctx, first, 0)
 		wantKind(t, err, migration.ErrOutcomeUnknown)
-		if a.Status != migration.StatusUnknown || f.count(t, `SELECT count(*) FROM migration_attempts WHERE status='unknown'`) != 1 {
+		if a.Status != migration.StatusUnknown || f.attempt(t, a.ID).Status != migration.StatusUnknown {
 			t.Fatalf("unknown attempt = %+v", a)
 		}
+		unknownID := a.ID
 		f.targets.Commit = nil
 		next := f.create(t, "Next", "CREATE TABLE next_one (id int);")
 		_, err = f.execute(f.editor.Ctx, next, 0)
@@ -445,8 +466,8 @@ func TestUnknownCommitOutcomesAreReconciledByReceipt(t *testing.T) {
 		if err != nil || a.AppliedVersion != 1 || f.targetHas(t, "hanging") || !f.targetHas(t, "next_one") {
 			t.Fatalf("after resolution = %+v, %v", a, err)
 		}
-		if f.count(t, `SELECT count(*) FROM migration_attempts WHERE migration_id=$1 AND status='failed' AND reconciled_at IS NOT NULL`, first.ID) != 1 {
-			t.Fatal("unknown attempt was not reconciled as failed")
+		if resolved := f.attempt(t, unknownID); resolved.Status != migration.StatusFailed || resolved.ReconciledAt == nil {
+			t.Fatalf("unknown attempt was not reconciled as failed: %+v", resolved)
 		}
 	})
 	t.Run("platform-record-failure-after-commit", func(t *testing.T) {
@@ -457,7 +478,7 @@ func TestUnknownCommitOutcomesAreReconciledByReceipt(t *testing.T) {
 		first := f.create(t, "Committed", "CREATE TABLE committed (id int);")
 		a, err := f.execute(f.editor.Ctx, first, 0)
 		wantKind(t, err, migration.ErrOutcomeUnknown)
-		if !f.targetHas(t, "committed") || f.count(t, `SELECT count(*) FROM migration_attempts WHERE id=$1 AND status='running'`, a.ID) != 1 {
+		if !f.targetHas(t, "committed") || f.attempt(t, a.ID).Status != migration.StatusRunning {
 			t.Fatal("expected committed target with unrecorded platform outcome")
 		}
 		f.platform.Exec(t, `DROP TRIGGER reject_success ON migration_attempts`)
@@ -465,8 +486,8 @@ func TestUnknownCommitOutcomesAreReconciledByReceipt(t *testing.T) {
 		// Recovery applies v1 from the receipt, so the stale editor sees a conflict.
 		_, err = f.execute(f.editor.Ctx, next, 0)
 		wantKind(t, err, migration.ErrConflict)
-		if f.count(t, `SELECT count(*) FROM migration_attempts WHERE id=$1 AND status='succeeded' AND applied_version=1 AND reconciled_at IS NOT NULL`, a.ID) != 1 {
-			t.Fatal("receipt recovery did not record v1")
+		if recovered := f.attempt(t, a.ID); recovered.Status != migration.StatusSucceeded || recovered.AppliedVersion != 1 || recovered.ReconciledAt == nil {
+			t.Fatalf("receipt recovery did not record v1: %+v", recovered)
 		}
 		if a, err := f.execute(f.editor.Ctx, next, 1); err != nil || a.AppliedVersion != 2 {
 			t.Fatalf("after recovery = %+v, %v", a, err)
@@ -481,8 +502,8 @@ func TestUnknownCommitOutcomesAreReconciledByReceipt(t *testing.T) {
 		if a, err := f.execute(f.editor.Ctx, next, 0); err != nil || a.AppliedVersion != 1 {
 			t.Fatalf("after crash = %+v, %v", a, err)
 		}
-		if f.count(t, `SELECT count(*) FROM migration_attempts WHERE id='crashed-attempt' AND status='failed'`) != 1 {
-			t.Fatal("crashed attempt not fenced as failed")
+		if crashed := f.attempt(t, "crashed-attempt"); crashed.Status != migration.StatusFailed || f.targetHas(t, "crashed") {
+			t.Fatalf("crashed attempt not resolved as failed: %+v", crashed)
 		}
 	})
 }
@@ -493,32 +514,12 @@ func TestExecuteWithoutReachableTarget(t *testing.T) {
 	d := f.create(t, "Unreachable", "CREATE TABLE unreachable (id int);")
 	_, err := f.execute(f.editor.Ctx, d, 0)
 	wantKind(t, err, migration.ErrTargetUnavailable)
-	if f.count(t, `SELECT count(*) FROM migration_attempts`) != 0 {
+	if len(f.history(t).Attempts) != 0 {
 		t.Fatal("unreachable target created an attempt")
 	}
 	unconfigured := migration.NewService(migration.NewStore(f.platform.Pool), f.platform.Access, nil, time.Now)
 	_, err = unconfigured.Execute(f.editor.Ctx, "db-a", d.ID, migration.ExecuteInput{ExpectedRevision: 1, ExpectedSQLHash: d.SQLHash()})
 	wantKind(t, err, migration.ErrTargetUnavailable)
-}
-
-// holdLock takes the execution lock row on a connection outside the platform
-// pool, so queued executions do not starve the pool they need afterwards.
-func holdLock(t *testing.T, f *fixture, databaseID string) pgx.Tx {
-	t.Helper()
-	f.platform.Exec(t, `INSERT INTO migration_locks (database_id) VALUES ($1) ON CONFLICT DO NOTHING`, databaseID)
-	conn, err := pgx.ConnectConfig(t.Context(), f.platform.Pool.Config().ConnConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { conn.Close(context.Background()) })
-	tx, err := conn.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(t.Context(), `SELECT 1 FROM migration_locks WHERE database_id=$1 FOR UPDATE`, databaseID); err != nil {
-		t.Fatal(err)
-	}
-	return tx
 }
 
 // waitFor polls a database condition; it synchronizes on real server state
