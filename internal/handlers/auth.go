@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
 	"sqlwise/internal/web/views"
 )
@@ -17,12 +18,17 @@ const (
 
 type Auth struct {
 	service *auth.Service
+	access  *access.Service
 	assets  views.Assets
 	secure  bool
 }
 
-func NewAuth(service *auth.Service, assets views.Assets, secure bool) *Auth {
-	return &Auth{service: service, assets: assets, secure: secure}
+func NewAuth(service *auth.Service, assets views.Assets, secure bool, policy ...*access.Service) *Auth {
+	h := &Auth{service: service, assets: assets, secure: secure}
+	if len(policy) > 0 {
+		h.access = policy[0]
+	}
+	return h
 }
 
 func (h *Auth) Register(router *gin.Engine) {
@@ -82,7 +88,22 @@ func (h *Auth) login(c *gin.Context) {
 
 func (h *Auth) account(c *gin.Context) {
 	session := c.MustGet("auth_session").(auth.Session)
-	Render(c, http.StatusOK, views.Account(h.assets, session.Principal.Username, session.CSRFToken))
+	if h.access == nil {
+		Render(c, http.StatusOK, views.Account(h.assets, session.Principal.Username, session.CSRFToken))
+		return
+	}
+	data := views.AccessAccountData{Username: session.Principal.Username, CSRFToken: session.CSRFToken, IsPlatformAdmin: session.Principal.IsPlatformAdmin}
+	databases, err := h.access.ListDatabases(c.Request.Context(), session.Principal.UserID)
+	if errors.Is(err, auth.ErrAuthorizationEpoch) {
+		data.NeedsRefresh = true
+	} else if err != nil {
+		h.failure(c, err)
+		return
+	}
+	for _, database := range databases {
+		data.Databases = append(data.Databases, views.AuthorizedDatabase{ID: database.ID, Name: database.Name, Permission: database.Permission.String()})
+	}
+	Render(c, http.StatusOK, views.AccessAccount(h.assets, data))
 }
 
 func (h *Auth) accountSession(c *gin.Context) {

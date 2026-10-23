@@ -24,14 +24,12 @@ func renderHTML(t *testing.T, component interface {
 	}
 	return doc
 }
-
 func walkHTML(node *html.Node, visit func(*html.Node)) {
 	visit(node)
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
 		walkHTML(child, visit)
 	}
 }
-
 func attr(node *html.Node, name string) string {
 	for _, a := range node.Attr {
 		if a.Key == name {
@@ -40,7 +38,6 @@ func attr(node *html.Node, name string) string {
 	}
 	return ""
 }
-
 func textContent(node *html.Node) string {
 	var text strings.Builder
 	walkHTML(node, func(n *html.Node) {
@@ -50,7 +47,6 @@ func textContent(node *html.Node) string {
 	})
 	return text.String()
 }
-
 func descendants(node *html.Node, tag string) []*html.Node {
 	var found []*html.Node
 	walkHTML(node, func(n *html.Node) {
@@ -61,178 +57,147 @@ func descendants(node *html.Node, tag string) []*html.Node {
 	return found
 }
 
-func TestAccessAdminRendersScopedActionsAndCSRF(t *testing.T) {
-	csrf := "csrf-token-for-tests"
-	doc := renderHTML(t, AccessAdmin(Assets{Dev: true}, AccessAdminData{
-		CSRFToken:   csrf,
-		Username:    "admin",
-		Users:       []AccessUser{{ID: "user-1", Username: "mira", Active: false}},
-		Groups:      []AccessGroup{{ID: "group-1", Name: "analysts"}},
-		Databases:   []AccessDatabase{{ID: "db-1", Name: "warehouse"}},
-		Memberships: []AccessMembership{{UserID: "user-1", GroupID: "group-1", Username: "mira", GroupName: "analysts"}},
-		Grants:      []AccessGrant{{GroupID: "group-1", DatabaseID: "db-1", GroupName: "analysts", DatabaseName: "warehouse", Permission: "edit"}},
-	}))
-	wantActions := map[string]map[string]bool{
-		"/admin/access/users":              {"username": true, "password": true, "csrf_token": true},
-		"/admin/access/groups":             {"name": true, "csrf_token": true},
-		"/admin/access/memberships":        {"user_id": true, "group_id": true, "csrf_token": true},
-		"/admin/access/memberships/remove": {"user_id": true, "group_id": true, "csrf_token": true},
-		"/admin/access/grants":             {"group_id": true, "database_id": true, "permission": true, "csrf_token": true},
-		"/admin/access/grants/remove":      {"group_id": true, "database_id": true, "csrf_token": true},
-		"/admin/access/revoke-sessions":    {"user_id": true, "csrf_token": true},
-	}
-	forms := descendants(doc, "form")
-	if len(forms) != len(wantActions) {
-		t.Fatalf("got %d forms, want %d", len(forms), len(wantActions))
-	}
-	for _, form := range forms {
+func TestAdminUserFormsUseFrozenRoutesNativePOSTAndCSRF(t *testing.T) {
+	csrf := "csrf-test"
+	doc := renderHTML(t, AdminUsersFragment(AccessPageData{CSRFToken: csrf, Users: []AccessUser{{ID: "u1", Username: "mira", Active: true, IsPlatformAdmin: true}, {ID: "u2", Username: "inactive", Active: false}}}))
+	wants := map[string]bool{"/admin/users": false, "/admin/users/u1": false, "/admin/users/u1/active": false, "/admin/users/u1/admin": false, "/admin/users/u2": false, "/admin/users/u2/active": false, "/admin/users/u2/admin": false}
+	for _, form := range descendants(doc, "form") {
 		action := attr(form, "action")
-		wantFields, ok := wantActions[action]
-		if !ok {
-			t.Errorf("unexpected form action %q", action)
+		if _, ok := wants[action]; !ok {
+			t.Errorf("unexpected form route %q", action)
 			continue
 		}
+		wants[action] = true
 		if attr(form, "method") != "post" {
-			t.Errorf("%s method = %q, want post", action, attr(form, "method"))
+			t.Errorf("%s is not native POST", action)
 		}
-		gotFields := map[string]bool{}
-		for _, input := range descendants(form, "input") {
-			name := attr(input, "name")
-			gotFields[name] = true
-			if name == "csrf_token" {
-				if attr(input, "type") != "hidden" {
-					t.Errorf("%s CSRF field is not hidden", action)
-				}
-				if attr(input, "value") != csrf {
-					t.Errorf("%s has wrong CSRF token", action)
-				}
-			}
-			if name == "password" && attr(input, "value") != "" {
-				t.Errorf("password is rendered into a value attribute")
-			}
-		}
-		for _, selectNode := range descendants(form, "select") {
-			gotFields[attr(selectNode, "name")] = true
-		}
-		for field := range wantFields {
-			if !gotFields[field] {
-				t.Errorf("%s is missing field %q", action, field)
-			}
-		}
-		for field := range gotFields {
-			if !wantFields[field] {
-				t.Errorf("%s has unexpected field %q", action, field)
-			}
-		}
-		delete(wantActions, action)
-	}
-	for action := range wantActions {
-		t.Errorf("missing form action %q", action)
-	}
-	for _, label := range descendants(doc, "label") {
-		id := attr(label, "for")
-		if id == "" {
-			t.Errorf("label has no control association: %q", textContent(label))
-			continue
+		if attr(form, "hx-post") != action {
+			t.Errorf("%s has no matching HTMX action", action)
 		}
 		found := false
-		walkHTML(doc, func(node *html.Node) {
-			if (node.Data == "input" || node.Data == "select") && attr(node, "id") == id {
+		for _, input := range descendants(form, "input") {
+			if attr(input, "name") == "csrf_token" && attr(input, "value") == csrf {
 				found = true
 			}
-		})
+		}
 		if !found {
-			t.Errorf("label %q does not identify a control", textContent(label))
+			t.Errorf("%s lacks hidden CSRF token", action)
 		}
 	}
-	for _, status := range descendants(doc, "p") {
-		if attr(status, "role") == "status" && textContent(status) != "" {
-			t.Errorf("unexpected status in empty-message rendering: %q", textContent(status))
+	for route, found := range wants {
+		if !found {
+			t.Errorf("missing form route %s", route)
 		}
 	}
-	if got := textContent(doc); !strings.Contains(got, "mira") || !strings.Contains(got, "analysts") || !strings.Contains(got, "warehouse") {
-		t.Fatalf("existing relationships are not shown with names: %q", got)
+	if !hasPostField(doc, "/admin/users/u1/active", "active", "false") || !hasPostField(doc, "/admin/users/u2/active", "active", "true") {
+		t.Fatal("active state actions do not support disable and re-enable")
 	}
-	if !strings.Contains(textContent(doc), "Inactive") {
-		t.Fatal("inactive user state is not visible")
+	if !hasPostField(doc, "/admin/users/u1/admin", "admin", "false") || !hasPostField(doc, "/admin/users/u2/admin", "admin", "true") {
+		t.Fatal("platform admin controls do not support demotion and promotion")
 	}
-}
-
-func TestAccessAdminEscapesNamesAndUsesAccessibleStatusAndAlert(t *testing.T) {
-	doc := renderHTML(t, AccessAdmin(Assets{}, AccessAdminData{
-		CSRFToken: "csrf-token-value",
-		Username:  `<script>alert("x")</script>`,
-		Message:   `Saved <access>`,
-		Error:     `Could not save <access>`,
-		Users:     []AccessUser{{ID: "u", Username: `<img src=x onerror=alert(1)>`, Active: true}},
-	}))
-	if got := textContent(doc); !strings.Contains(got, `<script>alert("x")</script>`) || !strings.Contains(got, `<img src=x onerror=alert(1)>`) {
-		t.Fatalf("expected user-provided text to appear as text, got %q", got)
-	}
-	if countRole(doc, "status") != 1 || countRole(doc, "alert") != 1 {
-		t.Fatalf("message and error should use status/alert roles")
-	}
-}
-
-func TestAccessAccountShowsOnlyAuthorizedTargetsAndAdminLink(t *testing.T) {
-	doc := renderHTML(t, AccessAccount(Assets{}, AccessAccountData{
-		Username: "mira", CSRFToken: "csrf-account", IsPlatformAdmin: true,
-		Databases: []AuthorizedDatabase{{ID: "db-1", Name: "warehouse", Permission: "View"}},
-	}))
-	text := textContent(doc)
-	if !strings.Contains(text, "mira") || !strings.Contains(text, "warehouse") || !strings.Contains(text, "View") {
-		t.Fatalf("authorized account access missing from page: %q", text)
-	}
-	if !hasLink(doc, "/admin/access") {
-		t.Fatal("platform admin has no access-control link")
-	}
-	if !hasPost(doc, "/logout", "csrf_token", "csrf-account") {
-		t.Fatal("account page is missing native CSRF-protected logout")
-	}
-	if strings.Contains(text, "No access") {
-		t.Fatalf("account page should not list unauthorized targets: %q", text)
-	}
-}
-
-func TestAccessAccountNonAdminAndEmptyState(t *testing.T) {
-	doc := renderHTML(t, AccessAccount(Assets{}, AccessAccountData{Username: "mira"}))
-	if hasLink(doc, "/admin/access") {
-		t.Fatal("non-admin account has an admin link")
-	}
-	if !strings.Contains(textContent(doc), "No database access") {
-		t.Fatalf("account empty state missing: %q", textContent(doc))
-	}
-}
-
-func TestAccessAdminDistinguishesAllEmptyCollections(t *testing.T) {
-	doc := renderHTML(t, AccessAdmin(Assets{}, AccessAdminData{Username: "admin"}))
-	for _, emptyState := range []string{
-		"No users yet.",
-		"No groups yet.",
-		"No registered targets yet.",
-		"Connection registration is not available in this slice.",
-		"No memberships yet.",
-		"No target access grants yet.",
-	} {
-		if !strings.Contains(textContent(doc), emptyState) {
-			t.Errorf("missing distinct empty state %q", emptyState)
+	passwordForms := 0
+	for _, form := range descendants(doc, "form") {
+		if attr(form, "action") != "/admin/users/u1" {
+			continue
+		}
+		for _, input := range descendants(form, "input") {
+			if attr(input, "name") != "password" {
+				continue
+			}
+			passwordForms++
+			if attr(input, "type") != "password" || attr(input, "minlength") != "12" || attr(input, "value") != "" {
+				t.Error("password reset control must be blank, password typed and require at least 12 characters")
+			}
 		}
 	}
-	if hasLink(doc, "/viewer") {
-		t.Fatal("admin template contains a nonfunctional viewer link")
+	if passwordForms != 1 {
+		t.Fatalf("got %d password reset controls, want one", passwordForms)
+	}
+	if strings.Contains(textContent(doc), "csrf-test") {
+		t.Fatal("CSRF token leaked into visible text")
+	}
+}
+
+func TestAdminGroupFormsRenderMembershipAndGrantControls(t *testing.T) {
+	data := AccessPageData{CSRFToken: "csrf", SelectedGroup: AccessGroup{ID: "g1", Name: "analysts"}, Users: []AccessUser{{ID: "u1", Username: "mira", Active: true}}, Databases: []AccessDatabase{{ID: "db1", Name: "warehouse", Active: true}}, Memberships: []AccessMembership{{UserID: "u1", Username: "mira"}}, Grants: []AccessGrant{{DatabaseID: "db1", DatabaseName: "warehouse", Permission: "view"}}}
+	members := renderHTML(t, AdminGroupMembersFragment(data))
+	if !hasPost(members, "/admin/groups/g1/members", "user_id", "") || !hasPost(members, "/admin/groups/g1/members/remove", "user_id", "u1") {
+		t.Fatal("membership add/remove forms missing")
+	}
+	databases := renderHTML(t, AdminGroupDatabasesFragment(data))
+	if !hasPost(databases, "/admin/groups/g1/databases", "database_id", "") || !hasPost(databases, "/admin/groups/g1/databases/remove", "database_id", "db1") {
+		t.Fatal("grant set/remove forms missing")
+	}
+	if !strings.Contains(textContent(databases), "warehouse") {
+		t.Fatal("registered database display name missing")
+	}
+}
+
+func TestAdminGroupsCanDisableAndReEnable(t *testing.T) {
+	doc := renderHTML(t, AdminGroupsFragment(AccessPageData{CSRFToken: "csrf", Groups: []AccessGroup{{ID: "active", Name: "active group", Active: true}, {ID: "inactive", Name: "inactive group", Active: false}}}))
+	if !hasPostField(doc, "/admin/groups/active/active", "active", "false") || !hasPostField(doc, "/admin/groups/inactive/active", "active", "true") {
+		t.Fatal("active state actions do not support disable and re-enable")
+	}
+}
+
+func TestAccessPagesShowEscapedFeedbackEmptyAndFilteredAccount(t *testing.T) {
+	doc := renderHTML(t, AccessUsers(Assets{}, AccessPageData{Error: "bad <input>", Users: []AccessUser{{ID: "u", Username: `<img src=x onerror=alert(1)>`, Active: false}}}))
+	if countRole(doc, "alert") != 1 || !strings.Contains(textContent(doc), `<img src=x onerror=alert(1)>`) {
+		t.Fatal("error or escaped username missing")
+	}
+	if len(descendants(doc, "img")) != 0 {
+		t.Fatal("untrusted username rendered as markup")
+	}
+	empty := renderHTML(t, AccessGroupDatabases(Assets{}, AccessPageData{SelectedGroup: AccessGroup{ID: "g", Name: "empty"}, Databases: []AccessDatabase{{ID: "inactive", Name: "former target", Active: false}}, Grants: []AccessGrant{{DatabaseID: "inactive", DatabaseName: "former target", Permission: "view"}}}))
+	if !strings.Contains(textContent(empty), "No active registered databases") || !strings.Contains(textContent(empty), "former target") || !strings.Contains(textContent(empty), "view") {
+		t.Fatal("inactive database empty state or existing grant missing")
+	}
+	for _, option := range descendants(empty, "option") {
+		if attr(option, "value") == "inactive" {
+			t.Fatal("inactive database was offered for a new grant")
+		}
+	}
+	account := renderHTML(t, AccessAccount(Assets{}, AccessAccountData{Username: "mira", CSRFToken: "account-csrf", IsPlatformAdmin: true, Databases: []AuthorizedDatabase{{Name: "warehouse", Permission: "View"}}}))
+	if !hasLink(account, "/admin") || !hasPost(account, "/logout", "csrf_token", "account-csrf") {
+		t.Fatal("account admin navigation/logout missing")
+	}
+	if !strings.Contains(textContent(account), "warehouse") || !strings.Contains(textContent(account), "View") {
+		t.Fatal("authorized database missing")
+	}
+	nonAdmin := renderHTML(t, AccessAccount(Assets{}, AccessAccountData{Username: "mira"}))
+	if hasLink(nonAdmin, "/admin") || !strings.Contains(textContent(nonAdmin), "No database access") {
+		t.Fatal("non-admin account visibility or empty state incorrect")
+	}
+}
+
+func TestAdminRouteLinksAndStatusAreAccessible(t *testing.T) {
+	doc := renderHTML(t, AccessDashboard(Assets{}, AccessPageData{Message: "Saved", Databases: []AccessDatabase{{ID: "db", Name: "Warehouse", Active: true}}}))
+	for _, href := range []string{"/admin", "/admin/users", "/admin/groups", "/account"} {
+		if !hasLink(doc, href) {
+			t.Errorf("missing navigation link %s", href)
+		}
+	}
+	if hasLink(doc, "/admin/databases") || !strings.Contains(textContent(doc), "Connection management unavailable") {
+		t.Fatal("unavailable connection management is linked or not identified")
+	}
+	if countRole(doc, "status") < 2 || !strings.Contains(textContent(doc), "Warehouse") {
+		t.Fatal("dashboard feedback or database list missing")
+	}
+	available := renderHTML(t, AccessDashboard(Assets{}, AccessPageData{ConnectionsAvailable: true}))
+	if !hasLink(available, "/admin/databases") {
+		t.Fatal("available connection management route has no navigation link")
 	}
 }
 
 func countRole(doc *html.Node, role string) int {
 	count := 0
-	walkHTML(doc, func(node *html.Node) {
-		if attr(node, "role") == role {
+	walkHTML(doc, func(n *html.Node) {
+		if attr(n, "role") == role {
 			count++
 		}
 	})
 	return count
 }
-
 func hasLink(doc *html.Node, href string) bool {
 	for _, link := range descendants(doc, "a") {
 		if attr(link, "href") == href {
@@ -241,8 +206,26 @@ func hasLink(doc *html.Node, href string) bool {
 	}
 	return false
 }
-
 func hasPost(doc *html.Node, action, name, value string) bool {
+	for _, form := range descendants(doc, "form") {
+		if attr(form, "action") != action || attr(form, "method") != "post" {
+			continue
+		}
+		for _, input := range descendants(form, "input") {
+			if attr(input, "name") == name && (value == "" || attr(input, "value") == value) {
+				return true
+			}
+		}
+		for _, selectNode := range descendants(form, "select") {
+			if attr(selectNode, "name") == name && value == "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasPostField(doc *html.Node, action, name, value string) bool {
 	for _, form := range descendants(doc, "form") {
 		if attr(form, "action") != action || attr(form, "method") != "post" {
 			continue

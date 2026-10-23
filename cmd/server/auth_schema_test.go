@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
 	"sqlwise/internal/testdb"
 )
@@ -29,9 +30,12 @@ func TestConnectAuthRejectsPreW2AuthSchema(t *testing.T) {
 	}
 }
 
-func TestConnectAuthAcceptsCurrentAuthSchema(t *testing.T) {
+func TestConnectAuthAcceptsCurrentAuthAndAccessSchema(t *testing.T) {
 	pool := testdb.Open(t)
 	if err := auth.NewStore(pool).ApplySchema(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := access.NewStore(pool).ApplySchema(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("DATABASE_URL", isolatedDatabaseURL(t, pool))
@@ -44,6 +48,24 @@ func TestConnectAuthAcceptsCurrentAuthSchema(t *testing.T) {
 		t.Fatal("connectAuth returned nil service or pool")
 	}
 	connectedPool.Close()
+}
+
+func TestConnectAuthRejectsMissingAccessSchema(t *testing.T) {
+	pool := testdb.Open(t)
+	if err := auth.NewStore(pool).ApplySchema(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DATABASE_URL", isolatedDatabaseURL(t, pool))
+	service, connectedPool, err := connectAuth()
+	if service != nil || connectedPool != nil || err == nil {
+		if connectedPool != nil {
+			connectedPool.Close()
+		}
+		t.Fatalf("connectAuth() = (%v, %v, %v), want access schema rejection", service, connectedPool, err)
+	}
+	if !strings.Contains(err.Error(), "access schema unavailable") {
+		t.Fatalf("missing access schema error: %v", err)
+	}
 }
 
 func isolatedDatabaseURL(t *testing.T, pool *pgxpool.Pool) string {

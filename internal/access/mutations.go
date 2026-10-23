@@ -196,6 +196,15 @@ func (s *Service) changeGrant(ctx context.Context, groupID, databaseID string, p
 		if err := policyResource(ctx, tx, "database_registrations", databaseID); err != nil {
 			return err
 		}
+		if !remove {
+			var active bool
+			if err := tx.QueryRow(ctx, `SELECT active FROM database_registrations WHERE id=$1`, databaseID).Scan(&active); err != nil {
+				return err
+			}
+			if !active {
+				return ErrNotFound
+			}
+		}
 		previous := None
 		var raw string
 		err := tx.QueryRow(ctx, `SELECT permission FROM group_database_grants WHERE group_id=$1 AND database_id=$2`, groupID, databaseID).Scan(&raw)

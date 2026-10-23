@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/net/html"
+	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
 	"sqlwise/internal/handlers"
 	"sqlwise/internal/testdb"
@@ -40,6 +41,10 @@ func newAuthFixture(t *testing.T) authFixture {
 	if err := store.ApplySchema(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	accessStore := access.NewStore(pool)
+	if err := accessStore.ApplySchema(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	credentials, err := auth.ParseCredentials("admin", "integration test passphrase")
 	if err != nil {
 		t.Fatal(err)
@@ -52,8 +57,9 @@ func newAuthFixture(t *testing.T) authFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guard := handlers.NewAuth(service, views.Assets{Dev: true}, false)
-	router := newRouter(views.Assets{Dev: true}, service)
+	policy := access.NewService(accessStore, service)
+	guard := handlers.NewAuth(service, views.Assets{Dev: true}, false, policy)
+	router := newRouter(views.Assets{Dev: true}, service, policy)
 	return authFixture{router: router, guard: guard, pool: pool, now: now}
 }
 
