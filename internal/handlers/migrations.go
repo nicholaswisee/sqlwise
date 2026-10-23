@@ -17,32 +17,42 @@ import (
 )
 
 // Migrations serves the /databases/:databaseID/migrations and schema-diff
-// route families. Every handler runs after RequireSession; the services
-// re-evaluate database permission on each call.
+// route families. Routes are guarded by RequireSession and
+// RequireDatabasePermission; the services re-evaluate permission on each call,
+// so execution rechecks edit after waiting for the lock.
 type Migrations struct {
 	auth       *Auth
+	policy     DatabasePermissionChecker
 	migrations *migration.Service
 	diff       *schemadiff.Service
 	assets     views.Assets
 }
 
-func NewMigrations(auth *Auth, migrations *migration.Service, diff *schemadiff.Service, assets views.Assets) *Migrations {
-	return &Migrations{auth: auth, migrations: migrations, diff: diff, assets: assets}
+func NewMigrations(auth *Auth, policy DatabasePermissionChecker, migrations *migration.Service, diff *schemadiff.Service, assets views.Assets) *Migrations {
+	return &Migrations{auth: auth, policy: policy, migrations: migrations, diff: diff, assets: assets}
 }
 
 func (h *Migrations) Register(router *gin.Engine) {
 	db := router.Group("/databases/:databaseID", h.auth.RequireSession())
-	db.GET("/migrations", h.history)
-	db.POST("/migrations", h.create)
-	db.GET("/migrations/:migrationID", h.detail)
-	db.PATCH("/migrations/:migrationID", h.update)
+	view := db.Group("", h.require(access.View))
+	edit := db.Group("", h.require(access.Edit))
+	view.GET("/migrations", h.history)
+	edit.POST("/migrations", h.create)
+	view.GET("/migrations/:migrationID", h.detail)
+	edit.PATCH("/migrations/:migrationID", h.update)
 	// Plain HTML forms cannot send PATCH; POST to the resource is the fallback.
-	db.POST("/migrations/:migrationID", h.update)
-	db.POST("/migrations/:migrationID/execute", h.execute)
-	db.GET("/migrations/:migrationID/attempts/:attemptID", h.attempt)
-	db.GET("/schema-diff", h.schemaDiff)
-	db.POST("/schema-diff/preview", h.preview)
-	db.POST("/schema-diff/draft", h.useAsDraft)
+	edit.POST("/migrations/:migrationID", h.update)
+	edit.POST("/migrations/:migrationID/execute", h.execute)
+	view.GET("/migrations/:migrationID/attempts/:attemptID", h.attempt)
+	view.GET("/schema-diff", h.schemaDiff)
+	view.POST("/schema-diff/preview", h.preview)
+	edit.POST("/schema-diff/draft", h.useAsDraft)
+}
+
+// require is RequireDatabasePermission with h.fail, so denials render the
+// page or HTMX fragment message instead of an empty 403 body.
+func (h *Migrations) require(required access.Permission) gin.HandlerFunc {
+	return requireDatabasePermissionWithFailure(h.auth.service.ValidateContextFresh, h.policy, "databaseID", required, h.fail)
 }
 
 func (h *Migrations) nav(c *gin.Context, db migration.Database, active string) views.DatabaseNav {

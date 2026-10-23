@@ -31,7 +31,7 @@ func newDatabaseFixture(t *testing.T) *databaseFixture {
 	targets.Add("db-a", migrationtest.TargetDatabase(t))
 	assets := views.Assets{Dev: true}
 	router := newRouter(assets, p.Sessions)
-	registerDatabaseRoutes(router, p.Sessions, p.Pool, assets, databaseTargets{targets: targets, snapshot: migrationtest.Snapshots{Targets: targets}})
+	registerDatabaseRoutes(router, p.Sessions, p.Access, p.Pool, assets, databaseTargets{targets: targets, snapshot: migrationtest.Snapshots{Targets: targets}})
 	return &databaseFixture{platform: p, targets: targets, router: router,
 		editor:   p.User(t, "editor", map[string]string{"db-a": "edit", "db-b": "edit"}),
 		viewer:   p.User(t, "viewer", map[string]string{"db-a": "view"}),

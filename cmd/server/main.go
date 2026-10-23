@@ -38,7 +38,7 @@ func main() {
 	defer closeTargets()
 	policy := access.NewService(access.NewStore(pool), service)
 	router := newRouter(assets, service, policy)
-	registerDatabaseRoutes(router, service, pool, assets, targets)
+	registerDatabaseRoutes(router, service, policy, pool, assets, targets)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

@@ -41,12 +41,11 @@ func loadDatabaseTargets() (databaseTargets, func(), error) {
 	return databaseTargets{targets: registry, snapshot: registry}, registry.Close, nil
 }
 
-func registerDatabaseRoutes(router *gin.Engine, service *auth.Service, pool *pgxpool.Pool, assets views.Assets, targets databaseTargets) {
-	guard := handlers.NewAuth(service, assets, os.Getenv("APP_ENV") == "production")
-	authz := access.NewService(access.NewStore(pool), service)
-	migrations := migration.NewService(migration.NewStore(pool), authz, targets.targets, time.Now)
-	diff := schemadiff.NewService(authz, targets.snapshot, migrations)
-	handlers.NewMigrations(guard, migrations, diff, assets).Register(router)
+func registerDatabaseRoutes(router *gin.Engine, service *auth.Service, policy *access.Service, pool *pgxpool.Pool, assets views.Assets, targets databaseTargets) {
+	guard := handlers.NewAuth(service, assets, os.Getenv("APP_ENV") == "production", policy)
+	migrations := migration.NewService(migration.NewStore(pool), policy, targets.targets, time.Now)
+	diff := schemadiff.NewService(policy, targets.snapshot, migrations)
+	handlers.NewMigrations(guard, policy, migrations, diff, assets).Register(router)
 }
 
 func checkMigrationSchema(pool *pgxpool.Pool) error {
