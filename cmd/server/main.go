@@ -28,8 +28,17 @@ func main() {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+	if err := checkMigrationSchema(pool); err != nil {
+		log.Fatal(err)
+	}
+	targets, closeTargets, err := loadDatabaseTargets()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer closeTargets()
 	policy := access.NewService(access.NewStore(pool), service)
 	router := newRouter(assets, service, policy)
+	registerDatabaseRoutes(router, service, pool, assets, targets)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
