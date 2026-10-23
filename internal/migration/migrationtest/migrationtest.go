@@ -13,39 +13,31 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"sqlwise/internal/access"
+	"sqlwise/internal/access/testfixture"
 	"sqlwise/internal/auth"
 	"sqlwise/internal/migration"
 	"sqlwise/internal/migration/pgtarget"
-	"sqlwise/internal/testdb"
 )
 
-const Password = "migration fixture passphrase"
-
+// Platform is Wise's access fixture (auth and access schemas, a platform
+// admin) plus the migration schema. Users, groups and grants go through the
+// access service, the same path as the admin UI.
 type Platform struct {
 	Pool     *pgxpool.Pool
 	Sessions *auth.Service
 	Access   *access.Service
+	admin    context.Context
 }
 
-// NewPlatform applies the auth, access and migration schemas in an isolated schema.
+const password = "migration fixture passphrase"
+
 func NewPlatform(t *testing.T) *Platform {
 	t.Helper()
-	pool := testdb.Open(t)
-	store := auth.NewStore(pool)
-	if err := store.ApplySchema(t.Context()); err != nil {
+	f := testfixture.New(t)
+	if err := migration.NewStore(f.Pool).ApplySchema(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := access.NewStore(pool).ApplySchema(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := migration.NewStore(pool).ApplySchema(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	sessions, err := auth.NewService(store, time.Now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &Platform{Pool: pool, Sessions: sessions, Access: access.NewService(access.NewStore(pool), sessions)}
+	return &Platform{Pool: f.Pool, Sessions: f.Auth, Access: f.Access, admin: f.Admin.Context}
 }
 
 func (p *Platform) Exec(t *testing.T, sql string, args ...any) {
@@ -55,7 +47,8 @@ func (p *Platform) Exec(t *testing.T, sql string, args ...any) {
 	}
 }
 
-// Database registers an active target identity.
+// Database registers an active target identity. Registration is Jason's
+// connection management; until it exists the row is inserted directly.
 func (p *Platform) Database(t *testing.T, id, name string) {
 	t.Helper()
 	p.Exec(t, `INSERT INTO database_registrations (id, name, active) VALUES ($1, $2, true)`, id, name)
@@ -73,33 +66,39 @@ type User struct {
 // database), then signs in and binds the session to a context.
 func (p *Platform) User(t *testing.T, username string, grants map[string]string) User {
 	t.Helper()
-	hash, err := auth.HashPassword(Password)
+	principal, err := p.Sessions.CreateUser(p.admin, credentials(t, username))
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := "user-" + username
-	p.Exec(t, `INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3)`, id, username, hash)
 	if len(grants) > 0 {
-		p.Exec(t, `INSERT INTO groups (id, name) VALUES ($1, $1)`, "group-"+username)
-		p.Exec(t, `INSERT INTO group_memberships (user_id, group_id) VALUES ($1, $2)`, id, "group-"+username)
-		for database, permission := range grants {
-			p.Exec(t, `INSERT INTO group_database_grants (group_id, database_id, permission) VALUES ($1, $2, $3)`, "group-"+username, database, permission)
+		group, err := p.Access.CreateGroup(p.admin, "Group "+username)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Access.AddMembership(p.admin, principal.UserID, group.ID); err != nil {
+			t.Fatal(err)
+		}
+		for database, name := range grants {
+			permission, err := access.ParsePermission(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Access.SetGrant(p.admin, group.ID, database, permission); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	return p.Login(t, username)
 }
 
+// Login signs in again, issuing proof for the user's current policy epoch.
 func (p *Platform) Login(t *testing.T, username string) User {
 	t.Helper()
-	credentials, err := auth.ParseCredentials(username, Password)
-	if err != nil {
-		t.Fatal(err)
-	}
 	challenge, err := p.Sessions.LoginChallenge(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := p.Sessions.Login(t.Context(), auth.LoginRequest{Credentials: credentials, ChallengeToken: challenge.Token, CSRFToken: challenge.CSRFToken})
+	issued, err := p.Sessions.Login(t.Context(), auth.LoginRequest{Credentials: credentials(t, username), ChallengeToken: challenge.Token, CSRFToken: challenge.CSRFToken})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +111,15 @@ func (p *Platform) Login(t *testing.T, username string) User {
 		t.Fatal(err)
 	}
 	return User{ID: session.Principal.UserID, Username: username, Token: issued.Token, CSRF: session.CSRFToken, Ctx: ctx}
+}
+
+func credentials(t *testing.T, username string) auth.Credentials {
+	t.Helper()
+	value, err := auth.ParseCredentials(username, password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 // TargetDatabase creates a fresh database on the TEST_DATABASE_URL server and
