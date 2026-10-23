@@ -2,6 +2,7 @@ package schemadiff
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -121,14 +122,29 @@ func TestRemovedAndAlteredObjectsWarnWithoutSQL(t *testing.T) {
 	if !strings.HasPrefix(p.Warnings[0], "Destructive") || !strings.HasPrefix(p.Warnings[len(p.Warnings)-1], "Review") {
 		t.Errorf("warnings not grouped: %q", p.Warnings)
 	}
-	destructive := 0
-	for _, c := range p.Changes {
-		if c.Destructive {
-			destructive++
-		}
+	// Destructive means applying the change can lose data: dropping tables,
+	// columns or indexes, narrowing a type, or replacing an existing key.
+	type key struct {
+		kind                  ChangeKind
+		table, column, object string
 	}
-	if destructive < 5 {
-		t.Errorf("destructive changes = %d", destructive)
+	got := map[key]bool{}
+	for _, c := range p.Changes {
+		got[key{c.Kind, c.Table, c.Column, c.Object}] = c.Destructive
+	}
+	want := map[key]bool{
+		{RemoveTable, "audit", "", ""}:                true,
+		{RemoveColumn, "users", "nickname", ""}:       true,
+		{AlterType, "users", "email", ""}:             true,
+		{AlterNullability, "users", "created_at", ""}: false,
+		{AlterDefault, "users", "active", ""}:         false,
+		{AddColumn, "users", "display_name", ""}:      false,
+		{AlterPrimaryKey, "users", "", ""}:            true,
+		{RemoveIndex, "users", "", "users_email_key"}: true,
+		{AddConstraint, "users", "", "email_lower"}:   false,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("changes = %v, want %v", got, want)
 	}
 }
 

@@ -52,12 +52,13 @@ func TestLiveSchemaDiffToExecutedDraft(t *testing.T) {
 		}
 		return state
 	}
+	// platformRows counts drafts and attempts as the migration history shows them.
 	platformRows := func() int {
-		var n int
-		if err := p.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM migration_drafts) + (SELECT count(*) FROM migration_attempts)`).Scan(&n); err != nil {
+		h, err := drafts.History(viewer.Ctx, "db")
+		if err != nil {
 			t.Fatal(err)
 		}
-		return n
+		return len(h.Drafts) + len(h.Attempts)
 	}
 	before := catalog()
 
