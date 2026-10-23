@@ -18,6 +18,8 @@ sqlwise is a server-rendered SQL database management project for the IF3110 Web 
 ├── cmd/admin/                    # First-administrator setup
 ├── internal/auth/                # Users, password hashing, and sessions
 ├── internal/access/              # Groups, grants, and access control
+├── internal/migration/           # Migration drafts, execution, and history
+├── internal/schemadiff/          # Schema diff and migration generation
 ├── internal/handlers/            # Server-rendered HTTP handlers
 ├── internal/web/views/           # templ pages, layouts, and asset loader
 ├── web/src/                      # Vite entry and Tailwind stylesheet
