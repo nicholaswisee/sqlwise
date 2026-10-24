@@ -44,6 +44,9 @@ func registerDatabaseRoutes(router *gin.Engine, service *auth.Service, policy *a
 	migrations := migration.NewService(migration.NewStore(pool), policy, targets.targets, time.Now)
 	diff := schemadiff.NewService(policy, targets.snapshot, migrations)
 	handlers.NewMigrations(guard, policy, migrations, diff, assets).Register(router)
+	if targets.pools != nil {
+		handlers.NewDatabaseViewer(guard, policy, targets.pools, assets).Register(router)
+	}
 	if targets.store != nil {
 		handlers.NewConnectionAdmin(guard, policy, targets.store, targets.pools, assets).Register(router)
 	}
