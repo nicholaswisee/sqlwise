@@ -20,6 +20,7 @@ sqlwise is a server-rendered SQL database management project for the IF3110 Web 
 ├── internal/access/              # Groups, grants, and access control
 ├── internal/migration/           # Migration drafts, execution, and history
 ├── internal/schemadiff/          # Schema diff and migration generation
+├── internal/database/            # Target connections, adapters, and metadata
 ├── internal/handlers/            # Server-rendered HTTP handlers
 ├── internal/web/views/           # templ pages, layouts, and asset loader
 ├── web/src/                      # Vite entry and Tailwind stylesheet
@@ -50,6 +51,12 @@ Use at least 12 characters and at most 128 UTF-8 bytes. Existing administrators 
 never overwritten. If a local PostgreSQL volume was initialized with different
 credentials, configure `DATABASE_URL` for that database; changing Compose's example
 variables does not rename an existing role or database.
+
+Target database passwords are stored encrypted with AES-256-GCM using
+`SQLWISE_CONNECTION_KEY`, 32 random bytes encoded as base64. The key in
+`.env.example` is for local development only; generate a separate key elsewhere
+with `openssl rand -base64 32` and keep it out of the repository. Changing the key
+makes previously stored target passwords unreadable.
 
 From the repository root, run the asset server:
 
