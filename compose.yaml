@@ -34,6 +34,27 @@ services:
       timeout: 5s
       retries: 5
 
+  mysql:
+    image: mysql:8.4
+    profiles: ["bonus"]
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql_root_dev_only
+      MYSQL_DATABASE: sqlwise_demo
+      MYSQL_USER: sqlwise_target
+      MYSQL_PASSWORD: sqlwise_target_dev_only
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./deploy/mysql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -pmysql_root_dev_only --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   postgres_data:
   target_data:
+  mysql_data:
