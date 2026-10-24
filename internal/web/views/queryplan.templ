@@ -1,18 +1,18 @@
 package views
 
 templ PlanPanel(databaseID, csrfToken, storedSQL string, fromEditor bool) {
-	<section aria-labelledby="plan-heading" class="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
-		<h2 id="plan-heading" class="text-xl font-semibold">Query plan</h2>
-		<p class="mt-2 text-sm leading-6 text-slate-400">
+	<section aria-labelledby="plan-heading" class={ wsPanel + " mt-8 p-5" }>
+		<h2 id="plan-heading" class={ wsSubhead }>Query plan</h2>
+		<p class={ wsMuted + " mt-2 max-w-3xl leading-6" }>
 			Explain shows how the database would run one SELECT, INSERT, UPDATE or DELETE without running it.
 			Analyze runs a SELECT on a connection marked as an analyze sandbox, inside a read-only transaction, and reports actual time and rows.
 		</p>
 		if fromEditor {
-			<form method="post" action={ templ.SafeURL(explainURL(databaseID)) } hx-post={ explainURL(databaseID) } hx-target="#plan-result" hx-swap="innerHTML" hx-include="#edit-sql" hx-headers={ csrfHeaders(csrfToken) } hx-disabled-elt="find button" hx-on::before-swap={ templ.JSUnsafeFuncCall(errorSwap) } class="mt-4 space-y-4">
+			<form method="post" action={ templ.SafeURL(explainURL(databaseID)) } hx-post={ explainURL(databaseID) } hx-target="#plan-result" hx-swap="innerHTML" hx-include="#edit-sql" hx-headers={ csrfHeaders(csrfToken) } hx-disabled-elt="find button" hx-on::before-swap={ templ.JSUnsafeFuncCall(errorSwap) } class="mt-4 flex flex-col gap-4">
 				@planControls(csrfToken, storedSQL)
 			</form>
 		} else {
-			<form method="post" action={ templ.SafeURL(explainURL(databaseID)) } hx-post={ explainURL(databaseID) } hx-target="#plan-result" hx-swap="innerHTML" hx-headers={ csrfHeaders(csrfToken) } hx-disabled-elt="find button" hx-on::before-swap={ templ.JSUnsafeFuncCall(errorSwap) } class="mt-4 space-y-4">
+			<form method="post" action={ templ.SafeURL(explainURL(databaseID)) } hx-post={ explainURL(databaseID) } hx-target="#plan-result" hx-swap="innerHTML" hx-headers={ csrfHeaders(csrfToken) } hx-disabled-elt="find button" hx-on::before-swap={ templ.JSUnsafeFuncCall(errorSwap) } class="mt-4 flex flex-col gap-4">
 				@planControls(csrfToken, storedSQL)
 			</form>
 		}
@@ -23,29 +23,35 @@ templ PlanPanel(databaseID, csrfToken, storedSQL string, fromEditor bool) {
 templ planControls(csrfToken, storedSQL string) {
 	<input type="hidden" name="csrf_token" value={ csrfToken }/>
 	<input type="hidden" name="stored_sql" value={ storedSQL }/>
-	<fieldset class="flex flex-wrap gap-4 text-sm text-slate-200">
-		<legend class="sr-only">Plan mode</legend>
-		<label class="inline-flex min-h-11 items-center gap-2"><input type="radio" name="mode" value="explain" checked/> Explain</label>
-		<label class="inline-flex min-h-11 items-center gap-2"><input type="radio" name="mode" value="analyze"/> Analyze (sandbox only)</label>
+	<fieldset class="flex flex-wrap items-center gap-x-6 gap-y-1">
+		<legend class={ wsLabel + " mb-1" }>Plan mode</legend>
+		<label class="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-900"><input type="radio" name="mode" value="explain" checked class={ "size-4 accent-cyan-700 " + wsFocus }/> Explain</label>
+		<label class="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-900"><input type="radio" name="mode" value="analyze" class={ "size-4 accent-cyan-700 " + wsFocus }/> Analyze (sandbox only)</label>
 	</fieldset>
-	<label class="flex items-start gap-2 text-sm text-slate-300"><input type="checkbox" name="confirm" class="mt-1"/> I understand Analyze executes the SELECT on the sandbox database.</label>
-	<button type="submit" class="min-h-11 rounded-lg border border-cyan-900 px-4 text-sm text-cyan-300">Show plan</button>
+	<label class="flex min-h-11 cursor-pointer items-start gap-2 text-sm leading-6 text-slate-800"><input type="checkbox" name="confirm" class={ "mt-1 size-4 shrink-0 accent-cyan-700 " + wsFocus }/> I understand Analyze executes the SELECT on the sandbox database.</label>
+	<div>
+		<button type="submit" class={ wsButton }>Show plan</button>
+	</div>
 }
 
 templ PlanResult(plan PlanView) {
-	<p role="status" class="mb-3 hidden rounded-lg border border-amber-700 bg-amber-950 p-3 text-sm text-amber-100 group-data-[stale=true]:block">The SQL changed after this plan was made. Show the plan again to update it.</p>
-	<div class="rounded-xl border border-slate-800 bg-slate-950 p-4">
-		<dl class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400">
-			<div><dt class="inline">Mode: </dt><dd class="inline text-slate-200">{ plan.Mode }</dd></div>
-			<div><dt class="inline">Dialect: </dt><dd class="inline text-slate-200">{ plan.Dialect }</dd></div>
-			<div><dt class="inline">Planning: </dt><dd class="inline text-slate-200">{ plan.PlanningTime }</dd></div>
-			<div><dt class="inline">Execution: </dt><dd class="inline text-slate-200">{ plan.ExecutionTime }</dd></div>
-			<div class="min-w-0"><dt class="inline">SQL hash: </dt><dd class="inline break-all font-mono text-slate-300">{ plan.SQLHash }</dd></div>
+	<p role="status" class={ wsWarn + " mb-3 hidden group-data-[stale=true]:block" }>The SQL changed after this plan was made. Show the plan again to update it.</p>
+	<div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+		<dl class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600">
+			<div><dt class="inline">Mode: </dt><dd class="inline font-medium text-slate-900">{ plan.Mode }</dd></div>
+			<div><dt class="inline">Dialect: </dt><dd class="inline font-medium text-slate-900">{ plan.Dialect }</dd></div>
+			<div><dt class="inline">Planning: </dt><dd class="inline font-mono text-slate-900 tabular-nums">{ plan.PlanningTime }</dd></div>
+			<div><dt class="inline">Execution: </dt><dd class="inline font-mono text-slate-900 tabular-nums">{ plan.ExecutionTime }</dd></div>
+			<div class="min-w-0"><dt class="inline">SQL hash: </dt><dd class="inline break-all font-mono text-slate-800">{ plan.SQLHash }</dd></div>
 		</dl>
-		for _, warning := range plan.Warnings {
-			<p class="mt-3 text-sm text-slate-300">{ warning }</p>
+		if len(plan.Warnings) > 0 {
+			<ul class="mt-3 flex flex-col gap-2">
+				for _, warning := range plan.Warnings {
+					<li class={ wsNotice + " p-3" }>{ warning }</li>
+				}
+			</ul>
 		}
-		<ul class="mt-3 text-sm">
+		<ul class="mt-1 text-sm">
 			@planNode(plan.Root)
 		</ul>
 	</div>
@@ -53,23 +59,23 @@ templ PlanResult(plan PlanView) {
 
 templ planNode(n PlanNodeView) {
 	<li class="mt-2">
-		<div class="rounded-lg border border-slate-800 bg-slate-900 p-3">
-			<p class="break-words font-medium text-slate-100">
+		<div class="rounded-lg border border-slate-200 bg-white p-3">
+			<p class="break-words font-semibold text-slate-900">
 				{ n.Type }
 				if n.Detail != "" {
-					<span class="font-normal text-slate-400">· { n.Detail }</span>
+					<span class="font-normal text-slate-600">· { n.Detail }</span>
 				}
 			</p>
-			<dl class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-400 sm:grid-cols-5">
-				<div><dt>Est. cost</dt><dd class="font-mono text-slate-200">{ n.Cost }</dd></div>
-				<div><dt>Est. rows</dt><dd class="font-mono text-slate-200">{ n.Rows }</dd></div>
-				<div><dt>Actual time (ms)</dt><dd class="font-mono text-slate-200">{ n.ActualTime }</dd></div>
-				<div><dt>Actual rows</dt><dd class="font-mono text-slate-200">{ n.ActualRows }</dd></div>
-				<div><dt>Loops</dt><dd class="font-mono text-slate-200">{ n.Loops }</dd></div>
+			<dl class="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-5">
+				<div><dt class="text-[11px] text-slate-600">Est. cost</dt><dd class="font-mono text-[13px] text-slate-900 tabular-nums">{ n.Cost }</dd></div>
+				<div><dt class="text-[11px] text-slate-600">Est. rows</dt><dd class="font-mono text-[13px] text-slate-900 tabular-nums">{ n.Rows }</dd></div>
+				<div><dt class="text-[11px] text-slate-600">Actual time (ms)</dt><dd class="font-mono text-[13px] text-slate-900 tabular-nums">{ n.ActualTime }</dd></div>
+				<div><dt class="text-[11px] text-slate-600">Actual rows</dt><dd class="font-mono text-[13px] text-slate-900 tabular-nums">{ n.ActualRows }</dd></div>
+				<div><dt class="text-[11px] text-slate-600">Loops</dt><dd class="font-mono text-[13px] text-slate-900 tabular-nums">{ n.Loops }</dd></div>
 			</dl>
 		</div>
 		if len(n.Children) > 0 {
-			<ul class="ml-3 border-l border-slate-800 pl-3 sm:ml-5 sm:pl-5">
+			<ul class="ml-3 border-l-2 border-slate-200 pl-3 sm:ml-5 sm:pl-5">
 				for _, child := range n.Children {
 					@planNode(child)
 				}
@@ -79,17 +85,27 @@ templ planNode(n PlanNodeView) {
 }
 
 templ PlanError(message string) {
-	<p role="alert" class="rounded-lg bg-rose-950 p-4 text-sm leading-6 text-rose-200">{ message }</p>
+	<p role="alert" class={ wsAlert }>{ message }</p>
 }
 
-templ PlanPage(assets Assets, plan PlanView) {
+// PlanPage is the no-JavaScript fallback for the plan form.
+templ PlanPage(assets Assets, username string, plan PlanView) {
 	@Layout("Query plan | sqlwise", assets) {
-		<main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-8">
-			<a href="/account" class="text-sm text-cyan-300 underline underline-offset-4">Account</a>
-			<h1 class="mt-4 text-2xl font-semibold tracking-tight">Query plan</h1>
-			<div class="group mt-6">
-				@PlanResult(plan)
-			</div>
-		</main>
+		<div class={ wsPage + " flex flex-col" }>
+			@WorkspaceTopbar(username) {
+				<nav aria-label="Breadcrumb" class="flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-600">
+					<a href="/databases" class={ "inline-flex min-h-11 items-center text-slate-700 hover:text-cyan-800 " + wsFocus }>Databases</a>
+					<span aria-hidden="true">/</span>
+					<span aria-current="page" class="font-medium text-slate-900">Query plan</span>
+				</nav>
+			}
+			<main class="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
+				<h1 class={ wsHeading }>Query plan</h1>
+				<p class={ wsMuted + " mt-2" }>Use your browser's back button to return to the SQL.</p>
+				<div class={ wsPanel + " group mt-6 p-5" }>
+					@PlanResult(plan)
+				</div>
+			</main>
+		</div>
 	}
 }

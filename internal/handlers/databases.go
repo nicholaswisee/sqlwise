@@ -17,10 +17,17 @@ type DatabaseViewer struct {
 	policy   *access.Service
 	resolver database.Resolver
 	assets   views.Assets
+	header   WorkspaceHeader
 }
 
 func NewDatabaseViewer(authHandler *Auth, policy *access.Service, resolver database.Resolver, assets views.Assets) *DatabaseViewer {
 	return &DatabaseViewer{auth: authHandler, policy: policy, resolver: resolver, assets: assets}
+}
+
+// WithHeader adds the engine label and version track to every page.
+func (h *DatabaseViewer) WithHeader(header WorkspaceHeader) *DatabaseViewer {
+	h.header = header
+	return h
 }
 
 func (h *DatabaseViewer) Register(router *gin.Engine) {
@@ -39,7 +46,13 @@ func (h *DatabaseViewer) list(c *gin.Context) {
 	}
 	data := views.DatabaseListData{Username: session.Principal.Username}
 	for _, db := range databases {
-		data.Databases = append(data.Databases, views.DatabaseListRow{ID: db.ID, Name: db.Name, Permission: db.Permission.String()})
+		row := views.DatabaseListRow{ID: db.ID, Name: db.Name, Permission: db.Permission.String()}
+		if h.resolver != nil {
+			if dbms, err := h.resolver.DBMS(c.Request.Context(), db.ID); err == nil {
+				row.Engine = dbms.Label()
+			}
+		}
+		data.Databases = append(data.Databases, row)
 	}
 	Render(c, http.StatusOK, views.DatabasesPage(h.assets, data))
 }
@@ -55,7 +68,9 @@ func (h *DatabaseViewer) nav(c *gin.Context, active string) (views.DatabaseNav, 
 	if i < 0 {
 		return views.DatabaseNav{}, access.ErrPermissionDenied
 	}
-	return views.DatabaseNav{ID: id, Name: databases[i].Name, CanEdit: databases[i].Permission == access.Edit, Username: session.Principal.Username, CSRFToken: session.CSRFToken, Active: active}, nil
+	nav := views.DatabaseNav{ID: id, Name: databases[i].Name, CanEdit: databases[i].Permission == access.Edit, Username: session.Principal.Username, CSRFToken: session.CSRFToken, Active: active}
+	h.header.fill(c.Request.Context(), &nav)
+	return nav, nil
 }
 
 func (h *DatabaseViewer) open(c *gin.Context) (database.Handle, error) {
@@ -100,6 +115,8 @@ func (h *DatabaseViewer) explorer(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
+	// The detail pane shows ?table= when it names a table here, else the first.
+	selected := c.Query("table")
 	data := views.SchemaExplorerData{Nav: nav, Schemas: schemas, Schema: schema}
 	for _, t := range snapshot.Tables {
 		table := views.SchemaTable{ID: t.Ref().ID(), Name: t.Name}
@@ -119,6 +136,9 @@ func (h *DatabaseViewer) explorer(c *gin.Context) {
 				kind = "unique index"
 			}
 			table.Indexes = append(table.Indexes, views.SchemaDefinition{Name: index.Name, Kind: kind, Definition: index.Definition})
+		}
+		if t.Name == selected {
+			data.Selected = len(data.Tables)
 		}
 		data.Tables = append(data.Tables, table)
 	}
@@ -161,7 +181,7 @@ func (h *DatabaseViewer) table(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	data := views.TablePageData{Nav: nav, Schema: ref.Schema, Table: ref.Name, From: offset + 1, To: offset + len(page.Rows), Ordered: page.Ordered, Truncated: page.Truncated}
+	data := views.TablePageData{Nav: nav, Schema: ref.Schema, Table: ref.Name, From: offset + 1, To: offset + len(page.Rows), Ordered: page.Ordered, Truncated: page.Truncated, Limit: limit, BaseURL: views.TableBaseURL(c.Param("databaseID"), c.Param("tableID"))}
 	for _, col := range page.Columns {
 		data.Columns = append(data.Columns, views.TableColumn{Name: col.Name, Type: col.Type})
 	}

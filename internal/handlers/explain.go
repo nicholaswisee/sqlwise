@@ -45,7 +45,8 @@ func (h *Explain) explain(c *gin.Context) {
 		Render(c, http.StatusOK, views.PlanResult(plan))
 		return
 	}
-	Render(c, http.StatusOK, views.PlanPage(h.assets, plan))
+	session := c.MustGet("auth_session").(auth.Session)
+	Render(c, http.StatusOK, views.PlanPage(h.assets, session.Principal.Username, plan))
 }
 
 func (h *Explain) fail(c *gin.Context, err error) {

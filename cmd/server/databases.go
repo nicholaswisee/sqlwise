@@ -44,9 +44,14 @@ func registerDatabaseRoutes(router *gin.Engine, service *auth.Service, policy *a
 	guard := handlers.NewAuth(service, assets, os.Getenv("APP_ENV") == "production", policy)
 	migrations := migration.NewService(migration.NewStore(pool), policy, targets.targets, time.Now)
 	diff := schemadiff.NewService(policy, targets.snapshot, migrations)
-	handlers.NewMigrations(guard, policy, migrations, diff, assets).Register(router)
+	var resolver database.Resolver
 	if targets.pools != nil {
-		handlers.NewDatabaseViewer(guard, policy, targets.pools, assets).Register(router)
+		resolver = targets.pools
+	}
+	header := handlers.NewWorkspaceHeader(migrations, resolver)
+	handlers.NewMigrations(guard, policy, migrations, diff, assets).WithHeader(header).Register(router)
+	if targets.pools != nil {
+		handlers.NewDatabaseViewer(guard, policy, targets.pools, assets).WithHeader(header).Register(router)
 		handlers.NewExplain(guard, policy, queryplan.NewService(policy, targets.pools), assets).Register(router)
 	}
 	if targets.store != nil {
