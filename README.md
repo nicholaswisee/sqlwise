@@ -20,10 +20,12 @@ sqlwise is a server-rendered SQL database management project for the IF3110 Web 
 ├── internal/access/              # Groups, grants, and access control
 ├── internal/migration/           # Migration drafts, execution, and history
 ├── internal/schemadiff/          # Schema diff and migration generation
+├── internal/database/            # Target connections, adapters, and metadata
 ├── internal/handlers/            # Server-rendered HTTP handlers
 ├── internal/web/views/           # templ pages, layouts, and asset loader
 ├── web/src/                      # Vite entry and Tailwind stylesheet
-├── compose.yaml                  # Optional local PostgreSQL service
+├── deploy/target/                # Seed for the demo target database
+├── compose.yaml                  # Local platform and demo target PostgreSQL
 ├── .env.example                  # Development environment example
 ├── go.mod, go.sum                # Go module and dependencies
 ├── package.json, pnpm-lock.yaml  # Frontend tooling and dependencies
@@ -50,6 +52,56 @@ Use at least 12 characters and at most 128 UTF-8 bytes. Existing administrators 
 never overwritten. If a local PostgreSQL volume was initialized with different
 credentials, configure `DATABASE_URL` for that database; changing Compose's example
 variables does not rename an existing role or database.
+
+Target database passwords are stored encrypted with AES-256-GCM using
+`SQLWISE_CONNECTION_KEY`, 32 random bytes encoded as base64. The key in
+`.env.example` is for local development only; generate a separate key elsewhere
+with `openssl rand -base64 32` and keep it out of the repository. Changing the key
+makes previously stored target passwords unreadable.
+
+### Target databases
+
+Target databases are separate from the platform database and use their own
+credentials. Compose includes a seeded PostgreSQL demo target:
+
+```sh
+docker compose up -d target
+```
+
+Register it as host `localhost`, port `5434`, database `sqlwise_demo`, user
+`sqlwise_target`, password `sqlwise_target_dev_only`, TLS `disable`. Its `public`
+and `sales` schemas hold related tables with keys, indexes, NULL, Unicode, binary
+and long values. The seed runs only when the `target_data` volume is created.
+
+Migrations record a receipt in `sqlwise_internal.migration_receipts` on the target.
+Create that table once as a different role than the migration user, so migration
+SQL cannot alter or remove receipts. As the owner role, in the target database:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS sqlwise_internal;
+CREATE TABLE IF NOT EXISTS sqlwise_internal.migration_receipts (
+    attempt_id text PRIMARY KEY,
+    database_id text NOT NULL,
+    version bigint NOT NULL CHECK (version >= 1),
+    sql_sha256 text NOT NULL,
+    outcome text NOT NULL CHECK (outcome IN ('applied', 'fenced')),
+    recorded_at timestamptz NOT NULL DEFAULT now()
+);
+REVOKE ALL ON SCHEMA sqlwise_internal FROM PUBLIC;
+REVOKE ALL ON sqlwise_internal.migration_receipts FROM PUBLIC;
+GRANT USAGE ON SCHEMA sqlwise_internal TO "migration_user";
+GRANT SELECT, INSERT ON sqlwise_internal.migration_receipts TO "migration_user";
+```
+
+The migration user otherwise needs the privileges its migrations use, such as
+ownership of the tables they alter. Without the table, the first execution creates
+it with the migration user, which then requires `CREATE` on the database and leaves
+receipts owned by that user. The demo target is already set up this way.
+
+The server keeps one pool per registered target (at most 4 connections, 5 second
+connect timeout) and closes it when the connection is disabled or its settings
+change, after running transactions finish. Callers receive handles and close them;
+they never own the pool. Ping, metadata and table reads time out after 5 seconds.
 
 From the repository root, run the asset server:
 
