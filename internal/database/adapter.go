@@ -44,6 +44,10 @@ type Tx interface {
 	Rollback(ctx context.Context) error
 }
 
+type Explainer interface {
+	Explain(ctx context.Context, sql string, analyze bool) ([]byte, error)
+}
+
 type Pinner interface {
 	Pin(ctx context.Context) (Conn, error)
 }

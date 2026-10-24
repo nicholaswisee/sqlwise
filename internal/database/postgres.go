@@ -15,18 +15,66 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var postgresCapabilities = Capabilities{ConnectionTest: true, SchemaInspection: true, DataPreview: true, MigrationExecution: true, AtomicMigrations: true, SchemaDiff: true}
+var postgresCapabilities = Capabilities{ConnectionTest: true, SchemaInspection: true, DataPreview: true, MigrationExecution: true, AtomicMigrations: true, SchemaDiff: true, Explain: true}
 
 const userSchemas = `n.nspname NOT IN ('pg_catalog','information_schema','pg_toast','` + InternalSchema + `')
 	AND n.nspname NOT LIKE 'pg\_temp\_%' AND n.nspname NOT LIKE 'pg\_toast\_temp\_%'`
 
 type postgresHandle struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	sandbox bool
 }
 
 func (h *postgresHandle) DBMS() DBMS { return PostgreSQL }
 
-func (h *postgresHandle) Capabilities() Capabilities { return postgresCapabilities }
+func (h *postgresHandle) Capabilities() Capabilities {
+	c := postgresCapabilities
+	c.ExplainAnalyze = h.sandbox
+	return c
+}
+
+// Explain plans one validated statement in a read-only transaction that is
+// always rolled back. Analyze executes it, so it is limited to sandbox
+// connections; callers validate the statement first.
+func (h *postgresHandle) Explain(ctx context.Context, sql string, analyze bool) ([]byte, error) {
+	if analyze && !h.sandbox {
+		return nil, fail(ErrUnsupportedStatement, "EXPLAIN ANALYZE runs only on connections an administrator marked as an analyze sandbox.")
+	}
+	ctx, cancel := context.WithTimeout(ctx, QueryTimeout)
+	defer cancel()
+	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, targetError(ctx, err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = "+strconv.Itoa(int(QueryTimeout.Milliseconds()))); err != nil {
+		return nil, targetError(ctx, err)
+	}
+	options := "FORMAT JSON"
+	if analyze {
+		options = "ANALYZE, BUFFERS, FORMAT JSON"
+	}
+	var plan []byte
+	if err := tx.QueryRow(ctx, "EXPLAIN ("+options+") "+sql).Scan(&plan); err != nil {
+		return nil, explainError(ctx, err)
+	}
+	return plan, nil
+}
+
+func explainError(ctx context.Context, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "57014" {
+			return fail(ErrTimeout, "The statement did not finish within the time limit.")
+		}
+		message := pgErr.Message
+		if len(message) > 300 {
+			message = message[:300] + "…"
+		}
+		return fail(ErrValidation, "The database could not plan this statement: "+message+" (SQLSTATE "+pgErr.Code+").")
+	}
+	return targetError(ctx, err)
+}
 
 func (h *postgresHandle) Close() error { return nil }
 
@@ -281,48 +329,23 @@ func (h *postgresHandle) readTable(ctx context.Context, req TableRequest) (Table
 		return page, err
 	}
 	defer rows.Close()
+	binary := make([]bool, len(columns))
+	for i, c := range columns {
+		binary[i] = c.binary
+	}
 	size := 0
 	for rows.Next() {
 		if len(page.Rows) == req.Limit {
 			page.HasNext = true
 			break
 		}
-		values := make([]any, len(columns))
-		for i, c := range columns {
-			if c.binary {
-				values[i] = new([]byte)
-			} else {
-				values[i] = new(*string)
-			}
-		}
+		values := scanTargets(binary)
 		if err := rows.Scan(values...); err != nil {
 			return page, err
 		}
-		row := make([]Cell, len(columns))
-		rowSize := 0
-		for i, v := range values {
-			switch v := v.(type) {
-			case *[]byte:
-				if *v == nil {
-					row[i] = NullCell()
-				} else {
-					row[i] = BinaryCell(*v, MaxCellBytes)
-				}
-			case **string:
-				if *v == nil {
-					row[i] = NullCell()
-				} else {
-					row[i] = TextCell(**v, MaxCellBytes)
-				}
-			}
-			rowSize += len(row[i].Text)
-		}
-		if size+rowSize > MaxPageBytes && len(page.Rows) > 0 {
-			page.HasNext, page.Truncated = true, true
+		if !addRow(&page, &size, cells(values)) {
 			break
 		}
-		size += rowSize
-		page.Rows = append(page.Rows, row)
 	}
 	return page, rows.Err()
 }

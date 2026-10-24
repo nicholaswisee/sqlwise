@@ -10,3 +10,5 @@ CREATE TABLE IF NOT EXISTS database_connections (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE database_connections ADD COLUMN IF NOT EXISTS analyze_sandbox boolean NOT NULL DEFAULT false;

@@ -24,6 +24,7 @@ type Connection struct {
 	Username   string
 	Password   string
 	TLS        TLSMode
+	Sandbox    bool
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -41,6 +42,9 @@ func (c Connection) Validate() error {
 		return fail(ErrValidation, "Database name is required.")
 	case c.Username == "":
 		return fail(ErrValidation, "Username is required.")
+	}
+	if c.Sandbox && c.DBMS != PostgreSQL {
+		return fail(ErrValidation, "Analyze sandboxes are available for PostgreSQL connections only.")
 	}
 	switch c.TLS {
 	case TLSDisable, TLSRequire, TLSVerifyFull:
