@@ -10,9 +10,8 @@ import (
 	"sqlwise/internal/migration"
 )
 
-// Source reads the live schema of a registered target (Jason's adapter). It
-// must not include the reserved receipt schema in user snapshots.
-// TODO(jason): adapt database.SchemaSnapshot; pgtarget is the temporary stand-in.
+// Source reads the live schema of a registered target. It must not include
+// the reserved receipt schema in user snapshots.
 type Source interface {
 	Snapshot(ctx context.Context, databaseID, schema string) (Snapshot, error)
 }
