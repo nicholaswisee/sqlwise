@@ -1,43 +1,61 @@
 package views
 
+import "strings"
+
 templ AdminShell(title string, assets Assets, connectionsAvailable bool) {
 	@Layout(title + " | sqlwise", assets) {
-		<div class="mx-auto min-h-screen w-full max-w-6xl px-4 py-8 sm:px-8 sm:py-12">
-			<header class="mb-8 flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-5">
-				<a href="/admin" class="text-sm font-semibold tracking-widest text-cyan-300">sqlwise / Admin</a>
-				<nav aria-label="Administration" class="flex flex-wrap gap-2 text-sm">
-					<a class="min-h-11 rounded-lg px-3 py-3 text-cyan-300" href="/admin">Overview</a>
-					<a class="min-h-11 rounded-lg px-3 py-3 text-cyan-300" href="/admin/users">Users</a>
-					<a class="min-h-11 rounded-lg px-3 py-3 text-cyan-300" href="/admin/groups">Groups</a>
-					if connectionsAvailable {
-						<a class="min-h-11 rounded-lg px-3 py-3 text-cyan-300" href="/admin/databases">Connections</a>
-					} else {
-						<span class="min-h-11 rounded-lg px-3 py-3 text-slate-400" aria-label="Connection management unavailable">Connections · unavailable</span>
-					}
-					<a class="min-h-11 rounded-lg px-3 py-3 text-cyan-300" href="/account">Account</a>
-				</nav>
+		<div class={ wsPage + " flex flex-col" }>
+			<header class="border-b border-slate-200 bg-white">
+				<div class="mx-auto flex w-full max-w-7xl flex-wrap items-center gap-x-6 px-4 sm:px-6">
+					<a href="/admin" class={ "inline-flex min-h-14 items-center gap-2 text-base font-bold tracking-tight text-cyan-900 " + wsFocus }>
+						<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"></path><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"></path></svg>
+						sqlwise
+						<span class={ wsChip }>Admin</span>
+					</a>
+					<nav aria-label="Administration" class="flex min-w-0 basis-full items-stretch gap-x-1 self-stretch overflow-x-auto overflow-y-hidden whitespace-nowrap text-sm sm:basis-0 sm:flex-1">
+						@adminTab("Overview", "/admin", title == "Administration")
+						@adminTab("Users", "/admin/users", title == "Users")
+						@adminTab("Groups", "/admin/groups", title == "Groups" || title == "Group members" || title == "Group database access")
+						if connectionsAvailable {
+							@adminTab("Connections", "/admin/databases", title == "Connections" || title == "Edit connection")
+						} else {
+							<span class="-mb-px inline-flex min-h-14 cursor-not-allowed items-center border-b-2 border-transparent px-3 text-slate-600" aria-label="Connection management unavailable">Connections · unavailable</span>
+						}
+						<a class={ "ml-auto inline-flex min-h-11 items-center self-center rounded-lg px-3 text-slate-700 hover:bg-slate-50 hover:text-cyan-800 " + wsFocus } href="/account">Account</a>
+					</nav>
+				</div>
 			</header>
-			{ children... }
+			<div class="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
+				{ children... }
+			</div>
 		</div>
+	}
+}
+
+templ adminTab(label, href string, active bool) {
+	if active {
+		<a href={ templ.SafeURL(href) } aria-current="page" class={ "-mb-px inline-flex min-h-14 items-center border-b-2 border-cyan-700 px-3 text-sm font-semibold text-cyan-900 " + wsFocus }>{ label }</a>
+	} else {
+		<a href={ templ.SafeURL(href) } class={ "-mb-px inline-flex min-h-14 items-center border-b-2 border-transparent px-3 text-sm text-slate-600 hover:border-slate-300 hover:text-slate-900 " + wsFocus }>{ label }</a>
 	}
 }
 
 templ AdminFeedback(data AccessPageData) {
 	if data.Message != "" {
-		<p role="status" aria-live="polite" class="mb-5 rounded-lg border border-slate-800 bg-slate-900 p-4 text-sm text-slate-200">{ data.Message }</p>
+		<p role="status" aria-live="polite" class={ wsNotice + " mt-6 break-words" }>{ data.Message }</p>
 	}
 	if data.Error != "" {
-		<p role="alert" class="mb-5 rounded-lg bg-rose-950 p-4 text-sm text-rose-200">{ data.Error }</p>
+		<p role="alert" class={ wsAlert + " mt-6 break-words" }>{ data.Error }</p>
 	}
 }
 
 templ AccessDashboard(assets Assets, data AccessPageData) {
 	@AdminShell("Administration", assets, data.ConnectionsAvailable) {
 		<main>
-			<h1 class="text-3xl font-semibold tracking-tight">Platform administration</h1>
-			<p class="mt-3 max-w-2xl text-sm leading-6 text-slate-400">Manage platform accounts and group access. Platform administrator status does not grant access to target databases.</p>
+			<h1 class={ wsHeading }>Platform administration</h1>
+			<p class={ wsMuted + " mt-2 max-w-2xl leading-6" }>Manage platform accounts and group access. Platform administrator status does not grant access to target databases.</p>
 			@AdminFeedback(data)
-			<div class="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			<div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 				@AdminCard("Users", "Create accounts, update usernames and disable access.", "/admin/users", "Manage users")
 				@AdminCard("Groups", "Organize memberships and target permissions.", "/admin/groups", "Manage groups")
 				if data.ConnectionsAvailable {
@@ -46,18 +64,18 @@ templ AccessDashboard(assets Assets, data AccessPageData) {
 					@AdminUnavailableCard("Connections", "Registered database choices appear here when connection management is integrated.")
 				}
 			</div>
-			<section class="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6" aria-labelledby="registered-targets">
-				<h2 id="registered-targets" class="text-xl font-semibold">Registered databases</h2>
+			<section class={ wsPanel + " mt-6 p-5" } aria-labelledby="registered-targets">
+				<h2 id="registered-targets" class={ wsSubhead }>Registered databases</h2>
 				if len(data.Databases) == 0 {
-					<p class="mt-3 text-sm text-slate-400">No databases are registered yet.</p>
+					<p class={ wsMuted + " mt-2" }>No databases are registered yet.</p>
 				}
-				<ul class="mt-3 divide-y divide-slate-800">
+				<ul class="mt-3 divide-y divide-slate-100 empty:hidden">
 					for _, db := range data.Databases {
-						<li class="flex flex-wrap justify-between gap-3 py-3 text-sm"><span class="break-all text-slate-200">{ db.Name }</span>
+						<li class="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><span class="break-all font-medium text-slate-900">{ db.Name }</span>
 							if db.Active {
-								<span class="text-slate-400">Active</span>
+								<span class={ wsChipGreen }>Active</span>
 							} else {
-								<span class="text-slate-400">Inactive</span>
+								<span class={ wsChip }>Inactive</span>
 							}
 						</li>
 					}
@@ -69,7 +87,7 @@ templ AccessDashboard(assets Assets, data AccessPageData) {
 
 templ AdminDashboardFragment(data AccessPageData) {
 	@AdminFeedback(data)
-	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+	<div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 		@AdminCard("Users", "Create accounts and disable access.", "/admin/users", "Manage users")
 		@AdminCard("Groups", "Manage membership and database grants.", "/admin/groups", "Manage groups")
 		if data.ConnectionsAvailable {
@@ -81,62 +99,64 @@ templ AdminDashboardFragment(data AccessPageData) {
 }
 
 templ AdminCard(title, description, href, action string) {
-	<section class="rounded-2xl border border-slate-800 bg-slate-900 p-5"><h2 class="text-lg font-semibold">{ title }</h2><p class="mt-2 min-h-12 text-sm leading-6 text-slate-400">{ description }</p><a href={ templ.SafeURL(href) } class="mt-3 inline-flex min-h-11 items-center rounded-lg px-3 py-2 text-sm font-medium text-cyan-300 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300">{ action }</a></section>
+	<section class={ wsPanel + " flex flex-col p-5" }><h2 class={ wsSubhead }>{ title }</h2><p class={ wsMuted + " mt-1.5 flex-1 leading-6" }>{ description }</p><a href={ templ.SafeURL(href) } class={ wsButton + " mt-4 self-start" }>{ action }</a></section>
 }
 
 templ AdminUnavailableCard(title, description string) {
-	<section class="rounded-2xl border border-slate-800 bg-slate-900 p-5"><h2 class="text-lg font-semibold">{ title }</h2><p class="mt-2 min-h-12 text-sm leading-6 text-slate-400">{ description }</p><p role="status" class="mt-3 inline-flex min-h-11 items-center rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">Connection management unavailable</p></section>
+	<section class={ wsPanel + " flex flex-col p-5" }><h2 class={ wsSubhead }>{ title }</h2><p class={ wsMuted + " mt-1.5 flex-1 leading-6" }>{ description }</p><p role="status" class={ wsChip + " mt-4 self-start" }>Connection management unavailable</p></section>
 }
 
 templ AccessUsers(assets Assets, data AccessPageData) {
 	@AdminShell("Users", assets, data.ConnectionsAvailable) {
-		<main><h1 class="text-3xl font-semibold tracking-tight">Users</h1><p class="mt-3 text-sm text-slate-400">Create accounts and disable access while preserving account history.</p><div id="admin-users">@AdminUsersFragment(data)</div></main>
+		<main><h1 class={ wsHeading }>Users</h1><p class={ wsMuted + " mt-2 leading-6" }>Create accounts and disable access while preserving account history.</p><div id="admin-users">@AdminUsersFragment(data)</div></main>
 	}
 }
 
 templ AdminUsersFragment(data AccessPageData) {
 	@AdminFeedback(data)
-	<div class="mt-6 grid gap-6 lg:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.2fr)]">
-		<section class="min-w-0 rounded-2xl border border-slate-800 bg-slate-900 p-5"><h2 class="text-xl font-semibold">Create user</h2>
-			<form method="post" action="/admin/users" hx-post="/admin/users" hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-5 space-y-4"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
-				<div class="space-y-2"><label for="create-username" class="block text-sm font-medium text-slate-200">Username</label><input id="create-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="64" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"/></div>
-				<div class="space-y-2"><label for="create-password" class="block text-sm font-medium text-slate-200">Temporary password</label><input id="create-password" name="password" type="password" autocomplete="new-password" required maxlength="128" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"/></div>
-				<button class="min-h-12 w-full rounded-lg bg-cyan-400 px-4 text-sm font-semibold text-slate-950 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-300" type="submit">Create user</button>
+	<div class="mt-6 flex flex-wrap items-start gap-6">
+		<section class={ wsPanel + " min-w-0 flex-[1_1_18rem] p-5" }><h2 class={ wsSubhead }>Create user</h2>
+			<form method="post" action="/admin/users" hx-post="/admin/users" hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-4 space-y-4"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
+				<div class="space-y-1.5"><label for="create-username" class={ wsLabel }>Username</label><input id="create-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="64" class={ wsInput }/></div>
+				<div class="space-y-1.5"><label for="create-password" class={ wsLabel }>Temporary password</label><input id="create-password" name="password" type="password" autocomplete="new-password" required maxlength="128" class={ wsInput }/></div>
+				<button class={ wsPrimary + " w-full" } type="submit">Create user</button>
 			</form>
 		</section>
-		<section class="min-w-0 rounded-2xl border border-slate-800 bg-slate-900 p-5"><h2 class="text-xl font-semibold">User accounts</h2>
+		<section class={ wsPanel + " min-w-0 flex-[999_1_36rem] p-5" }><h2 class={ wsSubhead }>User accounts</h2>
 			if len(data.Users) == 0 {
-				<p class="mt-4 text-sm text-slate-400">No users yet.</p>
+				<p class={ wsMuted + " mt-2" }>No users yet.</p>
 			}
-			<ul class="mt-3 divide-y divide-slate-800">
+			<ul class="mt-2 divide-y divide-slate-100 empty:hidden">
 				for _, user := range data.Users {
-					<li class="min-w-0 py-4"><div class="flex flex-wrap items-center justify-between gap-2"><span class="break-all text-sm font-medium text-slate-200">{ user.Username }</span>
+					<li class="min-w-0 py-5"><div class="flex flex-wrap items-center gap-2"><span class="mr-auto break-all text-sm font-semibold text-slate-900">{ user.Username }</span>
 						if user.IsPlatformAdmin {
-							<span class="text-sm text-cyan-300">Platform admin</span>
+							<span class={ wsChipTeal }>Platform admin</span>
 						} else {
-							<span class="text-sm text-slate-400">Regular user</span>
+							<span class={ wsChip }>Regular user</span>
 						}
 						if user.Active {
-							<span class="text-sm text-slate-400">Active</span>
+							<span class={ wsChipGreen }>Active</span>
 						} else {
-							<span class="text-sm text-slate-400">Disabled</span>
+							<span class={ wsChip }>Disabled</span>
 						}
 					</div>
-					<div class="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-						<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID) } hx-post={ templ.SafeURL("/admin/users/" + user.ID) } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="flex min-w-0 flex-wrap gap-2"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><label class="sr-only" for={ "username-" + user.ID }>Update username for { user.Username }</label><input id={ "username-" + user.ID } name="username" type="text" value={ user.Username } required maxlength="64" class="min-h-11 min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"/><button class="min-h-11 rounded-lg border border-slate-700 px-3 text-sm text-slate-200" type="submit">Save name</button></form>
-						<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID) } hx-post={ templ.SafeURL("/admin/users/" + user.ID) } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="min-w-0 sm:col-span-2"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><div class="flex min-w-0 flex-wrap items-end gap-2"><div class="min-w-0 flex-1 space-y-2"><label class="block text-sm font-medium text-slate-200" for={ "password-" + user.ID }>Set new password for { user.Username }</label><input id={ "password-" + user.ID } name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128" aria-describedby={ "password-help-" + user.ID } class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"/><p id={ "password-help-" + user.ID } class="text-sm text-slate-400">Use at least 12 characters. The password is never shown after submission.</p></div><button class="min-h-12 rounded-lg border border-slate-700 px-3 text-sm text-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300" type="submit">Reset password</button></div></form>
-						<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID + "/admin") } hx-post={ templ.SafeURL("/admin/users/" + user.ID + "/admin") } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
-							if user.IsPlatformAdmin {
-								<input type="hidden" name="admin" value="false"/><button class="min-h-11 w-full rounded-lg border border-rose-900 px-3 text-sm text-rose-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300" type="submit">Remove admin</button>
+					<div class="mt-3 flex flex-col gap-3">
+						<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID) } hx-post={ templ.SafeURL("/admin/users/" + user.ID) } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="flex min-w-0 flex-wrap gap-2"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><label class="sr-only" for={ "username-" + user.ID }>Update username for { user.Username }</label><input id={ "username-" + user.ID } name="username" type="text" value={ user.Username } required maxlength="64" class={ wsInput + " min-w-0 flex-1" }/><button class={ wsButton } type="submit">Save name</button></form>
+						<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID) } hx-post={ templ.SafeURL("/admin/users/" + user.ID) } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="min-w-0"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><div class="flex min-w-0 flex-wrap items-end gap-2"><div class="min-w-0 flex-1 space-y-1.5"><label class={ wsLabel } for={ "password-" + user.ID }>Set new password for { user.Username }</label><input id={ "password-" + user.ID } name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128" aria-describedby={ "password-help-" + user.ID } class={ wsInput }/></div><button class={ wsButton } type="submit">Reset password</button></div><p id={ "password-help-" + user.ID } class={ wsMuted + " mt-1.5" }>Use at least 12 characters. The password is never shown after submission.</p></form>
+						<div class="flex flex-wrap gap-2">
+							<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID + "/admin") } hx-post={ templ.SafeURL("/admin/users/" + user.ID + "/admin") } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
+								if user.IsPlatformAdmin {
+									<input type="hidden" name="admin" value="false"/><button class={ wsButton + " text-rose-800" } type="submit">Remove admin</button>
+								} else {
+									<input type="hidden" name="admin" value="true"/><button class={ wsButton } type="submit">Make admin</button>
+								}
+							</form>
+							if user.Active {
+								<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID + "/active") } hx-post={ templ.SafeURL("/admin/users/" + user.ID + "/active") } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="active" value="false"/><button class={ wsButton + " text-rose-800" } type="submit">Disable</button></form>
 							} else {
-								<input type="hidden" name="admin" value="true"/><button class="min-h-11 w-full rounded-lg border border-cyan-900 px-3 text-sm text-cyan-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300" type="submit">Make admin</button>
+								<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID + "/active") } hx-post={ templ.SafeURL("/admin/users/" + user.ID + "/active") } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="active" value="true"/><button class={ wsButton } type="submit">Re-enable</button></form>
 							}
-						</form>
-						if user.Active {
-							<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID + "/active") } hx-post={ templ.SafeURL("/admin/users/" + user.ID + "/active") } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="active" value="false"/><button class="min-h-11 w-full rounded-lg border border-rose-900 px-3 text-sm text-rose-200" type="submit">Disable</button></form>
-						} else {
-							<form method="post" action={ templ.SafeURL("/admin/users/" + user.ID + "/active") } hx-post={ templ.SafeURL("/admin/users/" + user.ID + "/active") } hx-target="#admin-users" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="active" value="true"/><button class="min-h-11 w-full rounded-lg border border-cyan-900 px-3 text-sm text-cyan-300" type="submit">Re-enable</button></form>
-						}
+						</div>
 					</div></li>
 				}
 			</ul>
@@ -146,27 +166,27 @@ templ AdminUsersFragment(data AccessPageData) {
 
 templ AccessGroups(assets Assets, data AccessPageData) {
 	@AdminShell("Groups", assets, data.ConnectionsAvailable) {
-		<main><h1 class="text-3xl font-semibold tracking-tight">Groups</h1><p class="mt-3 text-sm text-slate-400">Membership and database grants are managed per group.</p><div id="admin-groups">@AdminGroupsFragment(data)</div></main>
+		<main><h1 class={ wsHeading }>Groups</h1><p class={ wsMuted + " mt-2 leading-6" }>Membership and database grants are managed per group.</p><div id="admin-groups">@AdminGroupsFragment(data)</div></main>
 	}
 }
 
 templ AdminGroupsFragment(data AccessPageData) {
 	@AdminFeedback(data)
-	<div class="mt-6 grid gap-6 lg:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.2fr)]">
-		<section class="rounded-2xl border border-slate-800 bg-slate-900 p-5"><h2 class="text-xl font-semibold">Create group</h2><form method="post" action="/admin/groups" hx-post="/admin/groups" hx-target="#admin-groups" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-5 space-y-4"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><div class="space-y-2"><label for="create-group-name" class="block text-sm font-medium text-slate-200">Group name</label><input id="create-group-name" name="name" type="text" required maxlength="64" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/></div><button type="submit" class="min-h-12 w-full rounded-lg bg-cyan-400 px-4 text-sm font-semibold text-slate-950">Create group</button></form></section>
-		<section class="rounded-2xl border border-slate-800 bg-slate-900 p-5"><h2 class="text-xl font-semibold">Groups</h2>
+	<div class="mt-6 flex flex-wrap items-start gap-6">
+		<section class={ wsPanel + " min-w-0 flex-[1_1_18rem] p-5" }><h2 class={ wsSubhead }>Create group</h2><form method="post" action="/admin/groups" hx-post="/admin/groups" hx-target="#admin-groups" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-4 space-y-4"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><div class="space-y-1.5"><label for="create-group-name" class={ wsLabel }>Group name</label><input id="create-group-name" name="name" type="text" required maxlength="64" class={ wsInput }/></div><button type="submit" class={ wsPrimary + " w-full" }>Create group</button></form></section>
+		<section class={ wsPanel + " min-w-0 flex-[999_1_36rem] p-5" }><h2 class={ wsSubhead }>Groups</h2>
 			if len(data.Groups) == 0 {
-				<p class="mt-4 text-sm text-slate-400">No groups yet.</p>
+				<p class={ wsMuted + " mt-2" }>No groups yet.</p>
 			}
-			<ul class="mt-3 divide-y divide-slate-800">
+			<ul class="mt-2 divide-y divide-slate-100 empty:hidden">
 				for _, group := range data.Groups {
-					<li class="flex flex-wrap items-center justify-between gap-3 py-4">
-						<form method="post" action={ templ.SafeURL("/admin/groups/" + group.ID) } hx-post={ templ.SafeURL("/admin/groups/" + group.ID) } hx-target="#admin-groups" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="flex min-w-0 flex-1 flex-wrap gap-2"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><label class="sr-only" for={ "group-name-" + group.ID }>Update group name for { group.Name }</label><input id={ "group-name-" + group.ID } name="name" type="text" value={ group.Name } required maxlength="64" class="min-h-11 min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/><button type="submit" class="min-h-11 rounded-lg border border-slate-700 px-3 text-sm text-slate-200">Save</button></form>
-						<a class="min-h-11 rounded-lg px-3 py-3 text-sm text-cyan-300 underline" href={ templ.SafeURL("/admin/groups/" + group.ID + "/members") }>Members and databases</a>
+					<li class="flex flex-wrap items-center justify-between gap-2 py-4">
+						<form method="post" action={ templ.SafeURL("/admin/groups/" + group.ID) } hx-post={ templ.SafeURL("/admin/groups/" + group.ID) } hx-target="#admin-groups" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="flex min-w-0 flex-[1_1_16rem] flex-wrap gap-2"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><label class="sr-only" for={ "group-name-" + group.ID }>Update group name for { group.Name }</label><input id={ "group-name-" + group.ID } name="name" type="text" value={ group.Name } required maxlength="64" class={ wsInput + " min-w-0 flex-1" }/><button type="submit" class={ wsButton }>Save</button></form>
+						<a class={ wsLink + " inline-flex min-h-11 items-center px-2 text-sm" } href={ templ.SafeURL("/admin/groups/" + group.ID + "/members") }>Members and databases</a>
 						if group.Active {
-							<form method="post" action={ templ.SafeURL("/admin/groups/" + group.ID + "/active") } hx-post={ templ.SafeURL("/admin/groups/" + group.ID + "/active") } hx-target="#admin-groups" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="active" value="false"/><button type="submit" class="min-h-11 rounded-lg border border-rose-900 px-3 text-sm text-rose-200">Disable</button></form>
+							<form method="post" action={ templ.SafeURL("/admin/groups/" + group.ID + "/active") } hx-post={ templ.SafeURL("/admin/groups/" + group.ID + "/active") } hx-target="#admin-groups" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="active" value="false"/><button type="submit" class={ wsButton + " text-rose-800" }>Disable</button></form>
 						} else {
-							<form method="post" action={ templ.SafeURL("/admin/groups/" + group.ID + "/active") } hx-post={ templ.SafeURL("/admin/groups/" + group.ID + "/active") } hx-target="#admin-groups" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="active" value="true"/><button type="submit" class="min-h-11 rounded-lg border border-cyan-900 px-3 text-sm text-cyan-300">Re-enable</button></form>
+							<form method="post" action={ templ.SafeURL("/admin/groups/" + group.ID + "/active") } hx-post={ templ.SafeURL("/admin/groups/" + group.ID + "/active") } hx-target="#admin-groups" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="active" value="true"/><button type="submit" class={ wsButton }>Re-enable</button></form>
 						}
 					</li>
 				}
@@ -177,63 +197,70 @@ templ AdminGroupsFragment(data AccessPageData) {
 
 templ AccessGroupMembers(assets Assets, data AccessPageData) {
 	@AdminShell("Group members", assets, data.ConnectionsAvailable) {
-		<main><a class="text-sm text-cyan-300 underline" href="/admin/groups">Groups</a><h1 class="mt-3 text-3xl font-semibold tracking-tight">Members of { data.SelectedGroup.Name }</h1><p class="mt-3 text-sm text-slate-400">Adding or removing membership changes effective database access.</p><div id="group-members">@AdminGroupMembersFragment(data)</div></main>
+		<main><a class={ wsLink + " inline-flex min-h-11 items-center text-sm" } href="/admin/groups">Groups</a><h1 class={ wsHeading + " mt-1 break-words" }>Members of { data.SelectedGroup.Name }</h1><p class={ wsMuted + " mt-2 leading-6" }>Adding or removing membership changes effective database access.</p><div id="group-members">@AdminGroupMembersFragment(data)</div></main>
 	}
 }
 
 templ AdminGroupMembersFragment(data AccessPageData) {
 	@AdminFeedback(data)
-	<section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6"><h2 class="text-xl font-semibold">Add member</h2><form method="post" action={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members") } hx-post={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members") } hx-target="#group-members" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-4 flex flex-wrap items-end gap-3"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><div class="min-w-0 flex-1 space-y-2"><label for="member-user" class="block text-sm font-medium text-slate-200">User</label><select id="member-user" name="user_id" required class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 focus-visible:outline-2 focus-visible:outline-cyan-300"><option value="">Choose user</option>
+	<div class="mt-6 flex flex-wrap items-start gap-6"><section class={ wsPanel + " min-w-0 flex-[1_1_18rem] p-5" }><h2 class={ wsSubhead }>Add member</h2><form method="post" action={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members") } hx-post={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members") } hx-target="#group-members" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-4 flex flex-wrap items-end gap-3"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><div class="min-w-0 flex-[1_1_12rem] space-y-1.5"><label for="member-user" class={ wsLabel }>User</label><select id="member-user" name="user_id" required class={ wsSelect + " w-full" }><option value="">Choose user</option>
 		for _, user := range data.Users {
 			if user.Active {
 				<option value={ user.ID }>{ user.Username }</option>
 			}
 		}
-		</select></div><button type="submit" class="min-h-12 rounded-lg bg-cyan-400 px-5 text-sm font-semibold text-slate-950">Add member</button></form>
-		<h2 class="mt-8 text-xl font-semibold">Current members</h2>
+		</select></div><button type="submit" class={ wsPrimary }>Add member</button></form></section>
+		<section class={ wsPanel + " min-w-0 flex-[999_1_32rem] p-5" }><h2 class={ wsSubhead }>Current members</h2>
 		if len(data.Memberships) == 0 {
-			<p class="mt-3 text-sm text-slate-400">No members in this group.</p>
+			<p class={ wsMuted + " mt-2" }>No members in this group.</p>
 		}
-		<ul class="mt-3 divide-y divide-slate-800">
+		<ul class="mt-2 divide-y divide-slate-100 empty:hidden">
 			for _, member := range data.Memberships {
-				<li class="flex flex-wrap items-center justify-between gap-3 py-4"><span class="break-all text-sm text-slate-200">{ member.Username }</span><form method="post" action={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members/remove") } hx-post={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members/remove") } hx-target="#group-members" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="user_id" value={ member.UserID }/><button type="submit" class="min-h-11 rounded-lg border border-slate-700 px-3 text-sm text-slate-200">Remove member</button></form></li>
+				<li class="flex flex-wrap items-center justify-between gap-3 py-3"><span class="break-all text-sm font-medium text-slate-900">{ member.Username }</span><form method="post" action={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members/remove") } hx-post={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members/remove") } hx-target="#group-members" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="user_id" value={ member.UserID }/><button type="submit" class={ wsButton + " text-rose-800" }>Remove member</button></form></li>
 			}
-		</ul></section>
+		</ul></section></div>
 }
 
 templ AccessGroupDatabases(assets Assets, data AccessPageData) {
 	@AdminShell("Group database access", assets, data.ConnectionsAvailable) {
-		<main><a class="text-sm text-cyan-300 underline" href={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members") }>Group members</a><h1 class="mt-3 text-3xl font-semibold tracking-tight">Database access for { data.SelectedGroup.Name }</h1><p class="mt-3 text-sm text-slate-400">Grant view or edit access to active registered databases.</p><div id="group-databases">@AdminGroupDatabasesFragment(data)</div></main>
+		<main><a class={ wsLink + " inline-flex min-h-11 items-center text-sm" } href={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/members") }>Group members</a><h1 class={ wsHeading + " mt-1 break-words" }>Database access for { data.SelectedGroup.Name }</h1><p class={ wsMuted + " mt-2 leading-6" }>Grant view or edit access to active registered databases.</p><div id="group-databases">@AdminGroupDatabasesFragment(data)</div></main>
 	}
 }
 
 templ AdminGroupDatabasesFragment(data AccessPageData) {
 	@AdminFeedback(data)
-	<section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6"><h2 class="text-xl font-semibold">Set access</h2><form method="post" action={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/databases") } hx-post={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/databases") } hx-target="#group-databases" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-4 grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><div class="space-y-2"><label for="grant-db" class="block text-sm font-medium text-slate-200">Registered database</label><select id="grant-db" name="database_id" required class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"><option value="">Choose database</option>
+	<div class="mt-6 flex flex-wrap items-start gap-6"><section class={ wsPanel + " min-w-0 flex-[1_1_20rem] p-5" }><h2 class={ wsSubhead }>Set access</h2><form method="post" action={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/databases") } hx-post={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/databases") } hx-target="#group-databases" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-4 space-y-4"><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><div class="space-y-1.5"><label for="grant-db" class={ wsLabel }>Registered database</label><select id="grant-db" name="database_id" required class={ wsSelect + " w-full" }><option value="">Choose database</option>
 		for _, db := range data.Databases {
 			if db.Active {
 				<option value={ db.ID }>{ db.Name }</option>
 			}
 		}
-		</select></div><div class="space-y-2"><label for="grant-permission" class="block text-sm font-medium text-slate-200">Permission</label><select id="grant-permission" name="permission" required class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"><option value="view">View</option><option value="edit">Edit</option></select></div><button type="submit" class="min-h-12 rounded-lg bg-cyan-400 px-5 text-sm font-semibold text-slate-950">Save access</button></form>
+		</select></div><div class="space-y-1.5"><label for="grant-permission" class={ wsLabel }>Permission</label><select id="grant-permission" name="permission" required class={ wsSelect + " w-full" }><option value="view">View</option><option value="edit">Edit</option></select></div><button type="submit" class={ wsPrimary + " w-full" }>Save access</button></form>
 		if !data.HasActiveDatabases() {
-			<p class="mt-4 text-sm text-slate-400">No active registered databases are available.
+			<p class={ wsMuted + " mt-4 leading-6" }>No active registered databases are available.
 				if data.ConnectionsAvailable {
-					Register one through <a href="/admin/databases" class="text-cyan-300 underline">Connections</a>.
+					Register one through <a href="/admin/databases" class={ wsLink }>Connections</a>.
 				} else {
 					Connection management is unavailable until its integration is ready.
 				}
 			</p>
 		}
-		<h2 class="mt-8 text-xl font-semibold">Current grants</h2>
+		</section>
+		<section class={ wsPanel + " min-w-0 flex-[999_1_32rem] p-5" }><h2 class={ wsSubhead }>Current grants</h2>
 		if len(data.Grants) == 0 {
-			<p class="mt-3 text-sm text-slate-400">No database grants for this group.</p>
+			<p class={ wsMuted + " mt-2" }>No database grants for this group.</p>
 		}
-		<ul class="mt-3 divide-y divide-slate-800">
+		<ul class="mt-2 divide-y divide-slate-100 empty:hidden">
 			for _, grant := range data.Grants {
-				<li class="flex flex-wrap items-center justify-between gap-3 py-4"><span class="min-w-0 break-words text-sm text-slate-200">{ grant.DatabaseName } <span class="text-slate-400">·</span> { grant.Permission }</span><form method="post" action={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/databases/remove") } hx-post={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/databases/remove") } hx-target="#group-databases" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="database_id" value={ grant.DatabaseID }/><button type="submit" class="min-h-11 rounded-lg border border-slate-700 px-3 text-sm text-slate-200">Remove grant</button></form></li>
+				<li class="flex flex-wrap items-center justify-between gap-3 py-3"><span class="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span class="break-words font-medium text-slate-900">{ grant.DatabaseName }</span>
+					if strings.EqualFold(grant.Permission, "edit") {
+						<span class={ wsChipTeal }>{ grant.Permission }</span>
+					} else {
+						<span class={ wsChip }>{ grant.Permission }</span>
+					}
+				</span><form method="post" action={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/databases/remove") } hx-post={ templ.SafeURL("/admin/groups/" + data.SelectedGroup.ID + "/databases/remove") } hx-target="#group-databases" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) }><input type="hidden" name="csrf_token" value={ data.CSRFToken }/><input type="hidden" name="database_id" value={ grant.DatabaseID }/><button type="submit" class={ wsButton + " text-rose-800" }>Remove grant</button></form></li>
 			}
-		</ul></section>
+		</ul></section></div>
 }
 
 templ AccessAdmin(assets Assets, data AccessAdminData) {
@@ -242,25 +269,42 @@ templ AccessAdmin(assets Assets, data AccessAdminData) {
 
 templ AccessAccount(assets Assets, data AccessAccountData) {
 	@Layout("Your account | sqlwise", assets) {
-		<main class="mx-auto min-h-screen w-full max-w-3xl px-4 py-10 sm:px-8"><a href="/" class="text-sm font-semibold tracking-widest text-cyan-300">sqlwise</a><h1 class="mt-8 text-3xl font-semibold tracking-tight">Your account</h1>
-			<p class="mt-4 break-words text-sm leading-6 text-slate-200">Signed in as <strong>{ data.Username }</strong>.</p>
-			@SessionStatus()
-			if data.IsPlatformAdmin {
-				<a href="/admin" class="mt-4 inline-flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-cyan-300 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-cyan-300">Manage platform</a>
+		<div class={ wsPage + " flex flex-col" }>
+			@WorkspaceTopbar(data.Username) {
+				<nav aria-label="Breadcrumb" class="flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-600">
+					<span aria-current="page" class="font-medium text-slate-900">Account</span>
+				</nav>
 			}
-			<section aria-labelledby="account-targets" class="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6"><h2 id="account-targets" class="text-xl font-semibold">Your database access</h2>
-				if data.NeedsRefresh {
-					<p role="status" class="mt-3 text-sm leading-6 text-cyan-300">Your permissions changed. Refresh this page to see your current access.</p>
-				} else if len(data.Databases) == 0 {
-					<p class="mt-3 text-sm leading-6 text-slate-400">No database access has been assigned to your account.</p>
-				}
-				<ul class="mt-3 divide-y divide-slate-800">
-					for _, database := range data.Databases {
-						<li class="flex flex-wrap items-center justify-between gap-3 py-4"><a class="break-all text-sm text-cyan-300 underline" href={ templ.SafeURL(databaseURL(database.ID)) }>{ database.Name }</a><span class="rounded-lg border border-slate-700 px-3 py-2 text-sm text-cyan-300">{ database.Permission }</span></li>
-					}
-				</ul>
-			</section>
-			@LogoutForm(data.CSRFToken)
-		</main>
+			<main class="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6"><h1 class={ wsHeading }>Your account</h1>
+				<div class="mt-6 flex flex-wrap items-start gap-6">
+					<section aria-labelledby="account-targets" class={ wsPanel + " min-w-0 flex-[999_1_36rem] p-5" }><h2 id="account-targets" class={ wsSubhead }>Your database access</h2>
+						if data.NeedsRefresh {
+							<p role="status" class={ wsNotice + " mt-3 bg-slate-50" }>Your permissions changed. Refresh this page to see your current access.</p>
+						} else if len(data.Databases) == 0 {
+							<p class={ wsEmpty + " mt-3 leading-6" }>No database access has been assigned to your account.</p>
+						}
+						<ul class="mt-2 divide-y divide-slate-100 empty:hidden">
+							for _, database := range data.Databases {
+								<li class="flex flex-wrap items-center justify-between gap-3 py-1.5"><a class={ wsLink + " inline-flex min-h-11 items-center break-all text-sm font-medium" } href={ templ.SafeURL(databaseURL(database.ID)) }>{ database.Name }</a>
+									if strings.EqualFold(database.Permission, "edit") {
+										<span class={ wsChipTeal }>{ database.Permission }</span>
+									} else {
+										<span class={ wsChip }>{ database.Permission }</span>
+									}
+								</li>
+							}
+						</ul>
+					</section>
+					<aside aria-label="Account" class={ wsPanel + " min-w-0 flex-[1_1_18rem] p-5" }>
+						<p class="break-words text-sm leading-6 text-slate-800">Signed in as <strong class="font-semibold text-slate-900">{ data.Username }</strong>.</p>
+						@SessionStatus()
+						if data.IsPlatformAdmin {
+							<a href="/admin" class={ wsButton + " mt-4 w-full" }>Manage platform</a>
+						}
+						@LogoutForm(data.CSRFToken)
+					</aside>
+				</div>
+			</main>
+		</div>
 	}
 }
