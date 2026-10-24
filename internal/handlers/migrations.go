@@ -44,6 +44,7 @@ func (h *Migrations) Register(router *gin.Engine) {
 	edit.POST("/migrations/:migrationID", h.update)
 	edit.POST("/migrations/:migrationID/execute", h.execute)
 	view.GET("/migrations/:migrationID/attempts/:attemptID", h.attempt)
+	edit.POST("/migrations/:migrationID/attempts/:attemptID/reconcile", h.markReconciled)
 	view.GET("/schema-diff", h.schemaDiff)
 	view.POST("/schema-diff/preview", h.preview)
 	edit.POST("/schema-diff/draft", h.useAsDraft)
@@ -201,7 +202,24 @@ func (h *Migrations) detailData(c *gin.Context) (views.MigrationDetailData, erro
 	return views.MigrationDetailData{Nav: h.nav(c, detail.Database, "migrations"), CurrentVersion: detail.CurrentVersion,
 		Draft: views.MigrationDraftView{ID: d.ID, Title: d.Title, SQL: d.SQL, SQLHash: d.SQLHash(), Dialect: string(d.Dialect), Revision: d.Revision,
 			AppliedVersion: d.AppliedVersion, CreatedBy: d.CreatedByName, CreatedAt: formatTime(d.CreatedAt), UpdatedBy: d.UpdatedByName, UpdatedAt: formatTime(d.UpdatedAt)},
-		Form: views.MigrationForm{Title: d.Title, SQL: d.SQL}, Attempts: attemptRows(detail.Attempts), Blocked: detail.Blocked}, nil
+		Form: views.MigrationForm{Title: d.Title, SQL: d.SQL}, Attempts: attemptRows(detail.Attempts), Blocked: detail.Blocked, ReconcileURL: reconcileURL(detail)}, nil
+}
+
+func reconcileURL(detail migration.Detail) string {
+	if detail.BlockedBy == nil || !detail.Database.CanEdit {
+		return ""
+	}
+	a := detail.BlockedBy
+	return "/databases/" + a.DatabaseID + "/migrations/" + a.MigrationID + "/attempts/" + a.ID + "/reconcile"
+}
+
+func (h *Migrations) markReconciled(c *gin.Context) {
+	a, err := h.migrations.MarkReconciled(c.Request.Context(), c.Param("databaseID"), c.Param("migrationID"), c.Param("attemptID"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	see(c, "/databases/"+a.DatabaseID+"/migrations/"+a.MigrationID)
 }
 
 func (h *Migrations) detail(c *gin.Context) {

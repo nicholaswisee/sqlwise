@@ -62,8 +62,10 @@ func (h *ConnectionAdmin) detailData(c *gin.Context, id string) (views.Connectio
 	if err != nil {
 		return data, err
 	}
-	data.Form = views.ConnectionForm{ID: id, Name: conn.Name, DBMS: string(conn.DBMS), Host: conn.Host, Port: strconv.Itoa(conn.Port), Database: conn.Database, Username: conn.Username, TLS: string(conn.TLS), Active: conn.Active, Existing: true}
-	for _, capability := range conn.DBMS.Capabilities().List() {
+	data.Form = views.ConnectionForm{ID: id, Name: conn.Name, DBMS: string(conn.DBMS), Host: conn.Host, Port: strconv.Itoa(conn.Port), Database: conn.Database, Username: conn.Username, TLS: string(conn.TLS), Active: conn.Active, Existing: true, Sandbox: conn.Sandbox}
+	capabilities := conn.DBMS.Capabilities()
+	capabilities.ExplainAnalyze = capabilities.Explain && conn.Sandbox
+	for _, capability := range capabilities.List() {
 		data.Capabilities = append(data.Capabilities, views.ConnectionCapability{Name: capability.Name, Supported: capability.Supported})
 	}
 	if conn.DBMS == database.PostgreSQL {
@@ -109,9 +111,9 @@ func (h *ConnectionAdmin) renderDetail(c *gin.Context, status int, data views.Co
 func connectionInput(c *gin.Context) (string, database.Connection, views.ConnectionForm, error) {
 	form := views.ConnectionForm{
 		Name: c.PostForm("name"), DBMS: c.PostForm("dbms"), Host: strings.TrimSpace(c.PostForm("host")), Port: strings.TrimSpace(c.PostForm("port")),
-		Database: c.PostForm("database"), Username: c.PostForm("username"), TLS: c.PostForm("tls"),
+		Database: c.PostForm("database"), Username: c.PostForm("username"), TLS: c.PostForm("tls"), Sandbox: c.PostForm("analyze_sandbox") == "on",
 	}
-	conn := database.Connection{DBMS: database.DBMS(form.DBMS), Host: form.Host, Database: form.Database, Username: form.Username, Password: c.PostForm("password"), TLS: database.TLSMode(form.TLS)}
+	conn := database.Connection{DBMS: database.DBMS(form.DBMS), Host: form.Host, Database: form.Database, Username: form.Username, Password: c.PostForm("password"), TLS: database.TLSMode(form.TLS), Sandbox: form.Sandbox}
 	port, err := strconv.Atoi(form.Port)
 	if err != nil {
 		return form.Name, conn, form, errInvalidPort
@@ -261,7 +263,7 @@ func connectionError(err error) (int, string) {
 	var domain *database.Error
 	if errors.As(err, &domain) {
 		switch {
-		case errors.Is(err, database.ErrValidation), errors.Is(err, database.ErrUnsupportedDialect):
+		case errors.Is(err, database.ErrValidation), errors.Is(err, database.ErrUnsupportedDialect), errors.Is(err, database.ErrUnsupportedStatement):
 			return http.StatusUnprocessableEntity, domain.Message
 		case errors.Is(err, database.ErrConflict):
 			return http.StatusConflict, domain.Message

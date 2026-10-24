@@ -83,6 +83,7 @@ type MigrationDetailData struct {
 	Form           MigrationForm
 	Attempts       []MigrationAttemptRow
 	Blocked        string
+	ReconcileURL   string
 	Notice         string
 	EditError      string
 	Result         *ExecutionResultView

@@ -65,7 +65,7 @@ templ ConnectionFields(form ConnectionForm) {
 		<label for="connection-dbms" class="block text-sm font-medium text-slate-200">Database type</label>
 		<select id="connection-dbms" name="dbms" required class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100">
 			<option value="postgresql" selected?={ form.DBMS != "mysql" }>PostgreSQL</option>
-			<option value="mysql" selected?={ form.DBMS == "mysql" }>MySQL (not supported yet)</option>
+			<option value="mysql" selected?={ form.DBMS == "mysql" }>MySQL (bonus; migrations are not atomic)</option>
 		</select>
 	</div>
 	<div class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_8rem]">
@@ -95,6 +95,10 @@ templ ConnectionFields(form ConnectionForm) {
 			<input id="connection-password" name="password" type="password" autocomplete="new-password" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/>
 		}
 	</div>
+	<label class="flex items-start gap-2 text-sm text-slate-200">
+		<input type="checkbox" name="analyze_sandbox" checked?={ form.Sandbox } class="mt-1"/>
+		<span>Analyze sandbox <span class="block text-slate-400">PostgreSQL only. Lets editors run EXPLAIN ANALYZE on SELECT statements here. Use an isolated database and a read-only user.</span></span>
+	</label>
 	<div class="space-y-2">
 		<label for="connection-tls" class="block text-sm font-medium text-slate-200">TLS</label>
 		<select id="connection-tls" name="tls" required class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100">

@@ -13,6 +13,7 @@ import (
 	"sqlwise/internal/database"
 	"sqlwise/internal/handlers"
 	"sqlwise/internal/migration"
+	"sqlwise/internal/queryplan"
 	"sqlwise/internal/schemadiff"
 	"sqlwise/internal/web/views"
 )
@@ -46,6 +47,7 @@ func registerDatabaseRoutes(router *gin.Engine, service *auth.Service, policy *a
 	handlers.NewMigrations(guard, policy, migrations, diff, assets).Register(router)
 	if targets.pools != nil {
 		handlers.NewDatabaseViewer(guard, policy, targets.pools, assets).Register(router)
+		handlers.NewExplain(guard, policy, queryplan.NewService(policy, targets.pools), assets).Register(router)
 	}
 	if targets.store != nil {
 		handlers.NewConnectionAdmin(guard, policy, targets.store, targets.pools, assets).Register(router)

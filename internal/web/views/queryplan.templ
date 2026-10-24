@@ -1,0 +1,95 @@
+package views
+
+templ PlanPanel(databaseID, csrfToken, storedSQL string, fromEditor bool) {
+	<section aria-labelledby="plan-heading" class="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
+		<h2 id="plan-heading" class="text-xl font-semibold">Query plan</h2>
+		<p class="mt-2 text-sm leading-6 text-slate-400">
+			Explain shows how the database would run one SELECT, INSERT, UPDATE or DELETE without running it.
+			Analyze runs a SELECT on a connection marked as an analyze sandbox, inside a read-only transaction, and reports actual time and rows.
+		</p>
+		if fromEditor {
+			<form method="post" action={ templ.SafeURL(explainURL(databaseID)) } hx-post={ explainURL(databaseID) } hx-target="#plan-result" hx-swap="innerHTML" hx-include="#edit-sql" hx-headers={ csrfHeaders(csrfToken) } hx-disabled-elt="find button" hx-on::before-swap={ templ.JSUnsafeFuncCall(errorSwap) } class="mt-4 space-y-4">
+				@planControls(csrfToken, storedSQL)
+			</form>
+		} else {
+			<form method="post" action={ templ.SafeURL(explainURL(databaseID)) } hx-post={ explainURL(databaseID) } hx-target="#plan-result" hx-swap="innerHTML" hx-headers={ csrfHeaders(csrfToken) } hx-disabled-elt="find button" hx-on::before-swap={ templ.JSUnsafeFuncCall(errorSwap) } class="mt-4 space-y-4">
+				@planControls(csrfToken, storedSQL)
+			</form>
+		}
+		<div id="plan-result" class="group mt-4" aria-live="polite"></div>
+	</section>
+}
+
+templ planControls(csrfToken, storedSQL string) {
+	<input type="hidden" name="csrf_token" value={ csrfToken }/>
+	<input type="hidden" name="stored_sql" value={ storedSQL }/>
+	<fieldset class="flex flex-wrap gap-4 text-sm text-slate-200">
+		<legend class="sr-only">Plan mode</legend>
+		<label class="inline-flex min-h-11 items-center gap-2"><input type="radio" name="mode" value="explain" checked/> Explain</label>
+		<label class="inline-flex min-h-11 items-center gap-2"><input type="radio" name="mode" value="analyze"/> Analyze (sandbox only)</label>
+	</fieldset>
+	<label class="flex items-start gap-2 text-sm text-slate-300"><input type="checkbox" name="confirm" class="mt-1"/> I understand Analyze executes the SELECT on the sandbox database.</label>
+	<button type="submit" class="min-h-11 rounded-lg border border-cyan-900 px-4 text-sm text-cyan-300">Show plan</button>
+}
+
+templ PlanResult(plan PlanView) {
+	<p role="status" class="mb-3 hidden rounded-lg border border-amber-700 bg-amber-950 p-3 text-sm text-amber-100 group-data-[stale=true]:block">The SQL changed after this plan was made. Show the plan again to update it.</p>
+	<div class="rounded-xl border border-slate-800 bg-slate-950 p-4">
+		<dl class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400">
+			<div><dt class="inline">Mode: </dt><dd class="inline text-slate-200">{ plan.Mode }</dd></div>
+			<div><dt class="inline">Dialect: </dt><dd class="inline text-slate-200">{ plan.Dialect }</dd></div>
+			<div><dt class="inline">Planning: </dt><dd class="inline text-slate-200">{ plan.PlanningTime }</dd></div>
+			<div><dt class="inline">Execution: </dt><dd class="inline text-slate-200">{ plan.ExecutionTime }</dd></div>
+			<div class="min-w-0"><dt class="inline">SQL hash: </dt><dd class="inline break-all font-mono text-slate-300">{ plan.SQLHash }</dd></div>
+		</dl>
+		for _, warning := range plan.Warnings {
+			<p class="mt-3 text-sm text-slate-300">{ warning }</p>
+		}
+		<ul class="mt-3 text-sm">
+			@planNode(plan.Root)
+		</ul>
+	</div>
+}
+
+templ planNode(n PlanNodeView) {
+	<li class="mt-2">
+		<div class="rounded-lg border border-slate-800 bg-slate-900 p-3">
+			<p class="break-words font-medium text-slate-100">
+				{ n.Type }
+				if n.Detail != "" {
+					<span class="font-normal text-slate-400">· { n.Detail }</span>
+				}
+			</p>
+			<dl class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-400 sm:grid-cols-5">
+				<div><dt>Est. cost</dt><dd class="font-mono text-slate-200">{ n.Cost }</dd></div>
+				<div><dt>Est. rows</dt><dd class="font-mono text-slate-200">{ n.Rows }</dd></div>
+				<div><dt>Actual time (ms)</dt><dd class="font-mono text-slate-200">{ n.ActualTime }</dd></div>
+				<div><dt>Actual rows</dt><dd class="font-mono text-slate-200">{ n.ActualRows }</dd></div>
+				<div><dt>Loops</dt><dd class="font-mono text-slate-200">{ n.Loops }</dd></div>
+			</dl>
+		</div>
+		if len(n.Children) > 0 {
+			<ul class="ml-3 border-l border-slate-800 pl-3 sm:ml-5 sm:pl-5">
+				for _, child := range n.Children {
+					@planNode(child)
+				}
+			</ul>
+		}
+	</li>
+}
+
+templ PlanError(message string) {
+	<p role="alert" class="rounded-lg bg-rose-950 p-4 text-sm leading-6 text-rose-200">{ message }</p>
+}
+
+templ PlanPage(assets Assets, plan PlanView) {
+	@Layout("Query plan | sqlwise", assets) {
+		<main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-8">
+			<a href="/account" class="text-sm text-cyan-300 underline underline-offset-4">Account</a>
+			<h1 class="mt-4 text-2xl font-semibold tracking-tight">Query plan</h1>
+			<div class="group mt-6">
+				@PlanResult(plan)
+			</div>
+		</main>
+	}
+}
