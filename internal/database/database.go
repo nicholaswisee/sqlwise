@@ -1,8 +1,8 @@
 package database
 
 import (
-	"time"
 	"sqlwise/internal/database/dialect"
+	"time"
 )
 
 type DBMS string
