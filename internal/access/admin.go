@@ -2,6 +2,8 @@ package access
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -158,5 +160,44 @@ func (s *Service) RenameGroup(ctx context.Context, groupID, name string) error {
 			return ErrConflict
 		}
 		return err
+	})
+}
+
+func (s *Service) RegisterDatabase(ctx context.Context, name string, attach func(tx pgx.Tx, databaseID string) error) (DatabaseRegistration, error) {
+	name = strings.TrimSpace(name)
+	if !utf8.ValidString(name) || strings.ContainsRune(name, 0) || utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 128 {
+		return DatabaseRegistration{}, ErrInvalidInput
+	}
+	var registration DatabaseRegistration
+	err := s.mutatePolicy(ctx, func(tx pgx.Tx, _ time.Time) error {
+		var id [16]byte
+		if _, err := rand.Read(id[:]); err != nil {
+			return err
+		}
+		registration = DatabaseRegistration{ID: hex.EncodeToString(id[:]), Name: name, Active: true}
+		if _, err := tx.Exec(ctx, `INSERT INTO database_registrations(id,name,active) VALUES($1,$2,true)`, registration.ID, name); err != nil {
+			return err
+		}
+		return attach(tx, registration.ID)
+	})
+	if err != nil {
+		return DatabaseRegistration{}, err
+	}
+	return registration, nil
+}
+
+func (s *Service) UpdateDatabase(ctx context.Context, databaseID, name string, attach func(tx pgx.Tx) error) error {
+	name = strings.TrimSpace(name)
+	if !utf8.ValidString(name) || strings.ContainsRune(name, 0) || utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 128 {
+		return ErrInvalidInput
+	}
+	return s.mutatePolicy(ctx, func(tx pgx.Tx, _ time.Time) error {
+		if err := policyResource(ctx, tx, "database_registrations", databaseID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE database_registrations SET name=$2 WHERE id=$1`, databaseID, name); err != nil {
+			return err
+		}
+		return attach(tx)
 	})
 }
