@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +133,9 @@ func TestBootstrapCLIInitializesSchemasAndDoesNotResetExistingAdmin(t *testing.T
 func buildAdminCLI(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "admin")
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "build", "-o", path, ".")
