@@ -19,7 +19,7 @@ import (
 
 func TestSchemaOnlyRejectsCredentialFlagsBeforeDatabaseAccess(t *testing.T) {
 	binary := buildAdminCLI(t)
-	for _, args := range [][]string{{"-schema-only", "-username", "admin"}, {"-schema-only", "-username="}, {"-schema-only", "-password-stdin"}, {"-schema-only", "-password-stdin=false"}, {"-schema-only", "unexpected"}} {
+	for _, args := range [][]string{{"-schema-only", "-username", "admin"}, {"-schema-only", "-username="}, {"-schema-only", "-password-stdin"}, {"-schema-only", "-password-stdin=false"}, {"-schema-only", "-if-not-exists"}, {"-schema-only", "-if-not-exists=false"}, {"-schema-only", "unexpected"}} {
 		out, err := runAdminCLI(t, binary, "", "", args...)
 		if err == nil || !strings.Contains(out, "cannot be combined") || strings.Contains(out, "DATABASE_URL is required") {
 			t.Fatalf("args %v: err=%v output=%s", args, err, out)
@@ -101,7 +101,7 @@ func TestBootstrapCLIInitializesSchemasAndDoesNotResetExistingAdmin(t *testing.T
 	binary := buildAdminCLI(t)
 	databaseURL := isolatedDatabaseURL(t, pool)
 	const firstPassword = "cli bootstrap password"
-	if output, err := runAdminCLI(t, binary, databaseURL, firstPassword+"\n", "-username", "cli.admin", "-password-stdin"); err != nil || !strings.Contains(output, "administrator created") {
+	if output, err := runAdminCLI(t, binary, databaseURL, firstPassword+"\n", "-username", "cli.admin", "-password-stdin", "-if-not-exists"); err != nil || !strings.Contains(output, "administrator created") {
 		t.Fatalf("bootstrap: err=%v output=%s", err, output)
 	}
 	var beforeID, beforeHash string
@@ -120,6 +120,13 @@ func TestBootstrapCLIInitializesSchemasAndDoesNotResetExistingAdmin(t *testing.T
 	}
 	if output, err := runAdminCLI(t, binary, databaseURL, "replacement bootstrap password\n", "-username", "cli.admin", "-password-stdin"); err == nil || !strings.Contains(output, "administrator already exists") {
 		t.Fatalf("second bootstrap: err=%v output=%s; want already-exists", err, output)
+	}
+	if output, err := runAdminCLI(t, binary, databaseURL, "replacement bootstrap password\n", "-username", "another.admin", "-password-stdin", "-if-not-exists"); err != nil || !strings.Contains(output, "credentials unchanged") {
+		t.Fatalf("optional bootstrap: err=%v output=%s; want existing admin preserved", err, output)
+	}
+	var adminCount int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM users WHERE is_platform_admin`).Scan(&adminCount); err != nil || adminCount != 1 {
+		t.Fatalf("administrator count after repeated bootstrap = %d, %v; want 1", adminCount, err)
 	}
 	var afterID, afterHash string
 	if err := pool.QueryRow(t.Context(), `SELECT id, password_hash FROM users WHERE username = 'cli.admin' AND is_platform_admin`).Scan(&afterID, &afterHash); err != nil {

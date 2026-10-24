@@ -25,7 +25,8 @@ sqlwise is a server-rendered SQL database management project for the IF3110 Web 
 ├── internal/web/views/           # templ pages, layouts, and asset loader
 ├── web/src/                      # Vite entry and Tailwind stylesheet
 ├── deploy/target/                # Seed for the demo target database
-├── compose.yaml                  # Local platform and demo target PostgreSQL
+├── compose.yaml                  # Local app, Vite+, platform and demo databases
+├── Dockerfile.dev                # Go and Vite+ development images
 ├── .env.example                  # Development environment example
 ├── go.mod, go.sum                # Go module and dependencies
 ├── package.json, pnpm-lock.yaml  # Frontend tooling and dependencies
@@ -36,7 +37,50 @@ Generated `*_templ.go` files are committed alongside their `.templ` sources. `we
 
 ## Local development
 
-Install the Go version specified in `go.mod`, Node.js LTS, Docker Compose, and Vite+ (`vp`). Set up the platform database and first administrator:
+### Start with Docker (Linux, macOS, and Windows)
+
+Start Docker Desktop with Linux containers on Windows/macOS, or Docker Engine
+with Compose on Linux. From the repository root, run:
+
+```sh
+docker compose up -d
+```
+
+Docker builds the Go and Vite+ images, starts PostgreSQL and the demo target,
+initializes the platform schemas, and creates the first administrator. The first
+build may take a few minutes. The defaults work without a `.env` file.
+
+Open <http://localhost:8080/login> and sign in with the **default local credentials**:
+
+| Username | Password                 |
+| -------- | ------------------------ |
+| `admin`  | `SqlwiseAdminLocal2026!` |
+
+These credentials and the default encryption key are for local development only.
+Existing administrators and their passwords are preserved on every startup. To
+choose different initial credentials, copy `.env.example` to `.env` and edit
+`SQLWISE_ADMIN_USERNAME` and `SQLWISE_ADMIN_PASSWORD` before the first startup;
+changing them later does not reset an existing account.
+
+View startup logs with `docker compose logs -f app frontend`. Stop the stack with:
+
+```sh
+docker compose down
+```
+
+Database volumes are kept when stopping, so your data and login still work next
+time. After source or dependency changes, rebuild with `docker compose up -d --build`.
+Go serves pages on port 8080 and Vite+ serves browser assets on port 5173.
+
+### Manual development (optional)
+
+Install the Go version specified in `go.mod`, a compatible C compiler for CGO,
+Node.js LTS, Docker Compose, and Vite+ (`vp`). Native Windows Go commands also need
+`CGO_ENABLED=1` and a GCC-compatible compiler; WSL2 is an alternative. The commands
+below use a POSIX shell such as Bash or WSL.
+
+Start the platform database, export the environment, and create an administrator
+with a password of your choice:
 
 ```sh
 docker compose up -d postgres
@@ -53,6 +97,28 @@ never overwritten. If a local PostgreSQL volume was initialized with different
 credentials, configure `DATABASE_URL` for that database; changing Compose's example
 variables does not rename an existing role or database.
 
+From the repository root, run the asset server:
+
+```sh
+vp install
+vp dev
+```
+
+In another terminal, export the same environment, generate templates and start Go:
+
+```sh
+set -a
+. ./.env
+set +a
+go tool templ generate
+go run ./cmd/server
+```
+
+Open <http://localhost:8080/login>. Successful login opens `/account`; Sign out
+revokes the session. The server requires a reachable platform database and
+initialized schemas. Native Go reads environment variables directly; Compose
+loads `.env` automatically.
+
 Target database passwords are stored encrypted with AES-256-GCM using
 `SQLWISE_CONNECTION_KEY`, 32 random bytes encoded as base64. The key in
 `.env.example` is for local development only; generate a separate key elsewhere
@@ -62,14 +128,16 @@ makes previously stored target passwords unreadable.
 ### Target databases
 
 Target databases are separate from the platform database and use their own
-credentials. Compose includes a seeded PostgreSQL demo target:
+credentials. The Docker startup includes a seeded PostgreSQL demo target. For
+manual development, start it with:
 
 ```sh
 docker compose up -d target
 ```
 
 As a platform administrator, open **Admin → Connections** (`/admin/databases`) and
-register it as host `localhost`, port `5434`, database `sqlwise_demo`, user
+register it as host `target`, port `5432` when the app runs in Compose (or host
+`localhost`, port `5434` for native Go), database `sqlwise_demo`, user
 `sqlwise_target`, password `sqlwise_target_dev_only`, TLS `disable`, then use
 **Test saved connection**. Grant a group view or edit access to the connection
 before its users can open it. Its `public`
@@ -115,7 +183,8 @@ they never own the pool. Ping, metadata and table reads time out after 5 seconds
 
 `docker compose --profile bonus up -d mysql` starts MySQL 8.4 on `127.0.0.1:3307`
 with a seeded `sqlwise_demo` database. Register it with type MySQL, host
-`localhost`, port `3307`, database `sqlwise_demo`, user `sqlwise_target`, password
+`mysql`, port `3306` when the app runs in Compose (or `localhost`, port `3307` for
+native Go), database `sqlwise_demo`, user `sqlwise_target`, password
 `sqlwise_target_dev_only` and TLS disabled. A MySQL connection covers exactly its
 registered database; the viewer, access control and migrations work as for
 PostgreSQL.
@@ -140,27 +209,6 @@ read-only user for it. It runs in a read-only transaction with a 5 second timeou
 that is always rolled back, and rejects data-modifying CTEs, row locks and
 functions outside a small built-in allowlist. A plan is marked stale when the SQL
 changes.
-
-From the repository root, run the asset server:
-
-```sh
-vp install
-vp dev
-```
-
-In another terminal, export the same environment, generate templates and start Go:
-
-```sh
-set -a
-. ./.env
-set +a
-go tool templ generate
-go run ./cmd/server
-```
-
-Open <http://localhost:8080/login>. Successful login opens `/account`; Sign out
-revokes the session. Vite+ serves assets on port 5173 and Go serves pages on port 8080. The server requires a reachable platform database and initialized auth schema.
-It reads environment variables directly and does not load `.env` automatically.
 
 ## Checks and production build
 

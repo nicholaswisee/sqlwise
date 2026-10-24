@@ -28,20 +28,23 @@ func main() {
 func run() error {
 	username := flag.String("username", "", "Username for the first platform administrator (3-64 letters, digits, _, . or -)")
 	stdin := flag.Bool("password-stdin", false, "Read the password from standard input instead of a hidden terminal prompt")
+	ifNotExists := flag.Bool("if-not-exists", false, "Succeed without changing credentials if a platform administrator already exists")
 	schemaOnly := flag.Bool("schema-only", false, "Initialize authentication, access, migration, and connection schemas without creating an administrator")
 	flag.Parse()
-	var usernameSet, stdinSet bool
+	var usernameSet, stdinSet, ifNotExistsSet bool
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "username":
 			usernameSet = true
 		case "password-stdin":
 			stdinSet = true
+		case "if-not-exists":
+			ifNotExistsSet = true
 		}
 	})
 	if *schemaOnly {
-		if usernameSet || stdinSet || flag.NArg() != 0 {
-			return errors.New("-schema-only cannot be combined with -username, -password-stdin, or positional arguments")
+		if usernameSet || stdinSet || ifNotExistsSet || flag.NArg() != 0 {
+			return errors.New("-schema-only cannot be combined with -username, -password-stdin, -if-not-exists, or positional arguments")
 		}
 	} else if *username == "" || flag.NArg() != 0 {
 		return errors.New("use -username NAME; use -help for usage")
@@ -96,6 +99,10 @@ func run() error {
 		return nil
 	}
 	if err := store.BootstrapAdmin(ctx, credentials); err != nil {
+		if *ifNotExists && errors.Is(err, auth.ErrAdminExists) {
+			fmt.Fprintln(os.Stdout, "A platform administrator already exists; credentials unchanged.")
+			return nil
+		}
 		if errors.Is(err, auth.ErrAdminExists) || errors.Is(err, auth.ErrInvalidInput) {
 			return err
 		}
