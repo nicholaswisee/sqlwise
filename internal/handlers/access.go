@@ -115,7 +115,7 @@ func (h *AccessAdmin) pageData(c *gin.Context, groupID, message, problem string)
 }
 
 func accessPageData(snapshot access.AdminSnapshot, session auth.Session, groupID, message, problem string) (views.AccessPageData, error) {
-	data := views.AccessPageData{CSRFToken: session.CSRFToken, Username: session.Principal.Username, Message: message, Error: problem}
+	data := views.AccessPageData{CSRFToken: session.CSRFToken, Username: session.Principal.Username, Message: message, Error: problem, ConnectionsAvailable: true}
 	users, groups, databases := map[string]string{}, map[string]string{}, map[string]string{}
 	for _, user := range snapshot.Users {
 		data.Users = append(data.Users, views.AccessUser{ID: user.ID, Username: user.Username, Active: user.Active, IsPlatformAdmin: user.IsPlatformAdmin})
