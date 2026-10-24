@@ -161,6 +161,14 @@ Set `APP_ENV=production` behind HTTPS, with `DATABASE_URL` and
 assets are deployed alongside the Go binary. CI runs generation, checks, tests,
 and both builds.
 
+## Bonus features
+
+| Bonus                                | Status                  | Notes                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MySQL support                        | Not implemented         | Groundwork only: the `mysql` database type, identifier quoting and a connection form option marked "not supported yet". MySQL connections are rejected as unsupported; there is no MySQL driver, viewer or migration path.                                                                                                |
+| Schema diff and migration generation | Complete for PostgreSQL | Compares the live schema with a desired JSON snapshot, lists ordered changes with destructive and unsupported warnings, generates `CREATE TABLE` and `ADD COLUMN` SQL, and saves it as an editable draft after a drift check. Covered by `internal/schemadiff` and `cmd/server` adapter tests. MySQL diff is unsupported. |
+| Query execution plan analysis        | Not implemented         | There is no Explain or Analyze endpoint.                                                                                                                                                                                                                                                                                  |
+
 ## Members
 
 | Student ID | Name                           |
@@ -168,3 +176,11 @@ and both builds.
 | 13524034   | Jason Edward Salim             |
 | 13524037   | Nicholas Wise Saragih Sumbayak |
 | 13524106   | Michael James Liman            |
+
+## Contributions
+
+| Member                         | Areas                                                                                                                                                                                                                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Jason Edward Salim             | Target connection management (encrypted credentials, connection test, enable and disable), the PostgreSQL adapter (pooled resolver, transactions with uncertain-commit detection, schema snapshots, bounded table reads), the database viewer, migration receipt setup, the demo target and test database isolation. |
+| Nicholas Wise Saragih Sumbayak | Authentication with Argon2id, sessions (timeouts, rotation, grace, revocation), CSRF protection, group-based authorization and middleware, the administration console for users, groups, memberships and grants, the base layout with HTMX, Tailwind and Vite+, and CI.                                              |
+| Michael James Liman            | Migration drafts and editor, PostgreSQL statement parsing, atomic execution with locks, receipts and reconciliation, linear version history, and schema diff with migration generation.                                                                                                                              |
