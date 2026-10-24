@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var postgresCapabilities = Capabilities{ConnectionTest: true, SchemaInspection: true, DataPreview: true}
+var postgresCapabilities = Capabilities{ConnectionTest: true, SchemaInspection: true, DataPreview: true, MigrationExecution: true, AtomicMigrations: true, SchemaDiff: true}
 
 const userSchemas = `n.nspname NOT IN ('pg_catalog','information_schema','pg_toast','` + InternalSchema + `')
 	AND n.nspname NOT LIKE 'pg\_temp\_%' AND n.nspname NOT LIKE 'pg\_toast\_temp\_%'`

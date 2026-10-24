@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"os"
 	"time"
 
@@ -11,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
+	"sqlwise/internal/database"
 	"sqlwise/internal/handlers"
 	"sqlwise/internal/migration"
-	"sqlwise/internal/migration/pgtarget"
 	"sqlwise/internal/schemadiff"
 	"sqlwise/internal/web/views"
 )
@@ -23,22 +22,21 @@ import (
 type databaseTargets struct {
 	targets  migration.Targets
 	snapshot schemadiff.Source
+	store    *database.Store
+	pools    *database.Pools
 }
 
-// loadDatabaseTargets uses the pgtarget stand-in configured from
-// SQLWISE_DEV_TARGETS. The returned close releases its pools.
-// TODO(jason): build from database.Resolver and SchemaSnapshot instead.
-func loadDatabaseTargets() (databaseTargets, func(), error) {
-	spec := os.Getenv(pgtarget.EnvVar)
-	if spec == "" {
-		return databaseTargets{}, func() {}, nil
-	}
-	registry, err := pgtarget.Connect(spec)
+// loadDatabaseTargets resolves targets from the connection registrations in
+// the platform database. The returned close releases the target pools.
+func loadDatabaseTargets(pool *pgxpool.Pool) (databaseTargets, func(), error) {
+	cipher, err := database.NewCipher(os.Getenv(database.KeyEnv))
 	if err != nil {
 		return databaseTargets{}, nil, err
 	}
-	log.Printf("migration targets: %d from %s (temporary stand-in for the database adapter)", registry.Len(), pgtarget.EnvVar)
-	return databaseTargets{targets: registry, snapshot: registry}, registry.Close, nil
+	store := database.NewStore(pool, cipher)
+	pools := database.NewPools(store)
+	adapter := migrationTargets{resolver: pools}
+	return databaseTargets{targets: adapter, snapshot: adapter, store: store, pools: pools}, pools.Close, nil
 }
 
 func registerDatabaseRoutes(router *gin.Engine, service *auth.Service, policy *access.Service, pool *pgxpool.Pool, assets views.Assets, targets databaseTargets) {
@@ -46,6 +44,9 @@ func registerDatabaseRoutes(router *gin.Engine, service *auth.Service, policy *a
 	migrations := migration.NewService(migration.NewStore(pool), policy, targets.targets, time.Now)
 	diff := schemadiff.NewService(policy, targets.snapshot, migrations)
 	handlers.NewMigrations(guard, policy, migrations, diff, assets).Register(router)
+	if targets.store != nil {
+		handlers.NewConnectionAdmin(guard, policy, targets.store, targets.pools, assets).Register(router)
+	}
 }
 
 func checkMigrationSchema(pool *pgxpool.Pool) error {
