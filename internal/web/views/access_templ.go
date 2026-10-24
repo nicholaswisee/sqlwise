@@ -2152,9 +2152,9 @@ func AccessAccount(assets Assets, data AccessAccountData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var113 templ.SafeURL
-				templ_7745c5c3_Var113, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(migrationsURL(database.ID)))
+				templ_7745c5c3_Var113, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(databaseURL(database.ID)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/access.templ`, Line: 259, Col: 174}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/access.templ`, Line: 259, Col: 172}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var113))
 				if templ_7745c5c3_Err != nil {
@@ -2167,7 +2167,7 @@ func AccessAccount(assets Assets, data AccessAccountData) templ.Component {
 				var templ_7745c5c3_Var114 string
 				templ_7745c5c3_Var114, templ_7745c5c3_Err = templ.JoinStringErrs(database.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/access.templ`, Line: 259, Col: 192}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/access.templ`, Line: 259, Col: 190}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var114))
 				if templ_7745c5c3_Err != nil {
@@ -2180,7 +2180,7 @@ func AccessAccount(assets Assets, data AccessAccountData) templ.Component {
 				var templ_7745c5c3_Var115 string
 				templ_7745c5c3_Var115, templ_7745c5c3_Err = templ.JoinStringErrs(database.Permission)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/access.templ`, Line: 259, Col: 300}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/access.templ`, Line: 259, Col: 298}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var115))
 				if templ_7745c5c3_Err != nil {
