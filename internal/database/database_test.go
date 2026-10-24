@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -192,6 +193,16 @@ func TestCellsShowNullAndTruncation(t *testing.T) {
 	}
 	if c := BinaryCell([]byte{0xde, 0xad, 0xbe, 0xef}, 8); !c.Truncated || c.Text != `\xdeadbe` {
 		t.Fatalf("truncated binary cell = %+v", c)
+	}
+}
+
+func TestDemoTargetUsesReceiptSetup(t *testing.T) {
+	seed, err := os.ReadFile(filepath.Join("..", "..", "deploy", "target", "init.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ReplaceAll(string(seed), "\r\n", "\n"), ReceiptSetupSQL("sqlwise_target")) {
+		t.Fatal("deploy/target/init.sql must end with ReceiptSetupSQL(\"sqlwise_target\")")
 	}
 }
 
