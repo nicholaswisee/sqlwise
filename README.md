@@ -68,8 +68,11 @@ credentials. Compose includes a seeded PostgreSQL demo target:
 docker compose up -d target
 ```
 
-Register it as host `localhost`, port `5434`, database `sqlwise_demo`, user
-`sqlwise_target`, password `sqlwise_target_dev_only`, TLS `disable`. Its `public`
+As a platform administrator, open **Admin → Connections** (`/admin/databases`) and
+register it as host `localhost`, port `5434`, database `sqlwise_demo`, user
+`sqlwise_target`, password `sqlwise_target_dev_only`, TLS `disable`, then use
+**Test saved connection**. Grant a group view or edit access to the connection
+before its users can open it. Its `public`
 and `sales` schemas hold related tables with keys, indexes, NULL, Unicode, binary
 and long values. The seed runs only when the `target_data` volume is created.
 
