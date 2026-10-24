@@ -5,6 +5,7 @@ go 1.27.1
 require (
 	github.com/a-h/templ v0.3.1070
 	github.com/gin-gonic/gin v1.12.0
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pganalyze/pg_query_go/v6 v6.2.5
 	golang.org/x/crypto v0.57.0
@@ -13,6 +14,7 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
 	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
