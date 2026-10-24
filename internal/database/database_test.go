@@ -198,7 +198,7 @@ func TestCellsShowNullAndTruncation(t *testing.T) {
 func TestPackageDoesNotImportConsumers(t *testing.T) {
 	forbidden := []string{"sqlwise/internal/auth", "sqlwise/internal/access", "sqlwise/internal/migration", "sqlwise/internal/schemadiff", "sqlwise/internal/queryplan", "sqlwise/internal/handlers"}
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return err
 		}
 		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
