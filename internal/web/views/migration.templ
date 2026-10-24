@@ -288,10 +288,17 @@ templ MigrationDetail(assets Assets, data MigrationDetailData) {
 				if data.Nav.CanEdit && data.Draft.AppliedVersion == 0 {
 					<section aria-labelledby="execute-heading" class={ wsPanel + " p-5 sm:p-6" }>
 						<h2 id="execute-heading" class={ wsSubhead }>Execute</h2>
-						<p class="mt-2 text-sm leading-6 text-slate-700">
-							Runs saved revision { itoa64(data.Draft.Revision) } (SHA-256 <code class="font-mono text-slate-900">{ shortHash(data.Draft.SQLHash) }</code>) in one transaction as
-							<strong class="font-mono font-semibold text-slate-900">{ version(data.CurrentVersion + 1) }</strong>. Any error rolls back every statement. Unsaved edits above are not executed.
-						</p>
+						if data.Draft.Dialect == "mysql" {
+							<p class="mt-2 text-sm leading-6 text-slate-700">
+								Runs saved revision { itoa64(data.Draft.Revision) } (SHA-256 <code class="font-mono text-slate-900">{ shortHash(data.Draft.SQLHash) }</code>) statement by statement as
+								<strong class="font-mono font-semibold text-slate-900">{ version(data.CurrentVersion + 1) }</strong>. MySQL commits DDL immediately, so if a later statement fails the earlier ones stay applied. Unsaved edits above are not executed.
+							</p>
+						} else {
+							<p class="mt-2 text-sm leading-6 text-slate-700">
+								Runs saved revision { itoa64(data.Draft.Revision) } (SHA-256 <code class="font-mono text-slate-900">{ shortHash(data.Draft.SQLHash) }</code>) in one transaction as
+								<strong class="font-mono font-semibold text-slate-900">{ version(data.CurrentVersion + 1) }</strong>. Any error rolls back every statement. Unsaved edits above are not executed.
+							</p>
+						}
 						<details class="mt-3">
 							<summary class={ "cursor-pointer py-2.5 text-sm font-medium text-cyan-700 hover:text-cyan-800 " + wsFocus }>Review the SQL that will run</summary>
 							<div class="mt-2">@sqlBlock(data.Draft.SQL)</div>
