@@ -213,7 +213,7 @@ func TestLoginPromotionWaitsForAuthzLockAndRechecksChallengeTime(t *testing.T) {
 		default:
 		}
 		var waiting bool
-		if err := pool.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%pg_advisory_xact_lock_shared%')`).Scan(&waiting); err != nil {
+		if err := pool.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%pg_advisory_xact_lock_shared%')`).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {
@@ -271,7 +271,7 @@ func TestSessionChecksClockAfterFamilyLock(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var waiting bool
-		if err := pool.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%WHERE s.token_hash=$1 FOR UPDATE OF f%')`).Scan(&waiting); err != nil {
+		if err := pool.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%WHERE s.token_hash=$1 FOR UPDATE OF f%')`).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {

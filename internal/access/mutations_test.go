@@ -313,7 +313,7 @@ func waitPolicyLock(t *testing.T, pool *pgxpool.Pool, mode string) {
 	defer cancel()
 	for {
 		var waiting bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted AND mode=$2)`, auth.AuthzLockKey, mode).Scan(&waiting); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND locktype='advisory' AND objid=$1 AND NOT granted AND mode=$2)`, auth.AuthzLockKey, mode).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {

@@ -436,7 +436,7 @@ func TestAdminMutationWaitsForSharedAuthzLockBeforeEffects(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var waiting bool
-		err := store.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%pg_advisory_xact_lock%' AND pid<>pg_backend_pid())`).Scan(&waiting)
+		err := store.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%pg_advisory_xact_lock%' AND pid<>pg_backend_pid())`).Scan(&waiting)
 		if err != nil {
 			t.Fatal(err)
 		}
