@@ -31,6 +31,9 @@ func main() {
 	if err := checkMigrationSchema(pool); err != nil {
 		log.Fatal(err)
 	}
+	if err := checkConnectionSchema(pool); err != nil {
+		log.Fatal(err)
+	}
 	targets, closeTargets, err := loadDatabaseTargets()
 	if err != nil {
 		log.Fatal(err)
