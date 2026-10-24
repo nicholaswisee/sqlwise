@@ -1,0 +1,190 @@
+package views
+
+templ ConnectionFeedback(message, problem string) {
+	if message != "" {
+		<p role="status" aria-live="polite" class="mb-5 rounded-lg border border-slate-800 bg-slate-900 p-4 text-sm text-slate-200">{ message }</p>
+	}
+	if problem != "" {
+		<p role="alert" class="mb-5 rounded-lg bg-rose-950 p-4 text-sm text-rose-200">{ problem }</p>
+	}
+}
+
+templ ConnectionsPage(assets Assets, data ConnectionPageData) {
+	@AdminShell("Connections", assets, true) {
+		<main>
+			<h1 class="text-3xl font-semibold tracking-tight">Connections</h1>
+			<p class="mt-3 max-w-2xl text-sm leading-6 text-slate-400">Register target databases. Passwords are stored encrypted and never shown again. Grant access to a connection through a group.</p>
+			<div id="admin-connections" class="mt-6">
+				@ConnectionsFragment(data)
+			</div>
+		</main>
+	}
+}
+
+templ ConnectionsFragment(data ConnectionPageData) {
+	@ConnectionFeedback(data.Message, data.Error)
+	<div class="grid gap-6 lg:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.2fr)]">
+		<section class="min-w-0 rounded-2xl border border-slate-800 bg-slate-900 p-5" aria-labelledby="create-connection">
+			<h2 id="create-connection" class="text-xl font-semibold">Register connection</h2>
+			<form method="post" action="/admin/databases" hx-post="/admin/databases" hx-target="#admin-connections" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-5 space-y-4">
+				<input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
+				@ConnectionFields(data.Form)
+				<button type="submit" class="min-h-12 w-full rounded-lg bg-cyan-400 px-5 text-sm font-semibold text-slate-950">Register connection</button>
+			</form>
+		</section>
+		<section class="min-w-0 rounded-2xl border border-slate-800 bg-slate-900 p-5" aria-labelledby="registered-connections">
+			<h2 id="registered-connections" class="text-xl font-semibold">Registered connections</h2>
+			if len(data.Connections) == 0 {
+				<p class="mt-3 text-sm text-slate-400">No connections are registered yet.</p>
+			}
+			<ul class="mt-3 divide-y divide-slate-800">
+				for _, row := range data.Connections {
+					<li class="flex flex-wrap items-center justify-between gap-3 py-4 text-sm">
+						<div class="min-w-0">
+							<a href={ templ.SafeURL(connectionURL(row.ID)) } class="break-all font-medium text-cyan-300 underline underline-offset-4">{ row.Name }</a>
+							<p class="mt-1 break-all text-slate-400">{ row.DBMS + " · " + row.Username + "@" + row.Address + " · TLS " + row.TLS }</p>
+						</div>
+						if row.Active {
+							<span class="rounded-lg border border-slate-700 px-3 py-2 text-slate-300">Active</span>
+						} else {
+							<span class="rounded-lg border border-slate-700 px-3 py-2 text-slate-400">Disabled</span>
+						}
+					</li>
+				}
+			</ul>
+		</section>
+	</div>
+}
+
+templ ConnectionFields(form ConnectionForm) {
+	<div class="space-y-2">
+		<label for="connection-name" class="block text-sm font-medium text-slate-200">Display name</label>
+		<input id="connection-name" name="name" value={ form.Name } required maxlength="128" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/>
+	</div>
+	<div class="space-y-2">
+		<label for="connection-dbms" class="block text-sm font-medium text-slate-200">Database type</label>
+		<select id="connection-dbms" name="dbms" required class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100">
+			<option value="postgresql" selected?={ form.DBMS != "mysql" }>PostgreSQL</option>
+			<option value="mysql" selected?={ form.DBMS == "mysql" }>MySQL (not supported yet)</option>
+		</select>
+	</div>
+	<div class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_8rem]">
+		<div class="space-y-2">
+			<label for="connection-host" class="block text-sm font-medium text-slate-200">Host</label>
+			<input id="connection-host" name="host" value={ form.Host } required autocomplete="off" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/>
+		</div>
+		<div class="space-y-2">
+			<label for="connection-port" class="block text-sm font-medium text-slate-200">Port</label>
+			<input id="connection-port" name="port" value={ form.Port } required inputmode="numeric" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/>
+		</div>
+	</div>
+	<div class="space-y-2">
+		<label for="connection-database" class="block text-sm font-medium text-slate-200">Database name</label>
+		<input id="connection-database" name="database" value={ form.Database } required autocomplete="off" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/>
+	</div>
+	<div class="space-y-2">
+		<label for="connection-username" class="block text-sm font-medium text-slate-200">Username</label>
+		<input id="connection-username" name="username" value={ form.Username } required autocomplete="off" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/>
+	</div>
+	<div class="space-y-2">
+		<label for="connection-password" class="block text-sm font-medium text-slate-200">Password</label>
+		if form.Existing {
+			<input id="connection-password" name="password" type="password" autocomplete="new-password" aria-describedby="connection-password-hint" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/>
+			<p id="connection-password-hint" class="text-sm text-slate-400">Leave blank to keep the current password.</p>
+		} else {
+			<input id="connection-password" name="password" type="password" autocomplete="new-password" class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100"/>
+		}
+	</div>
+	<div class="space-y-2">
+		<label for="connection-tls" class="block text-sm font-medium text-slate-200">TLS</label>
+		<select id="connection-tls" name="tls" required class="min-h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100">
+			<option value="verify-full" selected?={ form.TLS == "verify-full" || form.TLS == "" }>Verify certificate and host</option>
+			<option value="require" selected?={ form.TLS == "require" }>Encrypt without verification</option>
+			<option value="disable" selected?={ form.TLS == "disable" }>Disabled</option>
+		</select>
+	</div>
+}
+
+templ ConnectionEditPage(assets Assets, data ConnectionPageData) {
+	@AdminShell("Edit connection", assets, true) {
+		<main>
+			<a class="text-sm text-cyan-300 underline" href="/admin/databases">Connections</a>
+			<h1 class="mt-3 break-words text-3xl font-semibold tracking-tight">{ data.Form.Name }</h1>
+			<div id="connection-detail" class="mt-6">
+				@ConnectionDetailFragment(data)
+			</div>
+		</main>
+	}
+}
+
+templ ConnectionDetailFragment(data ConnectionPageData) {
+	@ConnectionFeedback(data.Message, data.Error)
+	<div class="grid gap-6 lg:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)]">
+		<section class="min-w-0 rounded-2xl border border-slate-800 bg-slate-900 p-5" aria-labelledby="edit-connection">
+			<h2 id="edit-connection" class="text-xl font-semibold">Connection settings</h2>
+			<p class="mt-2 text-sm text-slate-400">A connection with migration history keeps its database type, host, port and database name; register a new connection for a different database.</p>
+			<form method="post" action={ templ.SafeURL(connectionURL(data.Form.ID)) } hx-post={ templ.SafeURL(connectionURL(data.Form.ID)) } hx-target="#connection-detail" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-5 space-y-4">
+				<input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
+				@ConnectionFields(data.Form)
+				<button type="submit" class="min-h-12 w-full rounded-lg bg-cyan-400 px-5 text-sm font-semibold text-slate-950">Save changes</button>
+			</form>
+		</section>
+		<div class="min-w-0 space-y-6">
+			<section class="rounded-2xl border border-slate-800 bg-slate-900 p-5" aria-labelledby="test-connection">
+				<h2 id="test-connection" class="text-xl font-semibold">Test connection</h2>
+				<form method="post" action={ templ.SafeURL(connectionURL(data.Form.ID) + "/test") } hx-post={ templ.SafeURL(connectionURL(data.Form.ID) + "/test") } hx-target="#connection-test" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-4">
+					<input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
+					<button type="submit" class="min-h-11 rounded-lg border border-cyan-900 px-4 text-sm text-cyan-300">Test saved connection</button>
+				</form>
+				<div id="connection-test" class="mt-4">
+					@ConnectionTestResult(data.Test)
+				</div>
+			</section>
+			<section class="rounded-2xl border border-slate-800 bg-slate-900 p-5" aria-labelledby="connection-status">
+				<h2 id="connection-status" class="text-xl font-semibold">Status</h2>
+				<form method="post" action={ templ.SafeURL(connectionURL(data.Form.ID) + "/active") } hx-post={ templ.SafeURL(connectionURL(data.Form.ID) + "/active") } hx-target="#connection-detail" hx-swap="innerHTML" hx-headers={ csrfHeaders(data.CSRFToken) } class="mt-4 flex flex-wrap items-center justify-between gap-3">
+					<input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
+					if data.Form.Active {
+						<p class="text-sm text-slate-300">Active. Disabling keeps grants and migration history and signs out users who can access it.</p>
+						<input type="hidden" name="active" value="false"/>
+						<button type="submit" class="min-h-11 rounded-lg border border-rose-900 px-4 text-sm text-rose-200">Disable</button>
+					} else {
+						<p class="text-sm text-slate-300">Disabled. Nobody can open this database until it is enabled.</p>
+						<input type="hidden" name="active" value="true"/>
+						<button type="submit" class="min-h-11 rounded-lg border border-cyan-900 px-4 text-sm text-cyan-300">Enable</button>
+					}
+				</form>
+			</section>
+			<section class="rounded-2xl border border-slate-800 bg-slate-900 p-5" aria-labelledby="connection-capabilities">
+				<h2 id="connection-capabilities" class="text-xl font-semibold">Capabilities</h2>
+				<ul class="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+					for _, capability := range data.Capabilities {
+						<li class="flex justify-between gap-3 rounded-lg border border-slate-800 px-3 py-2">
+							<span class="text-slate-200">{ capability.Name }</span>
+							if capability.Supported {
+								<span class="text-cyan-300">Supported</span>
+							} else {
+								<span class="text-slate-400">Unsupported</span>
+							}
+						</li>
+					}
+				</ul>
+			</section>
+			if data.ReceiptSQL != "" {
+				<section class="rounded-2xl border border-slate-800 bg-slate-900 p-5" aria-labelledby="receipt-setup">
+					<h2 id="receipt-setup" class="text-xl font-semibold">Migration receipt setup</h2>
+					<p class="mt-2 text-sm leading-6 text-slate-400">Run once in the target database as a role other than { data.Form.Username }, so migrations cannot change their own receipts. The user also needs the privileges its migrations use.</p>
+					<pre class="mt-4 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs leading-5 text-slate-200"><code>{ data.ReceiptSQL }</code></pre>
+				</section>
+			}
+		</div>
+	</div>
+}
+
+templ ConnectionTestResult(test ConnectionTest) {
+	if test.Ran && test.OK {
+		<p role="status" class="rounded-lg border border-cyan-900 bg-slate-950 p-4 text-sm text-cyan-200">{ test.Message }</p>
+	} else if test.Ran {
+		<p role="alert" class="rounded-lg bg-rose-950 p-4 text-sm text-rose-200">{ test.Message }</p>
+	}
+}

@@ -70,7 +70,7 @@ func TestResolverOpensRegisteredPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	caps := h.Capabilities()
-	if h.DBMS() != database.PostgreSQL || !caps.ConnectionTest || !caps.SchemaInspection || !caps.DataPreview || caps.MigrationExecution || caps.Explain {
+	if h.DBMS() != database.PostgreSQL || !caps.ConnectionTest || !caps.SchemaInspection || !caps.DataPreview || !caps.MigrationExecution || !caps.AtomicMigrations || !caps.SchemaDiff || caps.Explain || caps.ExplainAnalyze {
 		t.Fatalf("handle %s capabilities %+v", h.DBMS(), caps)
 	}
 	for _, id := range []string{"missing", ""} {

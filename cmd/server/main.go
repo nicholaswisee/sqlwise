@@ -34,7 +34,7 @@ func main() {
 	if err := checkConnectionSchema(pool); err != nil {
 		log.Fatal(err)
 	}
-	targets, closeTargets, err := loadDatabaseTargets()
+	targets, closeTargets, err := loadDatabaseTargets(pool)
 	if err != nil {
 		log.Fatal(err)
 	}

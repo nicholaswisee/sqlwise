@@ -19,6 +19,7 @@ templ DatabaseShell(title string, assets Assets, nav DatabaseNav) {
 				</p>
 			</header>
 			<nav aria-label="Database sections" class="mb-8 flex gap-2 border-b border-slate-800">
+				@sectionTab("Schema", databaseURL(nav.ID), nav.Active == "schema")
 				@sectionTab("Migrations", migrationsURL(nav.ID), nav.Active == "migrations")
 				@sectionTab("Schema diff", schemaDiffURL(nav.ID), nav.Active == "schema-diff")
 			</nav>

@@ -12,7 +12,6 @@ import (
 // ReadSnapshot reads tables, columns, keys, constraints and indexes of one
 // schema from the PostgreSQL catalog. The reserved receipt schema is always
 // reported empty.
-// TODO(jason): superseded by database.SchemaSnapshot.
 func ReadSnapshot(ctx context.Context, pool *pgxpool.Pool, schema string) (schemadiff.Snapshot, error) {
 	snapshot := schemadiff.Snapshot{Dialect: schemadiff.PostgreSQL, Schema: schema}
 	if strings.EqualFold(schema, schemadiff.InternalSchema) {

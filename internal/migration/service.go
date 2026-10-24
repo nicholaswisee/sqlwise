@@ -145,7 +145,7 @@ func (s *Service) Create(ctx context.Context, databaseID string, in DraftInput) 
 	if _, err := s.store.databaseName(ctx, databaseID); err != nil {
 		return Draft{}, err
 	}
-	// TODO(jason): without an adapter the dialect cannot be read; assume PostgreSQL.
+	// Without configured targets the dialect cannot be read; assume PostgreSQL.
 	dialect := PostgreSQL
 	if s.targets != nil {
 		if dialect, err = s.targets.Dialect(ctx, databaseID); err != nil {

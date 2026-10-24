@@ -5,10 +5,8 @@ import (
 	"errors"
 )
 
-// Targets is the slice of Jason's database adapter that migrations consume.
+// Targets is the slice of the database adapter that migrations consume.
 // Implementations resolve registered targets only; callers authorize first.
-// TODO(jason): implement over database.Resolver and the transaction executor;
-// pgtarget is the temporary stand-in.
 type Targets interface {
 	// Dialect reports the DBMS of a registered target without opening it.
 	Dialect(ctx context.Context, databaseID string) (Dialect, error)

@@ -47,8 +47,8 @@ func (p *Platform) Exec(t *testing.T, sql string, args ...any) {
 	}
 }
 
-// Database registers an active target identity. Registration is Jason's
-// connection management; until it exists the row is inserted directly.
+// Database registers an active target identity without connection details;
+// tests attach target pools through Targets.
 func (p *Platform) Database(t *testing.T, id, name string) {
 	t.Helper()
 	p.Exec(t, `INSERT INTO database_registrations (id, name, active) VALUES ($1, $2, true)`, id, name)

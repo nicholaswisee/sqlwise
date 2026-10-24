@@ -53,6 +53,13 @@ type Capabilities struct {
 	ExplainAnalyze     bool
 }
 
+func (d DBMS) Capabilities() Capabilities {
+	if d == PostgreSQL {
+		return postgresCapabilities
+	}
+	return Capabilities{}
+}
+
 type Capability struct {
 	Name      string
 	Supported bool
