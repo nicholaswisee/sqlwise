@@ -79,3 +79,50 @@ func BinaryCell(b []byte, max int) Cell {
 	}
 	return Cell{Binary: true, Text: `\x` + hex.EncodeToString(b), Truncated: truncated}
 }
+
+func scanTargets(binary []bool) []any {
+	values := make([]any, len(binary))
+	for i, b := range binary {
+		if b {
+			values[i] = new([]byte)
+		} else {
+			values[i] = new(*string)
+		}
+	}
+	return values
+}
+
+func cells(values []any) []Cell {
+	row := make([]Cell, len(values))
+	for i, v := range values {
+		switch v := v.(type) {
+		case *[]byte:
+			if *v == nil {
+				row[i] = NullCell()
+			} else {
+				row[i] = BinaryCell(*v, MaxCellBytes)
+			}
+		case **string:
+			if *v == nil {
+				row[i] = NullCell()
+			} else {
+				row[i] = TextCell(**v, MaxCellBytes)
+			}
+		}
+	}
+	return row
+}
+
+func addRow(page *TablePage, size *int, row []Cell) bool {
+	rowSize := 0
+	for _, c := range row {
+		rowSize += len(c.Text)
+	}
+	if *size+rowSize > MaxPageBytes && len(page.Rows) > 0 {
+		page.HasNext, page.Truncated = true, true
+		return false
+	}
+	*size += rowSize
+	page.Rows = append(page.Rows, row)
+	return true
+}

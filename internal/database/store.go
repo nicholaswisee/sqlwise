@@ -42,8 +42,8 @@ func (s *Store) Insert(ctx context.Context, tx pgx.Tx, databaseID string, c Conn
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO database_connections(database_id,dbms,host,port,database_name,username,tls_mode,password_sealed)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, databaseID, string(c.DBMS), c.Host, c.Port, c.Database, c.Username, string(c.TLS), sealed)
+	_, err = tx.Exec(ctx, `INSERT INTO database_connections(database_id,dbms,host,port,database_name,username,tls_mode,password_sealed,analyze_sandbox)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, databaseID, string(c.DBMS), c.Host, c.Port, c.Database, c.Username, string(c.TLS), sealed, c.Sandbox)
 	return err
 }
 
@@ -75,17 +75,17 @@ func (s *Store) Update(ctx context.Context, tx pgx.Tx, databaseID string, c Conn
 			return err
 		}
 	}
-	_, err = tx.Exec(ctx, `UPDATE database_connections SET dbms=$2,host=$3,port=$4,database_name=$5,username=$6,tls_mode=$7,password_sealed=$8,updated_at=now()
-		WHERE database_id=$1`, databaseID, string(c.DBMS), c.Host, c.Port, c.Database, c.Username, string(c.TLS), sealed)
+	_, err = tx.Exec(ctx, `UPDATE database_connections SET dbms=$2,host=$3,port=$4,database_name=$5,username=$6,tls_mode=$7,password_sealed=$8,analyze_sandbox=$9,updated_at=now()
+		WHERE database_id=$1`, databaseID, string(c.DBMS), c.Host, c.Port, c.Database, c.Username, string(c.TLS), sealed, c.Sandbox)
 	return err
 }
 
-const connectionColumns = `r.id,r.name,r.active,c.dbms,c.host,c.port,c.database_name,c.username,c.tls_mode,c.created_at,c.updated_at`
+const connectionColumns = `r.id,r.name,r.active,c.dbms,c.host,c.port,c.database_name,c.username,c.tls_mode,c.analyze_sandbox,c.created_at,c.updated_at`
 
 func scanConnection(row pgx.Row, extra ...any) (Connection, error) {
 	var c Connection
 	var dbms, tls string
-	err := row.Scan(append([]any{&c.DatabaseID, &c.Name, &c.Active, &dbms, &c.Host, &c.Port, &c.Database, &c.Username, &tls, &c.CreatedAt, &c.UpdatedAt}, extra...)...)
+	err := row.Scan(append([]any{&c.DatabaseID, &c.Name, &c.Active, &dbms, &c.Host, &c.Port, &c.Database, &c.Username, &tls, &c.Sandbox, &c.CreatedAt, &c.UpdatedAt}, extra...)...)
 	c.DBMS, c.TLS = DBMS(dbms), TLSMode(tls)
 	return c, err
 }
