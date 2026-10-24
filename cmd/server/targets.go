@@ -43,12 +43,14 @@ func (m migrationTargets) Open(ctx context.Context, databaseID string) (migratio
 		h.Close()
 		return nil, migrationError(err)
 	}
-	begin, err := database.As[database.TxBeginner](h)
-	if err != nil {
+	t := migrationTarget{handle: h, exec: exec}
+	t.begin, _ = database.As[database.TxBeginner](h)
+	t.pinner, _ = database.As[database.Pinner](h)
+	if t.begin == nil && t.pinner == nil {
 		h.Close()
-		return nil, migrationError(err)
+		return nil, &migration.Error{Kind: migration.ErrUnsupportedDialect, Message: "This database cannot run migrations."}
 	}
-	return migrationTarget{handle: h, exec: exec, begin: begin}, nil
+	return t, nil
 }
 
 func (m migrationTargets) Snapshot(ctx context.Context, databaseID, schema string) (schemadiff.Snapshot, error) {
@@ -90,6 +92,7 @@ type migrationTarget struct {
 	handle database.Handle
 	exec   database.Executor
 	begin  database.TxBeginner
+	pinner database.Pinner
 }
 
 func (t migrationTarget) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
@@ -101,6 +104,9 @@ func (t migrationTarget) QueryRow(ctx context.Context, sql string, args ...any) 
 }
 
 func (t migrationTarget) Begin(ctx context.Context) (migration.TargetTx, error) {
+	if t.begin == nil {
+		return nil, &migration.Error{Kind: migration.ErrUnsupportedDialect, Message: "This database does not run migrations in a transaction."}
+	}
 	tx, err := t.begin.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", migration.ErrTargetUnavailable, err)
@@ -108,7 +114,30 @@ func (t migrationTarget) Begin(ctx context.Context) (migration.TargetTx, error) 
 	return migrationTx{tx}, nil
 }
 
+func (t migrationTarget) Pin(ctx context.Context) (migration.TargetConn, error) {
+	if t.pinner == nil {
+		return nil, &migration.Error{Kind: migration.ErrUnsupportedDialect, Message: "This database runs migrations in a transaction."}
+	}
+	conn, err := t.pinner.Pin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", migration.ErrTargetUnavailable, err)
+	}
+	return migrationConn{conn}, nil
+}
+
 func (t migrationTarget) Close() error { return t.handle.Close() }
+
+type migrationConn struct {
+	database.Conn
+}
+
+func (c migrationConn) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	n, err := c.Conn.Exec(ctx, sql, args...)
+	if errors.Is(err, database.ErrOutcomeUnknown) {
+		return n, fmt.Errorf("%w: %w", migration.ErrCommitUnknown, err)
+	}
+	return n, err
+}
 
 type migrationTx struct {
 	database.Tx

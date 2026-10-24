@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
 	"sqlwise/internal/access"
 )
@@ -74,7 +75,12 @@ func (s *Service) Execute(ctx context.Context, databaseID, migrationID string, i
 	if err := s.store.insertAttempt(ctx, attempt); err != nil {
 		return Attempt{}, err
 	}
-	attempt, kind := s.run(ctx, target, attempt, statements)
+	var kind error
+	if draft.Dialect == MySQL {
+		attempt, kind = s.runStatements(ctx, target, attempt, statements)
+	} else {
+		attempt, kind = s.run(ctx, target, attempt, statements)
+	}
 	return s.record(ctx, attempt, kind)
 }
 
@@ -86,10 +92,16 @@ func (s *Service) precheck(d Draft, in ExecuteInput) ([]Statement, error) {
 	if d.Revision != in.ExpectedRevision || d.SQLHash() != in.ExpectedSQLHash {
 		return nil, fail(ErrConflict, "This migration changed after you reviewed it. Reload and confirm the current SQL.")
 	}
-	if d.Dialect != PostgreSQL {
+	var statements []Statement
+	var err error
+	switch d.Dialect {
+	case PostgreSQL:
+		statements, err = ParsePostgres(d.SQL)
+	case MySQL:
+		statements, err = ParseMySQL(d.SQL)
+	default:
 		return nil, fail(ErrUnsupportedDialect, "Executing "+string(d.Dialect)+" migrations is not supported yet.")
 	}
-	statements, err := ParsePostgres(d.SQL)
 	if err != nil {
 		return nil, fail(ErrValidation, err.Error())
 	}
@@ -151,6 +163,57 @@ func (s *Service) run(ctx context.Context, target Target, a Attempt, statements 
 	return failed(ErrExecutionFailed, 0, "The commit was rejected: "+targetMessage(execCtx, err)+" All changes were rolled back.")
 }
 
+// runStatements executes MySQL statements one by one on a pinned connection.
+// MySQL commits DDL implicitly, so statements before a failure stay applied:
+// the attempt is then partially applied, never reported as rolled back.
+func (s *Service) runStatements(ctx context.Context, target Target, a Attempt, statements []Statement) (Attempt, error) {
+	execCtx, cancel := context.WithTimeout(ctx, s.executeTimeout)
+	defer cancel()
+	runner, ok := target.(StatementRunner)
+	if !ok {
+		a.Status, a.Error = StatusFailed, "This target cannot run statements one by one. Nothing was executed."
+		return a, ErrUnsupportedDialect
+	}
+	conn, err := runner.Pin(execCtx)
+	if err != nil {
+		a.Status, a.Error = StatusFailed, "Could not open a target connection: "+targetMessage(execCtx, err)+" Nothing was executed."
+		return a, ErrTargetUnavailable
+	}
+	defer conn.Close()
+	for i, statement := range statements {
+		_, err := conn.Exec(execCtx, statement.SQL)
+		if err == nil {
+			continue
+		}
+		a.FailedStatement = i + 1
+		kind := ErrExecutionFailed
+		if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+			kind = ErrTimeout
+		}
+		committed := "Nothing was applied."
+		if i > 0 {
+			committed = fmt.Sprintf("Statements 1–%d were already committed and remain applied. Further executions are blocked until an editor checks the target and marks this attempt as reconciled.", i)
+		}
+		switch {
+		case errors.Is(err, ErrCommitUnknown):
+			a.Status = StatusUnknown
+			a.Error = fmt.Sprintf("The connection failed while statement %d was running, so its outcome is unknown. %s", i+1, committed)
+			if i == 0 {
+				a.Error = "The connection failed while statement 1 was running, so its outcome is unknown. Further executions are blocked until an editor checks the target and marks this attempt as reconciled."
+			}
+			return a, ErrOutcomeUnknown
+		case i == 0:
+			a.Status = StatusFailed
+		default:
+			a.Status = StatusPartiallyApplied
+		}
+		a.Error = fmt.Sprintf("Statement %d failed: %s %s", i+1, targetMessage(execCtx, err), committed)
+		return a, kind
+	}
+	a.Status = StatusSucceeded
+	return a, nil
+}
+
 // record finishes the attempt in the platform. If that write fails after a
 // target commit the attempt stays running and the next execution reconciles it.
 func (s *Service) record(ctx context.Context, a Attempt, kind error) (Attempt, error) {
@@ -198,10 +261,12 @@ func (s *Service) reconcile(ctx context.Context, target Target, databaseID strin
 	}
 	for i := len(pending) - 1; i >= 0; i-- {
 		a := pending[i]
-		if a.Status == StatusPartiallyApplied {
+		if a.Status == StatusPartiallyApplied || a.Status == StatusUnknown && a.Dialect == MySQL {
 			return fail(ErrRecoveryRequired, blockedMessage(a))
 		}
-		a = s.resolve(ctx, target, a)
+		if a.Dialect != MySQL {
+			a = s.resolve(ctx, target, a)
+		}
 		finished := s.now().UTC()
 		a.FinishedAt = &finished
 		if a.Status == StatusRunning {
@@ -234,6 +299,17 @@ func targetMessage(ctx context.Context, err error) string {
 			message = message[:500] + "…"
 		}
 		return fmt.Sprintf("%s (SQLSTATE %s).", message, pgErr.Code)
+	}
+	var myErr *mysql.MySQLError
+	if errors.As(err, &myErr) {
+		message := myErr.Message
+		if myErr.Number == 1062 {
+			message = "Duplicate entry for a unique key"
+		}
+		if len(message) > 500 {
+			message = message[:500] + "…"
+		}
+		return fmt.Sprintf("%s (MySQL error %d).", message, myErr.Number)
 	}
 	if errors.Is(err, ErrTargetUnavailable) {
 		return "the target connection is unavailable."

@@ -27,6 +27,19 @@ type Row interface {
 	Scan(dest ...any) error
 }
 
+// StatementRunner is implemented by targets without atomic DDL (MySQL). Pin
+// returns one connection on which every statement commits on its own.
+type StatementRunner interface {
+	Pin(ctx context.Context) (TargetConn, error)
+}
+
+// TargetConn.Exec must wrap ErrCommitUnknown when the statement may have run
+// but no server reply confirmed it.
+type TargetConn interface {
+	Exec(ctx context.Context, sql string, args ...any) (int64, error)
+	Close() error
+}
+
 // TargetTx must wrap ErrCommitUnknown from Commit when the outcome is uncertain;
 // any other Commit error means the target confirmed the rollback.
 type TargetTx interface {

@@ -68,6 +68,11 @@ BEGIN
         OLD.sql_text, OLD.sql_sha256, OLD.dialect, OLD.statement_count, OLD.executor_id, OLD.started_at) THEN
         RAISE EXCEPTION 'migration attempt snapshot is immutable' USING ERRCODE = '55000';
     END IF;
+    IF OLD.status IN ('partially_applied', 'unknown') AND OLD.dialect = 'mysql' AND OLD.reconciled_at IS NULL AND NEW.reconciled_at IS NOT NULL
+        AND (NEW.status, NEW.applied_version, NEW.error_message, NEW.failed_statement, NEW.finished_at)
+        IS NOT DISTINCT FROM (OLD.status, OLD.applied_version, OLD.error_message, OLD.failed_statement, OLD.finished_at) THEN
+        RETURN NEW;
+    END IF;
     IF OLD.status NOT IN ('running', 'unknown')
         OR (OLD.status = 'unknown' AND NEW.status NOT IN ('unknown', 'succeeded', 'failed')) THEN
         RAISE EXCEPTION 'finished migration attempt is immutable' USING ERRCODE = '55000';
