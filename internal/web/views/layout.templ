@@ -7,6 +7,13 @@ templ Layout(title string, assets Assets) {
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 			<title>{ title }</title>
+			<link rel="preconnect" href="https://fonts.googleapis.com"/>
+			<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+			<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fragment+Mono&family=Instrument+Sans:wght@400;500;600;700&display=swap"/>
+			<style>
+				:root { --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif; --font-mono: "Fragment Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+				::selection { background: #cffafe; color: #164e63; }
+			</style>
 			if assets.Dev {
 				<script type="module" src="http://localhost:5173/@vite/client"></script>
 				<script type="module" src="http://localhost:5173/web/src/main.ts"></script>
@@ -17,7 +24,7 @@ templ Layout(title string, assets Assets) {
 				<script type="module" src={ assets.JS }></script>
 			}
 		</head>
-		<body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+		<body class="min-h-screen bg-slate-100 text-slate-900 antialiased">
 			{ children... }
 		</body>
 	</html>
