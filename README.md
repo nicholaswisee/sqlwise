@@ -76,6 +76,11 @@ before its users can open it. Its `public`
 and `sales` schemas hold related tables with keys, indexes, NULL, Unicode, binary
 and long values. The seed runs only when the `target_data` volume is created.
 
+Users open `/databases`, or the links on their account page, to browse schemas,
+columns, constraints and indexes, and to page through table rows (50 per page by
+default, at most 200). Cells are cut at 4 KiB and pages at 1 MiB; tables without a
+primary key are marked as unordered.
+
 Migrations record a receipt in `sqlwise_internal.migration_receipts` on the target.
 Create that table once as a different role than the migration user, so migration
 SQL cannot alter or remove receipts. As the owner role, in the target database:
