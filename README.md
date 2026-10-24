@@ -145,11 +145,19 @@ go build -o bin/sqlwise-admin ./cmd/admin
 ```
 
 For PostgreSQL integration tests, set `TEST_DATABASE_URL` to a disposable database;
-each test creates and cleans up its own schema. Without that variable, DB tests
-are explicitly skipped. CI provisions PostgreSQL and sets it, so these tests run.
+each test creates and cleans up its own schema. Target database tests also create
+and drop their own databases and login roles, so the role needs `CREATEDB` and
+`CREATEROLE` (the Compose `sqlwise` user has both):
 
-Set `APP_ENV=production` behind HTTPS, with `DATABASE_URL` configured and `web/dist`
-present in the working directory. Production session cookies use Secure. Static
+```sh
+TEST_DATABASE_URL=postgres://sqlwise:sqlwise_dev_only@localhost:5433/sqlwise_platform?sslmode=disable   go test -race -shuffle=on -count=1 ./...
+```
+
+Without that variable, DB tests are explicitly skipped, and a skipped run is not a
+passing one. CI provisions PostgreSQL and sets it, so these tests run.
+
+Set `APP_ENV=production` behind HTTPS, with `DATABASE_URL` and
+`SQLWISE_CONNECTION_KEY` configured and `web/dist` present in the working directory. Production session cookies use Secure. Static
 assets are deployed alongside the Go binary. CI runs generation, checks, tests,
 and both builds.
 
