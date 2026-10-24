@@ -54,8 +54,11 @@ type Capabilities struct {
 }
 
 func (d DBMS) Capabilities() Capabilities {
-	if d == PostgreSQL {
+	switch d {
+	case PostgreSQL:
 		return postgresCapabilities
+	case MySQL:
+		return mysqlCapabilities
 	}
 	return Capabilities{}
 }

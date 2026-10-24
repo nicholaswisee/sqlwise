@@ -70,7 +70,7 @@ func TestResolverOpensRegisteredPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	caps := h.Capabilities()
-	if h.DBMS() != database.PostgreSQL || !caps.ConnectionTest || !caps.SchemaInspection || !caps.DataPreview || !caps.MigrationExecution || !caps.AtomicMigrations || !caps.SchemaDiff || caps.Explain || caps.ExplainAnalyze {
+	if h.DBMS() != database.PostgreSQL || !caps.ConnectionTest || !caps.SchemaInspection || !caps.DataPreview || !caps.MigrationExecution || !caps.AtomicMigrations || !caps.SchemaDiff || !caps.Explain || caps.ExplainAnalyze {
 		t.Fatalf("handle %s capabilities %+v", h.DBMS(), caps)
 	}
 	for _, id := range []string{"missing", ""} {
@@ -84,7 +84,7 @@ func TestResolverOpensRegisteredPostgres(t *testing.T) {
 	if d, err := f.pools.DBMS(t.Context(), other.ID); err != nil || d != database.MySQL {
 		t.Fatalf("MySQL DBMS = %q, %v", d, err)
 	}
-	if _, err := f.pools.Open(t.Context(), other.ID); !errors.Is(err, database.ErrUnsupportedDialect) {
+	if h, err := f.pools.Open(t.Context(), other.ID); err != nil || h.DBMS() != database.MySQL || h.Capabilities().AtomicMigrations {
 		t.Fatalf("MySQL Open = %v", err)
 	}
 	if err := f.Access.SetDatabaseActive(f.admin, f.id, false); err != nil {

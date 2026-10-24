@@ -111,6 +111,36 @@ connect timeout) and closes it when the connection is disabled or its settings
 change, after running transactions finish. Callers receive handles and close them;
 they never own the pool. Ping, metadata and table reads time out after 5 seconds.
 
+### MySQL targets
+
+`docker compose --profile bonus up -d mysql` starts MySQL 8.4 on `127.0.0.1:3307`
+with a seeded `sqlwise_demo` database. Register it with type MySQL, host
+`localhost`, port `3307`, database `sqlwise_demo`, user `sqlwise_target`, password
+`sqlwise_target_dev_only` and TLS disabled. A MySQL connection covers exactly its
+registered database; the viewer, access control and migrations work as for
+PostgreSQL.
+
+MySQL commits DDL implicitly, so migrations run statement by statement on one
+connection instead of in a transaction. If the first statement fails nothing is
+applied. If a later one fails, the earlier statements stay applied and the attempt
+is recorded as partially applied; executions on that database are blocked until an
+editor checks the target and selects "mark as reconciled". The attempt stays in
+history and no version is applied, so the fix goes into a new migration. Session and
+transaction commands (`SET`, `USE`, `START TRANSACTION`, `LOCK TABLES`, `DELIMITER`)
+are rejected before execution. Schema diff and query plans are PostgreSQL only.
+
+### Query plans
+
+Every migration page has a Query plan panel that explains the SQL in the editor.
+Explain plans one `SELECT`, `INSERT`, `UPDATE` or `DELETE` without running it;
+planning writes needs edit access. Analyze executes a `SELECT` and reports actual
+time and rows. It needs edit access, an explicit confirmation and a connection an
+administrator marked as an analyze sandbox; use an isolated database and a
+read-only user for it. It runs in a read-only transaction with a 5 second timeout
+that is always rolled back, and rejects data-modifying CTEs, row locks and
+functions outside a small built-in allowlist. A plan is marked stale when the SQL
+changes.
+
 From the repository root, run the asset server:
 
 ```sh
@@ -154,7 +184,14 @@ TEST_DATABASE_URL=postgres://sqlwise:sqlwise_dev_only@localhost:5433/sqlwise_pla
 ```
 
 Without that variable, DB tests are explicitly skipped, and a skipped run is not a
-passing one. CI provisions PostgreSQL and sets it, so these tests run.
+passing one. MySQL tests additionally need `TEST_MYSQL_URL`, a root DSN that may
+create and drop databases:
+
+```sh
+TEST_MYSQL_URL='root:mysql_root_dev_only@tcp(localhost:3307)/' go test -race -count=1 ./...
+```
+
+CI provisions PostgreSQL and MySQL and sets both, so these tests run.
 
 Set `APP_ENV=production` behind HTTPS, with `DATABASE_URL` and
 `SQLWISE_CONNECTION_KEY` configured and `web/dist` present in the working directory. Production session cookies use Secure. Static
@@ -163,11 +200,11 @@ and both builds.
 
 ## Bonus features
 
-| Bonus                                | Status                  | Notes                                                                                                                                                                                                                                                                                                                     |
-| ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MySQL support                        | Not implemented         | Groundwork only: the `mysql` database type, identifier quoting and a connection form option marked "not supported yet". MySQL connections are rejected as unsupported; there is no MySQL driver, viewer or migration path.                                                                                                |
-| Schema diff and migration generation | Complete for PostgreSQL | Compares the live schema with a desired JSON snapshot, lists ordered changes with destructive and unsupported warnings, generates `CREATE TABLE` and `ADD COLUMN` SQL, and saves it as an editable draft after a drift check. Covered by `internal/schemadiff` and `cmd/server` adapter tests. MySQL diff is unsupported. |
-| Query execution plan analysis        | Not implemented         | There is no Explain or Analyze endpoint.                                                                                                                                                                                                                                                                                  |
+| Bonus                                | Status                  | Notes                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MySQL support                        | Complete                | Connection management and test, schema and data viewer, access control and statement-by-statement migrations with partially applied and unknown outcomes and a reconcile step, on MySQL 8.4. Covered by `internal/database`, `internal/migration` and `cmd/server` MySQL tests. Schema diff and query plans are PostgreSQL only. |
+| Schema diff and migration generation | Complete for PostgreSQL | Compares the live schema with a desired JSON snapshot, lists ordered changes with destructive and unsupported warnings, generates `CREATE TABLE` and `ADD COLUMN` SQL, and saves it as an editable draft after a drift check. Covered by `internal/schemadiff` and `cmd/server` adapter tests. MySQL diff is unsupported.        |
+| Query execution plan analysis        | Complete for PostgreSQL | Explain and sandbox-only Analyze from the migration editor, validated with PostgreSQL's parser, shown as a plan tree with estimated cost and rows and, for Analyze, actual time, rows and loops. Covered by `internal/queryplan` and `cmd/server` explain tests. MySQL plans are unsupported.                                    |
 
 ## Members
 

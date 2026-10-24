@@ -181,6 +181,13 @@ templ MigrationDetail(assets Assets, data MigrationDetailData) {
 		@notice(data.Notice)
 		if data.Blocked != "" {
 			<p role="alert" class="mt-4 rounded-lg border border-amber-700 bg-amber-950 p-4 text-sm leading-6 text-amber-100">{ data.Blocked }</p>
+			if data.ReconcileURL != "" {
+				<form method="post" action={ templ.SafeURL(data.ReconcileURL) } class="mt-3 flex flex-wrap items-center gap-3">
+					<input type="hidden" name="csrf_token" value={ data.Nav.CSRFToken }/>
+					<p class="text-sm text-slate-300">Check the target first: statements that ran before the failure stay applied. Then lift the block; the attempt stays in history.</p>
+					<button type="submit" class="min-h-11 rounded-lg border border-amber-700 px-4 text-sm text-amber-100">I checked the target, mark as reconciled</button>
+				</form>
+			}
 		}
 		<div id="execution-result" aria-live="polite">
 			if data.Result != nil {
@@ -205,6 +212,7 @@ templ MigrationDetail(assets Assets, data MigrationDetailData) {
 				<div class="mt-4">@sqlBlock(data.Draft.SQL)</div>
 			</section>
 		}
+		@PlanPanel(data.Nav.ID, data.Nav.CSRFToken, data.Draft.SQL, data.Nav.CanEdit && data.Draft.AppliedVersion == 0)
 		if data.Nav.CanEdit && data.Draft.AppliedVersion == 0 {
 			<section aria-labelledby="execute-heading" class="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
 				<h2 id="execute-heading" class="text-xl font-semibold">Execute</h2>

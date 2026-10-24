@@ -10,14 +10,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type targetPool interface {
+	handle() Handle
+	close()
+}
+
+type postgresPool struct {
+	pool    *pgxpool.Pool
+	sandbox bool
+}
+
+func (p postgresPool) handle() Handle { return &postgresHandle{pool: p.pool, sandbox: p.sandbox} }
+
+func (p postgresPool) close() { p.pool.Close() }
+
 type Pools struct {
 	store *Store
 	mu    sync.Mutex
-	pools map[string]*pgxpool.Pool
+	pools map[string]targetPool
 }
 
 func NewPools(store *Store) *Pools {
-	return &Pools{store: store, pools: make(map[string]*pgxpool.Pool)}
+	return &Pools{store: store, pools: make(map[string]targetPool)}
 }
 
 func (p *Pools) active(ctx context.Context, databaseID string) (Connection, error) {
@@ -41,23 +55,38 @@ func (p *Pools) Open(ctx context.Context, databaseID string) (Handle, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.DBMS != PostgreSQL {
-		return nil, fail(ErrUnsupportedDialect, c.DBMS.Label()+" connections are not supported yet.")
-	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	pool, ok := p.pools[databaseID]
 	if !ok {
+		if pool, err = openPool(ctx, c); err != nil {
+			return nil, err
+		}
+		p.pools[databaseID] = pool
+	}
+	return pool.handle(), nil
+}
+
+func openPool(ctx context.Context, c Connection) (targetPool, error) {
+	switch c.DBMS {
+	case PostgreSQL:
 		config, err := postgresConfig(c)
 		if err != nil {
 			return nil, err
 		}
-		if pool, err = pgxpool.NewWithConfig(ctx, config); err != nil {
+		pool, err := pgxpool.NewWithConfig(ctx, config)
+		if err != nil {
 			return nil, Unavailable()
 		}
-		p.pools[databaseID] = pool
+		return postgresPool{pool: pool, sandbox: c.Sandbox}, nil
+	case MySQL:
+		db, err := mysqlDB(c)
+		if err != nil {
+			return nil, err
+		}
+		return mysqlPool{db: db, database: c.Database}, nil
 	}
-	return &postgresHandle{pool: pool}, nil
+	return nil, fail(ErrUnsupportedDialect, "Database type must be PostgreSQL or MySQL.")
 }
 
 func (p *Pools) Invalidate(databaseID string) {
@@ -66,17 +95,17 @@ func (p *Pools) Invalidate(databaseID string) {
 	delete(p.pools, databaseID)
 	p.mu.Unlock()
 	if ok {
-		go pool.Close()
+		go pool.close()
 	}
 }
 
 func (p *Pools) Close() {
 	p.mu.Lock()
 	pools := p.pools
-	p.pools = make(map[string]*pgxpool.Pool)
+	p.pools = make(map[string]targetPool)
 	p.mu.Unlock()
 	for _, pool := range pools {
-		pool.Close()
+		pool.close()
 	}
 }
 

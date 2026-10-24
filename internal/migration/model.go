@@ -144,6 +144,14 @@ type Detail struct {
 	Draft          Draft
 	Attempts       []Attempt
 	Blocked        string
+	// BlockedBy is the attempt an editor may mark as reconciled, if any.
+	BlockedBy *Attempt
+}
+
+// Reconcilable reports attempts that stay blocked until an editor confirms
+// the target state: partially applied or unknown MySQL executions.
+func (a Attempt) Reconcilable() bool {
+	return a.Dialect == MySQL && a.ReconciledAt == nil && (a.Status == StatusPartiallyApplied || a.Status == StatusUnknown)
 }
 
 func HashSQL(sql string) string {

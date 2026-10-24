@@ -7,7 +7,7 @@ type ConnectionRow struct {
 
 type ConnectionForm struct {
 	ID, Name, DBMS, Host, Port, Database, Username, TLS string
-	Active, Existing                                    bool
+	Active, Existing, Sandbox                           bool
 }
 
 type ConnectionCapability struct {

@@ -20,6 +20,17 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: sqlwise_ci_only
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -psqlwise_ci_only --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,6 +72,7 @@ jobs:
       - name: Go test
         env:
           TEST_DATABASE_URL: postgres://sqlwise_test:sqlwise_ci_only@localhost:5432/sqlwise_test?sslmode=disable
+          TEST_MYSQL_URL: root:sqlwise_ci_only@tcp(localhost:3306)/
         run: go test -race -shuffle=on -count=1 ./...
 
       - name: Build assets

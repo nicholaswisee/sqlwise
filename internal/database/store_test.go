@@ -79,6 +79,7 @@ func TestConnectionValidation(t *testing.T) {
 		"database": func(c *database.Connection) { c.Database = "" },
 		"username": func(c *database.Connection) { c.Username = "" },
 		"tls":      func(c *database.Connection) { c.TLS = "prefer" },
+		"sandbox":  func(c *database.Connection) { c.DBMS, c.Sandbox = database.MySQL, true },
 	} {
 		c := validConnection()
 		mutate(&c)

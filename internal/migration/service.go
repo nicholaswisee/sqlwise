@@ -117,9 +117,39 @@ func (s *Service) Detail(ctx context.Context, databaseID, migrationID string) (D
 		return Detail{}, err
 	}
 	if len(blocking) > 0 {
-		d.Blocked = blockedMessage(blocking[len(blocking)-1])
+		last := blocking[len(blocking)-1]
+		d.Blocked = blockedMessage(last)
+		if last.Reconcilable() {
+			d.BlockedBy = &last
+		}
 	}
 	return d, nil
+}
+
+// MarkReconciled lifts the block of a partially applied or unknown MySQL
+// attempt after an editor has checked the target. History is unchanged:
+// the attempt keeps its status and no version is applied.
+func (s *Service) MarkReconciled(ctx context.Context, databaseID, migrationID, attemptID string) (Attempt, error) {
+	if _, err := s.authorize(ctx, databaseID, access.Edit); err != nil {
+		return Attempt{}, err
+	}
+	_, a, err := s.Attempt(ctx, databaseID, migrationID, attemptID)
+	if err != nil {
+		return Attempt{}, err
+	}
+	if !a.Reconcilable() {
+		return Attempt{}, fail(ErrConflict, "Only a partially applied or unknown MySQL attempt that is still blocking can be marked as reconciled.")
+	}
+	now := s.now().UTC()
+	ok, err := s.store.acknowledge(ctx, a.ID, now)
+	if err != nil {
+		return Attempt{}, err
+	}
+	if !ok {
+		return Attempt{}, fail(ErrConflict, "This attempt was already reconciled.")
+	}
+	a.ReconciledAt = &now
+	return a, nil
 }
 
 func (s *Service) Attempt(ctx context.Context, databaseID, migrationID, attemptID string) (Database, Attempt, error) {
@@ -181,9 +211,12 @@ func (s *Service) Update(ctx context.Context, databaseID, migrationID string, in
 func blockedMessage(a Attempt) string {
 	switch a.Status {
 	case StatusPartiallyApplied:
-		return fmt.Sprintf("Version %d was partially applied. Executions are blocked until an operator reconciles the target.", a.CandidateVersion)
+		return fmt.Sprintf("Version %d was partially applied. Executions are blocked until an editor checks the target and marks the attempt as reconciled.", a.CandidateVersion)
 	case StatusRunning:
 		return fmt.Sprintf("Version %d is executing or was interrupted. Its outcome is checked before the next execution.", a.CandidateVersion)
+	}
+	if a.Dialect == MySQL {
+		return fmt.Sprintf("The outcome of version %d is unknown. Executions are blocked until an editor checks the target and marks the attempt as reconciled.", a.CandidateVersion)
 	}
 	return fmt.Sprintf("The outcome of version %d is unknown. Executions are blocked until its receipt is checked on the target.", a.CandidateVersion)
 }

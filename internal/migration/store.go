@@ -169,7 +169,15 @@ func (s *Store) currentVersion(ctx context.Context, q querier, databaseID string
 
 // blocking returns the oldest unresolved attempt that prevents new executions.
 func (s *Store) blocking(ctx context.Context, databaseID string) ([]Attempt, error) {
-	return s.attempts(ctx, `a.database_id=$1 AND a.status IN ('running', 'unknown', 'partially_applied')`, databaseID)
+	return s.attempts(ctx, `a.database_id=$1 AND (a.status='running' OR (a.status IN ('unknown', 'partially_applied') AND a.reconciled_at IS NULL))`, databaseID)
+}
+
+// acknowledge records that an editor checked the target after a partially
+// applied or unknown MySQL attempt, which lifts its execution block.
+func (s *Store) acknowledge(ctx context.Context, attemptID string, at time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE migration_attempts SET reconciled_at=$2 WHERE id=$1 AND reconciled_at IS NULL
+		AND dialect='mysql' AND status IN ('partially_applied', 'unknown')`, attemptID, at)
+	return tag.RowsAffected() == 1, err
 }
 
 func (s *Store) insertAttempt(ctx context.Context, a Attempt) error {
