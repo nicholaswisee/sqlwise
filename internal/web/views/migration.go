@@ -10,6 +10,10 @@ type DatabaseNav struct {
 	Username  string
 	CSRFToken string
 	Active    string
+	// Engine labels the DBMS; Track and TrackEarlier draw the version track.
+	Engine       string
+	Track        []TrackStop
+	TrackEarlier int
 }
 
 type MigrationForm struct {
@@ -166,18 +170,17 @@ func statusLabel(status string) string {
 }
 
 func statusClass(status string) string {
-	base := "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold "
 	switch status {
 	case "succeeded":
-		return base + "bg-emerald-950 text-emerald-200 ring-1 ring-emerald-800"
+		return wsChipGreen
 	case "failed":
-		return base + "bg-rose-950 text-rose-200 ring-1 ring-rose-800"
+		return wsChipRed
 	case "running":
-		return base + "bg-sky-950 text-sky-200 ring-1 ring-sky-800"
+		return wsChipBlue
 	case "partially_applied", "unknown":
-		return base + "bg-amber-950 text-amber-200 ring-1 ring-amber-700"
+		return wsChipAmber
 	}
-	return base + "bg-slate-800 text-slate-300 ring-1 ring-slate-700"
+	return wsChip
 }
 
 func draftState(d MigrationDraftRow) (string, string) {

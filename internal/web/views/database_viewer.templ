@@ -4,109 +4,203 @@ import "strconv"
 
 templ DatabasesPage(assets Assets, data DatabaseListData) {
 	@Layout("Databases | sqlwise", assets) {
-		<main class="mx-auto min-h-screen w-full max-w-3xl px-4 py-10 sm:px-8">
-			<nav aria-label="Breadcrumb" class="text-sm"><a href="/account" class="text-cyan-300 underline underline-offset-4">Account</a></nav>
-			<h1 class="mt-6 text-3xl font-semibold tracking-tight">Databases</h1>
-			<p class="mt-3 text-sm text-slate-400">Signed in as <strong class="text-slate-200">{ data.Username }</strong>. Only databases your groups can view are listed.</p>
-			if len(data.Databases) == 0 {
-				<p class="mt-6 text-sm text-slate-400">No database access has been assigned to your account.</p>
+		<div class={ wsPage + " flex flex-col" }>
+			@WorkspaceTopbar(data.Username) {
+				<nav aria-label="Breadcrumb" class="flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-600">
+					<span aria-current="page" class="font-medium text-slate-900">Databases</span>
+				</nav>
 			}
-			<ul class="mt-6 divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-900 px-5">
-				for _, db := range data.Databases {
-					<li class="flex flex-wrap items-center justify-between gap-3 py-4">
-						<a href={ templ.SafeURL(databaseURL(db.ID)) } class="break-all text-sm font-medium text-cyan-300 underline underline-offset-4">{ db.Name }</a>
-						<span class="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">{ db.Permission }</span>
-					</li>
+			<main class="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
+				<h1 class={ wsHeading }>Databases</h1>
+				<p class={ wsMuted + " mt-2 max-w-2xl leading-6" }>Databases your groups can open. Your access is the highest permission among your groups.</p>
+				if len(data.Databases) == 0 {
+					<p class={ wsEmpty + " mt-6" }>No database access has been assigned to your account.</p>
+				} else {
+					<div class={ wsPanel + " mt-6 overflow-x-auto" }>
+						<table class={ wsTable + " min-w-[32rem]" }>
+							<thead>
+								<tr>
+									<th scope="col" class={ wsTh }>Database</th>
+									<th scope="col" class={ wsTh }>Engine</th>
+									<th scope="col" class={ wsTh }>Your access</th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, db := range data.Databases {
+									<tr class="hover:bg-slate-50">
+										<td class={ wsTd + " py-1.5" }>
+											<a href={ templ.SafeURL(databaseURL(db.ID)) } class={ wsLink + " inline-flex min-h-11 items-center break-all font-medium" }>{ db.Name }</a>
+										</td>
+										<td class={ wsTd + " py-3.5" }>
+											if db.Engine != "" {
+												<span class={ wsChip }>{ db.Engine }</span>
+											} else {
+												<span class="text-slate-600">Unknown</span>
+											}
+										</td>
+										<td class={ wsTd + " py-3.5" }>
+											if db.Permission == "edit" {
+												<span class={ wsChipTeal }>View + Edit</span>
+											} else {
+												<span class={ wsChip }>View only</span>
+											}
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
 				}
-			</ul>
-		</main>
+				<p class={ wsMuted + " mt-4" }>Missing a database? Ask a platform administrator to add your group to it.</p>
+			</main>
+		</div>
 	}
 }
 
 templ SchemaExplorer(assets Assets, data SchemaExplorerData) {
 	@DatabaseShell("Schema", assets, data.Nav) {
-		<form method="get" action={ templ.SafeURL(databaseURL(data.Nav.ID)) } hx-get={ templ.SafeURL(databaseURL(data.Nav.ID)) } hx-target="#schema-explorer" hx-swap="innerHTML" hx-push-url="true" hx-trigger="change" class="flex flex-wrap items-end gap-3">
-			<div class="space-y-2">
-				<label for="schema" class="block text-sm font-medium text-slate-200">Schema</label>
-				<select id="schema" name="schema" class="min-h-12 rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100">
-					for _, schema := range data.Schemas {
-						<option value={ schema } selected?={ schema == data.Schema }>{ schema }</option>
-					}
-				</select>
-			</div>
-			<noscript><button type="submit" class="min-h-12 rounded-lg border border-slate-700 px-4 text-sm text-slate-200">Show</button></noscript>
-		</form>
-		<div id="schema-explorer" class="mt-6">
+		<div id="schema-explorer">
 			@SchemaExplorerFragment(data)
 		</div>
 	}
 }
 
 templ SchemaExplorerFragment(data SchemaExplorerData) {
-	<h2 class="text-xl font-semibold">Tables in { data.Schema }</h2>
-	if len(data.Tables) == 0 {
-		<p class="mt-3 text-sm text-slate-400">This schema has no tables.</p>
-	}
-	<div class="mt-4 space-y-3">
-		for _, table := range data.Tables {
-			<details class="rounded-2xl border border-slate-800 bg-slate-900 p-4">
-				<summary class="flex cursor-pointer flex-wrap items-center justify-between gap-3">
-					<span class="break-all font-medium text-slate-100">{ table.Name }</span>
-					<span class="text-sm text-slate-400">{ strconv.Itoa(len(table.Columns)) } columns</span>
-				</summary>
-				<div class="mt-4 overflow-x-auto">
-					<table class="w-full text-left text-sm">
-						<thead class="text-slate-400"><tr><th scope="col" class="py-2 pr-4 font-medium">Column</th><th scope="col" class="py-2 pr-4 font-medium">Type</th><th scope="col" class="py-2 pr-4 font-medium">Nullable</th><th scope="col" class="py-2 font-medium">Default</th></tr></thead>
-						<tbody class="divide-y divide-slate-800">
-							for _, column := range table.Columns {
-								<tr>
-									<td class="break-all py-2 pr-4 text-slate-100">
-										{ column.Name }
-										if column.PrimaryKey {
-											<span class="ml-2 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-cyan-300">PK</span>
-										}
-									</td>
-									<td class="py-2 pr-4 font-mono text-slate-300">{ column.Type }</td>
-									<td class="py-2 pr-4 text-slate-300">
-										if column.Nullable {
-											yes
-										} else {
-											no
-										}
-									</td>
-									<td class="break-all py-2 font-mono text-slate-300">
-										if column.HasDefault {
-											{ column.Default }
-										}
-									</td>
-								</tr>
-							}
-						</tbody>
-					</table>
+	<div class="flex flex-wrap items-start gap-6">
+		<aside aria-label="Tables" class="flex min-w-0 flex-[1_1_16rem] flex-col gap-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+			<form method="get" action={ templ.SafeURL(databaseURL(data.Nav.ID)) } hx-get={ templ.SafeURL(databaseURL(data.Nav.ID)) } hx-target="#schema-explorer" hx-swap="innerHTML" hx-push-url="true" hx-trigger="change" class="flex flex-wrap items-end gap-2 px-1 pt-1">
+				<div class="min-w-0 flex-1 space-y-1.5">
+					<label for="schema" class={ wsLabel }>Schema</label>
+					<select id="schema" name="schema" class={ wsSelect + " w-full" }>
+						for _, schema := range data.Schemas {
+							<option value={ schema } selected?={ schema == data.Schema }>{ schema }</option>
+						}
+					</select>
 				</div>
-				@definitionList("Constraints", table.Constraints)
-				@definitionList("Indexes", table.Indexes)
-				<a href={ templ.SafeURL(TableURL(data.Nav.ID, table.ID, 0, 50)) } class="mt-4 inline-flex min-h-11 items-center rounded-lg border border-cyan-900 px-4 text-sm text-cyan-300">View data</a>
-			</details>
+				<noscript><button type="submit" class={ wsButton }>Show</button></noscript>
+			</form>
+			<nav aria-labelledby="rail-heading" class="flex flex-col gap-0.5">
+				<h2 id="rail-heading" class="break-all px-3 pb-1 text-xs font-semibold text-slate-600">Tables in { data.Schema }</h2>
+				if len(data.Tables) == 0 {
+					<p class={ wsMuted + " px-3 py-2" }>This schema has no tables.</p>
+				}
+				{{ current, _ := data.selected() }}
+				for _, table := range data.Tables {
+					{{ href := schemaTableURL(data.Nav.ID, data.Schema, table.Name) }}
+					if table.ID == current.ID {
+						<a href={ templ.SafeURL(href) } hx-get={ templ.SafeURL(href) } hx-target="#schema-explorer" hx-swap="innerHTML" hx-push-url="true" aria-current="true" class={ railItemClass(true) }>
+							<span class="min-w-0 break-all font-mono">{ table.Name }</span>
+							<span class="shrink-0 text-xs font-normal text-slate-600 tabular-nums">{ countLabel(len(table.Columns), "column", "columns") }</span>
+						</a>
+					} else {
+						<a href={ templ.SafeURL(href) } hx-get={ templ.SafeURL(href) } hx-target="#schema-explorer" hx-swap="innerHTML" hx-push-url="true" class={ railItemClass(false) }>
+							<span class="min-w-0 break-all font-mono">{ table.Name }</span>
+							<span class="shrink-0 text-xs text-slate-600 tabular-nums">{ countLabel(len(table.Columns), "column", "columns") }</span>
+						</a>
+					}
+				}
+			</nav>
+		</aside>
+		if table, ok := data.selected(); ok {
+			<section aria-labelledby="table-heading" class="flex min-w-0 flex-[999_1_560px] flex-col gap-6">
+				<div class="flex flex-wrap items-center justify-between gap-4">
+					<div class="min-w-0 space-y-1">
+						<h1 id="table-heading" class="break-all font-mono text-xl font-medium text-slate-900">{ data.Schema }.{ table.Name }</h1>
+						<p class={ wsMuted }>{ countLabel(len(table.Columns), "column", "columns") } · { primaryKeySummary(table.Columns) }</p>
+					</div>
+					<a href={ templ.SafeURL(TableURL(data.Nav.ID, table.ID, 0, 50)) } class={ wsPrimary }>View data</a>
+				</div>
+				<section aria-labelledby="columns-heading" class={ wsPanel + " overflow-hidden" }>
+					<h2 id="columns-heading" class="border-b border-slate-200 px-4 py-3 text-base font-semibold text-slate-900">Columns</h2>
+					<div class="overflow-x-auto">
+						<table class={ wsTable + " min-w-[36rem]" }>
+							<thead>
+								<tr>
+									<th scope="col" class={ wsTh }>Name</th>
+									<th scope="col" class={ wsTh }>Type</th>
+									<th scope="col" class={ wsTh }>Nullable</th>
+									<th scope="col" class={ wsTh }>Default</th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, column := range table.Columns {
+									<tr>
+										<td class={ wsTd + " break-all" }>
+											<span class="font-mono text-slate-900">{ column.Name }</span>
+											if column.PrimaryKey {
+												<span class={ wsChipTeal + " ml-2" }>PK</span>
+											}
+										</td>
+										<td class={ wsTd + " break-all font-mono text-slate-800" }>{ column.Type }</td>
+										<td class={ wsTd + " text-slate-800" }>
+											if column.Nullable {
+												yes
+											} else {
+												no
+											}
+										</td>
+										<td class={ wsTd + " break-all font-mono text-slate-800" }>
+											if column.HasDefault {
+												{ column.Default }
+											}
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				</section>
+				<div class="flex flex-wrap gap-6">
+					@definitionList("Constraints", "No constraints besides the column types.", table.Constraints)
+					@definitionList("Indexes", "No indexes on this table.", table.Indexes)
+				</div>
+			</section>
 		}
 	</div>
 }
 
-templ definitionList(title string, definitions []SchemaDefinition) {
-	if len(definitions) > 0 {
-		<h3 class="mt-4 text-sm font-semibold text-slate-200">{ title }</h3>
-		<ul class="mt-2 space-y-1 text-sm">
-			for _, d := range definitions {
-				<li class="break-all text-slate-300"><span class="text-slate-100">{ d.Name }</span> <span class="text-slate-400">{ d.Kind }</span> <code class="font-mono text-slate-300">{ d.Definition }</code></li>
-			}
-		</ul>
-	}
+templ definitionList(title, empty string, definitions []SchemaDefinition) {
+	<section aria-label={ title } class={ wsPanel + " flex min-w-0 flex-[1_1_20rem] flex-col gap-3 p-4" }>
+		<h2 class="text-base font-semibold text-slate-900">{ title }</h2>
+		if len(definitions) == 0 {
+			<p class={ wsMuted }>{ empty }</p>
+		} else {
+			<dl class="flex flex-col gap-3 text-sm">
+				for _, d := range definitions {
+					<div class="min-w-0">
+						<dt class="flex flex-wrap items-center gap-2">
+							<span class="break-all font-mono font-medium text-slate-900">{ d.Name }</span>
+							<span class={ wsChip }>{ d.Kind }</span>
+						</dt>
+						<dd class="mt-1 break-all font-mono text-[13px] leading-5 text-slate-700">{ d.Definition }</dd>
+					</div>
+				}
+			</dl>
+		}
+	</section>
 }
 
 templ TableData(assets Assets, data TablePageData) {
 	@DatabaseShell(data.Table, assets, data.Nav) {
-		<a href={ templ.SafeURL(schemaURL(data.Nav.ID, data.Schema)) } class="text-sm text-cyan-300 underline underline-offset-4">{ data.Schema }</a>
-		<h1 class="mt-2 break-all text-2xl font-semibold tracking-tight">{ data.Table }</h1>
+		<div class="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+			<div class="min-w-0 space-y-1">
+				<a href={ templ.SafeURL(schemaTableURL(data.Nav.ID, data.Schema, data.Table)) } class={ wsLink + " inline-flex min-h-11 items-center gap-1.5 text-sm" }>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"></path></svg>
+					Schema { data.Schema }
+				</a>
+				<h1 class="break-all font-mono text-2xl font-medium tracking-tight text-slate-900">{ data.Schema }.{ data.Table }</h1>
+			</div>
+			<form method="get" action={ templ.SafeURL(data.BaseURL) } hx-get={ templ.SafeURL(data.BaseURL) } hx-trigger="change" hx-target="#table-page" hx-swap="innerHTML" hx-push-url="true" class="flex flex-wrap items-center gap-3">
+				<input type="hidden" name="offset" value="0"/>
+				<label for="limit" class="text-sm font-medium text-slate-800">Rows per page</label>
+				<select id="limit" name="limit" class={ wsSelect + " tabular-nums" }>
+					for _, size := range pageSizes(data.Limit) {
+						<option value={ strconv.Itoa(size) } selected?={ size == data.Limit }>{ strconv.Itoa(size) }</option>
+					}
+				</select>
+				<noscript><button type="submit" class={ wsButton }>Show</button></noscript>
+			</form>
+		</div>
 		<div id="table-page" class="mt-6">
 			@TablePageFragment(data)
 		</div>
@@ -115,34 +209,35 @@ templ TableData(assets Assets, data TablePageData) {
 
 templ TablePageFragment(data TablePageData) {
 	if !data.Ordered {
-		<p role="status" class="mb-4 rounded-lg border border-slate-800 bg-slate-900 p-3 text-sm text-slate-300">This table has no primary key, so rows may appear in a different order on each page.</p>
+		<p role="status" class={ wsNotice + " mb-4" }>This table has no primary key, so rows may appear in a different order on each page.</p>
 	}
 	if data.Truncated {
-		<p role="status" class="mb-4 rounded-lg border border-slate-800 bg-slate-900 p-3 text-sm text-slate-300">This page was shortened to stay within the response size limit.</p>
+		<p role="status" class={ wsNotice + " mb-4" }>This page was shortened to stay within the response size limit.</p>
 	}
-	<div class="overflow-x-auto rounded-2xl border border-slate-800">
-		<table class="w-full text-left text-sm">
-			<thead class="bg-slate-900 text-slate-400">
+	<div class={ wsPanel + " max-h-[70vh] overflow-auto" }>
+		<table class="w-full border-separate border-spacing-0 text-left text-sm tabular-nums">
+			<thead>
 				<tr>
 					for _, column := range data.Columns {
-						<th scope="col" class="whitespace-nowrap px-3 py-2 font-medium"><span class="text-slate-100">{ column.Name }</span> <span class="font-mono text-xs">{ column.Type }</span></th>
+						<th scope="col" class="sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 align-bottom">
+							<span class="block font-semibold text-slate-800">{ column.Name }</span>
+							<span class="block font-mono text-xs font-normal text-slate-600">{ column.Type }</span>
+						</th>
 					}
 				</tr>
 			</thead>
-			<tbody class="divide-y divide-slate-800">
+			<tbody>
 				for _, row := range data.Rows {
-					<tr>
+					<tr class="even:bg-slate-50 hover:bg-cyan-50 [&>td]:border-b [&>td]:border-slate-100">
 						for _, cell := range row {
-							<td class="max-w-md break-all px-3 py-2 align-top">
+							<td class={ cellClass(cell) }>
 								if cell.Null {
-									<span class="italic text-slate-500">NULL</span>
-								} else if cell.Binary {
-									<span class="font-mono text-slate-300">{ cell.Text }</span>
+									<span class="italic text-slate-600">NULL</span>
 								} else {
-									<span class="whitespace-pre-wrap text-slate-200">{ cell.Text }</span>
+									<span class={ cellTextClass(cell) }>{ cell.Text }</span>
 								}
 								if cell.Truncated {
-									<span class="ml-1 text-xs text-cyan-300">… truncated</span>
+									<span class="ml-1 font-sans text-xs text-cyan-800">… truncated</span>
 								}
 							</td>
 						}
@@ -150,22 +245,22 @@ templ TablePageFragment(data TablePageData) {
 				}
 			</tbody>
 		</table>
+		if len(data.Rows) == 0 {
+			<p class="p-6 text-sm text-slate-600">No rows on this page.</p>
+		}
 	</div>
-	if len(data.Rows) == 0 {
-		<p class="mt-4 text-sm text-slate-400">No rows on this page.</p>
-	}
 	<nav aria-label="Pages" class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
 		if len(data.Rows) > 0 {
-			<span class="text-slate-400">Rows { strconv.Itoa(data.From) }–{ strconv.Itoa(data.To) }</span>
+			<span class="text-slate-700 tabular-nums">Rows { strconv.Itoa(data.From) }–{ strconv.Itoa(data.To) }</span>
 		} else {
 			<span></span>
 		}
 		<span class="flex gap-2">
 			if data.PrevURL != "" {
-				<a href={ templ.SafeURL(data.PrevURL) } hx-get={ templ.SafeURL(data.PrevURL) } hx-target="#table-page" hx-swap="innerHTML" hx-push-url="true" class="inline-flex min-h-11 items-center rounded-lg border border-slate-700 px-4 text-slate-200">Previous</a>
+				<a href={ templ.SafeURL(data.PrevURL) } hx-get={ templ.SafeURL(data.PrevURL) } hx-target="#table-page" hx-swap="innerHTML" hx-push-url="true" class={ wsButton }>Previous</a>
 			}
 			if data.NextURL != "" {
-				<a href={ templ.SafeURL(data.NextURL) } hx-get={ templ.SafeURL(data.NextURL) } hx-target="#table-page" hx-swap="innerHTML" hx-push-url="true" class="inline-flex min-h-11 items-center rounded-lg border border-slate-700 px-4 text-slate-200">Next</a>
+				<a href={ templ.SafeURL(data.NextURL) } hx-get={ templ.SafeURL(data.NextURL) } hx-target="#table-page" hx-swap="innerHTML" hx-push-url="true" class={ wsButton }>Next</a>
 			}
 		</span>
 	</nav>

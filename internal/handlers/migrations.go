@@ -26,10 +26,17 @@ type Migrations struct {
 	migrations *migration.Service
 	diff       *schemadiff.Service
 	assets     views.Assets
+	header     WorkspaceHeader
 }
 
 func NewMigrations(auth *Auth, policy DatabasePermissionChecker, migrations *migration.Service, diff *schemadiff.Service, assets views.Assets) *Migrations {
 	return &Migrations{auth: auth, policy: policy, migrations: migrations, diff: diff, assets: assets}
+}
+
+// WithHeader adds the engine label and version track to every page.
+func (h *Migrations) WithHeader(header WorkspaceHeader) *Migrations {
+	h.header = header
+	return h
 }
 
 func (h *Migrations) Register(router *gin.Engine) {
@@ -58,7 +65,9 @@ func (h *Migrations) require(required access.Permission) gin.HandlerFunc {
 
 func (h *Migrations) nav(c *gin.Context, db migration.Database, active string) views.DatabaseNav {
 	session := c.MustGet("auth_session").(auth.Session)
-	return views.DatabaseNav{ID: db.ID, Name: db.Name, CanEdit: db.CanEdit, Username: session.Principal.Username, CSRFToken: session.CSRFToken, Active: active}
+	nav := views.DatabaseNav{ID: db.ID, Name: db.Name, CanEdit: db.CanEdit, Username: session.Principal.Username, CSRFToken: session.CSRFToken, Active: active}
+	h.header.fill(c.Request.Context(), &nav)
+	return nav
 }
 
 func htmx(c *gin.Context) bool { return c.GetHeader("HX-Request") == "true" }
