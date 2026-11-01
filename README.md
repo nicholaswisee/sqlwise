@@ -1,115 +1,68 @@
 # sqlwise
 
-sqlwise is a server-rendered SQL database management project for the IF3110 Web Application Development course, focused on PostgreSQL database exploration, migration workflows, and group-based access control.
+sqlwise is a database management web app built for the IF3110 Web Application Development course. Teams can explore databases, manage access, plan schema changes, and track migrations from one interface.
 
-## Technology
+## Features
 
-- Go and Gin for HTTP routing and backend services
-- templ and HTMX for server-rendered pages and interactions
-- Tailwind CSS, TypeScript, and Vite+ for styling and browser assets
-- PostgreSQL for platform data and database management
+- **Database explorer:** Browse PostgreSQL and MySQL schemas, tables, columns, and data.
+- **Migrations:** Write SQL drafts, run migrations, and review version history and execution results.
+- **Access control:** Manage users, groups, and view or edit permissions for each database.
+- **Connection management:** Register, test, enable, and disable database connections.
 
-## Project structure
+## Bonus features
 
-```text
-.
-├── .github/workflows/ci.yml       # Generate, check, test, and build
-├── cmd/server/                   # Go HTTP entrypoint and route tests
-├── cmd/admin/                    # First-administrator setup
-├── internal/auth/                # Users, password hashing, and sessions
-├── internal/access/              # Groups, grants, and access control
-├── internal/migration/           # Migration drafts, execution, and history
-├── internal/schemadiff/          # Schema diff and migration generation
-├── internal/database/            # Target connections, adapters, and metadata
-├── internal/handlers/            # Server-rendered HTTP handlers
-├── internal/web/views/           # templ pages, layouts, and asset loader
-├── web/src/                      # Vite entry and Tailwind stylesheet
-├── deploy/target/                # Seed for the demo target database
-├── compose.yaml                  # Local app, Vite+, platform and demo databases
-├── Dockerfile.dev                # Go and Vite+ development images
-├── .env.example                  # Development environment example
-├── go.mod, go.sum                # Go module and dependencies
-├── package.json, pnpm-lock.yaml  # Frontend tooling and dependencies
-└── vite.config.ts, tsconfig.json # Asset build and TypeScript configuration
-```
+## Milestone 1
 
-Generated `*_templ.go` files are committed alongside their `.templ` sources. `web/dist`, `bin`, `node_modules`, and `.env` are ignored by Git.
+| Feature       | Status                  | What it does                                                                                                              |
+| ------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| MySQL support | Complete                | Adds MySQL connections, browsing, and migrations. Partial or uncertain migration outcomes can be reviewed and reconciled. |
+| Schema diff   | Complete for PostgreSQL | Compares a live schema with a desired JSON snapshot and generates a migration draft with change warnings.                 |
+| Query plans   | Complete for PostgreSQL | Shows Explain plans and supports Analyze for SELECT queries on an authorized sandbox connection.                          |
 
-## Local development
+## Tech stack
 
-### Start with Docker (Linux, macOS, and Windows)
+Go, Gin, templ, HTMX, PostgreSQL, MySQL, Tailwind CSS, TypeScript, and Vite+.
 
-Start Docker Desktop with Linux containers on Windows/macOS, or Docker Engine
-with Compose on Linux. From the repository root, run:
+## Run with Docker
+
+Install Docker with Compose, then run:
 
 ```sh
 docker compose up -d
 ```
 
-Docker builds the Go and Vite+ images, starts PostgreSQL and the demo target,
-initializes the platform schemas, and creates the first administrator. The first
-build may take a few minutes. The defaults work without a `.env` file.
-
-#### Default SQLwise web login
-
-On the first Compose startup with a new platform database, open
-<http://localhost:8080/login> and sign in with this **SQLwise application account**:
+Open <http://localhost:8080/login>. On a **new platform database**, the default SQLwise **web login** is:
 
 - Username: `admin`
 - Password: `SqlwiseAdminLocal2026!`
 
-These are web login credentials, not PostgreSQL or MySQL credentials. They and the
-default encryption key are for local development only. Compose creates this
-administrator only if none exists. An existing platform database keeps its
-administrator password, so the default password may not work with an existing
-`postgres_data` volume. To choose different initial credentials, copy
-`.env.example` to `.env` and edit `SQLWISE_ADMIN_USERNAME` and
-`SQLWISE_ADMIN_PASSWORD` before the first startup; changing them later does not
-reset an existing account.
+These are application credentials, not database credentials. Existing administrator accounts keep their passwords. To set different initial credentials, copy `.env.example` to `.env` and change `SQLWISE_ADMIN_USERNAME` and `SQLWISE_ADMIN_PASSWORD` before the first startup.
 
-View startup logs with `docker compose logs -f app frontend`. Stop the stack with:
+Use `docker compose logs -f app frontend` for logs, `docker compose up -d --build` after source changes, and `docker compose down` to stop the stack without removing database volumes.
+
+## Run manually
+
+Install the Go version in `go.mod`, a C compiler, Node.js, and Vite+ (`vp`). Use a POSIX shell. Start the databases and create the platform administrator once:
 
 ```sh
-docker compose down
-```
-
-Database volumes are kept when stopping, so your data and login still work next
-time. After source or dependency changes, rebuild with `docker compose up -d --build`.
-Go serves pages on port 8080 and Vite+ serves browser assets on port 5173.
-
-### Manual development (optional)
-
-Install the Go version specified in `go.mod`, a compatible C compiler for CGO,
-Node.js LTS, Docker Compose, and Vite+ (`vp`). Native Windows Go commands also need
-`CGO_ENABLED=1` and a GCC-compatible compiler; WSL2 is an alternative. The commands
-below use a POSIX shell such as Bash or WSL.
-
-Start the platform database, export the environment, and create an administrator
-with a password of your choice:
-
-```sh
-docker compose up -d postgres
-cp .env.example .env
+docker compose up -d --wait postgres target
+test -f .env || cp .env.example .env
 set -a
 . ./.env
 set +a
 go run ./cmd/admin -username admin
 ```
 
-The command reads the password without echoing it and initializes the platform schema.
-Use at least 12 characters and at most 128 UTF-8 bytes. Existing administrators are
-never overwritten. If a local PostgreSQL volume was initialized with different
-credentials, configure `DATABASE_URL` for that database; changing Compose's example
-variables does not rename an existing role or database.
+The admin command prompts for a password. Skip it if an administrator already exists.
 
-From the repository root, run the asset server:
+Start Vite+ in one terminal:
 
 ```sh
 vp install
 vp dev
 ```
 
-In another terminal, export the same environment, generate templates and start Go:
+In another terminal, load the environment and start the Go server:
 
 ```sh
 set -a
@@ -119,169 +72,51 @@ go tool templ generate
 go run ./cmd/server
 ```
 
-Open <http://localhost:8080/login>. Successful login opens `/account`; Sign out
-revokes the session. The server requires a reachable platform database and
-initialized schemas. Native Go reads environment variables directly; Compose
-loads `.env` automatically.
+Then open <http://localhost:8080/login> and sign in with the administrator password you chose.
 
-Target database passwords are stored encrypted with AES-256-GCM using
-`SQLWISE_CONNECTION_KEY`, 32 random bytes encoded as base64. The key in
-`.env.example` is for local development only; generate a separate key elsewhere
-with `openssl rand -base64 32` and keep it out of the repository. Changing the key
-makes previously stored target passwords unreadable.
+## Demo target databases
 
-### Target databases
+The Docker stack includes a seeded PostgreSQL target. Register it under **Admin → Connections**. Start the optional seeded MySQL target with `docker compose --profile bonus up -d mysql`.
 
-Target databases are separate from the platform database and use their own
-credentials. The Docker startup includes a seeded PostgreSQL demo target. For
-manual development, start it with:
+| Target     | Host and port in Docker | Host and port for manual Go | Database       |
+| ---------- | ----------------------- | --------------------------- | -------------- |
+| PostgreSQL | `target:5432`           | `localhost:5434`            | `sqlwise_demo` |
+| MySQL      | `mysql:3306`            | `localhost:3307`            | `sqlwise_demo` |
 
-```sh
-docker compose up -d target
-```
+Both demo targets use username `sqlwise_target`, password `sqlwise_target_dev_only`, and TLS disabled. Grant a group access after registering a target.
 
-As a platform administrator, open **Admin → Connections** (`/admin/databases`) and
-register it as host `target`, port `5432` when the app runs in Compose (or host
-`localhost`, port `5434` for native Go), database `sqlwise_demo`, user
-`sqlwise_target`, password `sqlwise_target_dev_only`, TLS `disable`, then use
-**Test saved connection**. Grant a group view or edit access to the connection
-before its users can open it. Its `public`
-and `sales` schemas hold related tables with keys, indexes, NULL, Unicode, binary
-and long values. The seed runs only when the `target_data` volume is created.
+## Tests
 
-Users open `/databases`, or the links on their account page, to browse schemas,
-columns, constraints and indexes, and to page through table rows (50 per page by
-default, at most 200). Cells are cut at 4 KiB and pages at 1 MiB; tables without a
-primary key are marked as unordered.
-
-Migrations record a receipt in `sqlwise_internal.migration_receipts` on the target.
-Create that table once as a different role than the migration user, so migration
-SQL cannot alter or remove receipts. As the owner role, in the target database:
-
-```sql
-CREATE SCHEMA IF NOT EXISTS sqlwise_internal;
-CREATE TABLE IF NOT EXISTS sqlwise_internal.migration_receipts (
-    attempt_id text PRIMARY KEY,
-    database_id text NOT NULL,
-    version bigint NOT NULL CHECK (version >= 1),
-    sql_sha256 text NOT NULL,
-    outcome text NOT NULL CHECK (outcome IN ('applied', 'fenced')),
-    recorded_at timestamptz NOT NULL DEFAULT now()
-);
-REVOKE ALL ON SCHEMA sqlwise_internal FROM PUBLIC;
-REVOKE ALL ON sqlwise_internal.migration_receipts FROM PUBLIC;
-GRANT USAGE ON SCHEMA sqlwise_internal TO "migration_user";
-GRANT SELECT, INSERT ON sqlwise_internal.migration_receipts TO "migration_user";
-```
-
-The migration user otherwise needs the privileges its migrations use, such as
-ownership of the tables they alter. Without the table, the first execution creates
-it with the migration user, which then requires `CREATE` on the database and leaves
-receipts owned by that user. The demo target is already set up this way.
-
-The server keeps one pool per registered target (at most 4 connections, 5 second
-connect timeout) and closes it when the connection is disabled or its settings
-change, after running transactions finish. Callers receive handles and close them;
-they never own the pool. Ping, metadata and table reads time out after 5 seconds.
-
-### MySQL targets
-
-`docker compose --profile bonus up -d mysql` starts MySQL 8.4 on `127.0.0.1:3307`
-with a seeded `sqlwise_demo` database. Register it with type MySQL, host
-`mysql`, port `3306` when the app runs in Compose (or `localhost`, port `3307` for
-native Go), database `sqlwise_demo`, user `sqlwise_target`, password
-`sqlwise_target_dev_only` and TLS disabled. A MySQL connection covers exactly its
-registered database; the viewer, access control and migrations work as for
-PostgreSQL.
-
-MySQL commits DDL implicitly, so migrations run statement by statement on one
-connection instead of in a transaction. If the first statement fails nothing is
-applied. If a later one fails, the earlier statements stay applied and the attempt
-is recorded as partially applied; executions on that database are blocked until an
-editor checks the target and selects "mark as reconciled". The attempt stays in
-history and no version is applied, so the fix goes into a new migration. Session and
-transaction commands (`SET`, `USE`, `START TRANSACTION`, `LOCK TABLES`, `DELIMITER`)
-are rejected before execution. Schema diff and query plans are PostgreSQL only.
-
-### Query plans
-
-Every migration page has a Query plan panel that explains the SQL in the editor.
-Explain plans one `SELECT`, `INSERT`, `UPDATE` or `DELETE` without running it;
-planning writes needs edit access. Analyze executes a `SELECT` and reports actual
-time and rows. It needs edit access, an explicit confirmation and a connection an
-administrator marked as an analyze sandbox; use an isolated database and a
-read-only user for it. It runs in a read-only transaction with a 5 second timeout
-that is always rolled back, and rejects data-modifying CTEs, row locks and
-functions outside a small built-in allowlist. A plan is marked stale when the SQL
-changes.
-
-## Checks and production build
-
-```sh
-go tool templ generate
-go test -race -shuffle=on -count=1 ./...
-go vet ./...
-vp check
-vp build
-go build -o bin/sqlwise ./cmd/server
-go build -o bin/sqlwise-admin ./cmd/admin
-```
-
-Start the isolated PostgreSQL test database with:
+The PostgreSQL and MySQL test databases are separate from the app and demo databases. Start either service as needed:
 
 ```sh
 docker compose up -d --wait postgres-test
-TEST_DATABASE_URL='postgres://sqlwise_test:sqlwise_test_only@localhost:5435/sqlwise_test?sslmode=disable' go test -race -p 1 -shuffle=on -count=1 ./...
-```
-
-The test database is separate from the platform and demo databases. PostgreSQL
-tests create and clean up their own schemas; target tests also create and drop
-databases and roles. The test role has the required privileges.
-
-Start the isolated MySQL test server with:
-
-```sh
 docker compose up -d --wait mysql-test
-TEST_MYSQL_URL='root:mysql_test_only@tcp(localhost:3308)/' go test -race -p 1 -shuffle=on -count=1 ./...
 ```
 
-To run both integration suites together:
+Run the integration suite with both test databases:
 
 ```sh
-docker compose up -d --wait postgres-test mysql-test
-TEST_DATABASE_URL='postgres://sqlwise_test:sqlwise_test_only@localhost:5435/sqlwise_test?sslmode=disable' TEST_MYSQL_URL='root:mysql_test_only@tcp(localhost:3308)/' go test -race -p 1 -shuffle=on -count=1 ./...
+TEST_DATABASE_URL='postgres://sqlwise_test:sqlwise_test_only@localhost:5435/sqlwise_test?sslmode=disable' \
+TEST_MYSQL_URL='root:mysql_test_only@tcp(localhost:3308)/' \
+go test -race -p 1 -shuffle=on -count=1 ./...
 ```
 
-Stop them with `docker compose stop postgres-test mysql-test`.
-Without the corresponding variable, those integration tests are skipped.
+Set only `TEST_DATABASE_URL` or `TEST_MYSQL_URL` to run one database's integration tests. Tests for a database without its variable are skipped. Stop the test services with `docker compose stop postgres-test mysql-test`.
 
-CI provisions PostgreSQL and MySQL and sets both, so these tests run.
+Other development checks:
 
-Set `APP_ENV=production` behind HTTPS, with `DATABASE_URL` and
-`SQLWISE_CONNECTION_KEY` configured and `web/dist` present in the working directory. Production session cookies use Secure. Static
-assets are deployed alongside the Go binary. CI runs generation, checks, tests,
-and both builds.
+```sh
+go tool templ generate
+go vet ./...
+vp check
+vp build
+```
 
-## Bonus features
+## Team
 
-| Bonus                                | Status                  | Notes                                                                                                                                                                                                                                                                                                                            |
-| ------------------------------------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MySQL support                        | Complete                | Connection management and test, schema and data viewer, access control and statement-by-statement migrations with partially applied and unknown outcomes and a reconcile step, on MySQL 8.4. Covered by `internal/database`, `internal/migration` and `cmd/server` MySQL tests. Schema diff and query plans are PostgreSQL only. |
-| Schema diff and migration generation | Complete for PostgreSQL | Compares the live schema with a desired JSON snapshot, lists ordered changes with destructive and unsupported warnings, generates `CREATE TABLE` and `ADD COLUMN` SQL, and saves it as an editable draft after a drift check. Covered by `internal/schemadiff` and `cmd/server` adapter tests. MySQL diff is unsupported.        |
-| Query execution plan analysis        | Complete for PostgreSQL | Explain and sandbox-only Analyze from the migration editor, validated with PostgreSQL's parser, shown as a plan tree with estimated cost and rows and, for Analyze, actual time, rows and loops. Covered by `internal/queryplan` and `cmd/server` explain tests. MySQL plans are unsupported.                                    |
-
-## Members
-
-| Student ID | Name                           |
-| ---------- | ------------------------------ |
-| 13524034   | Jason Edward Salim             |
-| 13524037   | Nicholas Wise Saragih Sumbayak |
-| 13524106   | Michael James Liman            |
-
-## Contributions
-
-| Member                         | Areas                                                                                                                                                                                                                                                                                                                |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Jason Edward Salim             | Target connection management (encrypted credentials, connection test, enable and disable), the PostgreSQL adapter (pooled resolver, transactions with uncertain-commit detection, schema snapshots, bounded table reads), the database viewer, migration receipt setup, the demo target and test database isolation. |
-| Nicholas Wise Saragih Sumbayak | Authentication with Argon2id, sessions (timeouts, rotation, grace, revocation), CSRF protection, group-based authorization and middleware, the administration console for users, groups, memberships and grants, the base layout with HTMX, Tailwind and Vite+, and CI.                                              |
-| Michael James Liman            | Migration drafts and editor, PostgreSQL statement parsing, atomic execution with locks, receipts and reconciliation, linear version history, and schema diff with migration generation.                                                                                                                              |
+| Student ID | Member                         | Main contributions                                                                          |
+| ---------- | ------------------------------ | ------------------------------------------------------------------------------------------- |
+| 13524034   | Jason Edward Salim             | Database connections, PostgreSQL adapter and explorer, demo target, test database isolation |
+| 13524037   | Nicholas Wise Saragih Sumbayak | Authentication, sessions, access control, administration, frontend foundation, CI           |
+| 13524106   | Michael James Liman            | Migration editor and execution, history, schema diff and generation                         |
