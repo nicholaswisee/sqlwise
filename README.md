@@ -50,17 +50,22 @@ Docker builds the Go and Vite+ images, starts PostgreSQL and the demo target,
 initializes the platform schemas, and creates the first administrator. The first
 build may take a few minutes. The defaults work without a `.env` file.
 
-Open <http://localhost:8080/login> and sign in with the **default local credentials**:
+#### Default SQLwise web login
 
-| Username | Password                 |
-| -------- | ------------------------ |
-| `admin`  | `SqlwiseAdminLocal2026!` |
+On the first Compose startup with a new platform database, open
+<http://localhost:8080/login> and sign in with this **SQLwise application account**:
 
-These credentials and the default encryption key are for local development only.
-Existing administrators and their passwords are preserved on every startup. To
-choose different initial credentials, copy `.env.example` to `.env` and edit
-`SQLWISE_ADMIN_USERNAME` and `SQLWISE_ADMIN_PASSWORD` before the first startup;
-changing them later does not reset an existing account.
+- Username: `admin`
+- Password: `SqlwiseAdminLocal2026!`
+
+These are web login credentials, not PostgreSQL or MySQL credentials. They and the
+default encryption key are for local development only. Compose creates this
+administrator only if none exists. An existing platform database keeps its
+administrator password, so the default password may not work with an existing
+`postgres_data` volume. To choose different initial credentials, copy
+`.env.example` to `.env` and edit `SQLWISE_ADMIN_USERNAME` and
+`SQLWISE_ADMIN_PASSWORD` before the first startup; changing them later does not
+reset an existing account.
 
 View startup logs with `docker compose logs -f app frontend`. Stop the stack with:
 
@@ -222,22 +227,33 @@ go build -o bin/sqlwise ./cmd/server
 go build -o bin/sqlwise-admin ./cmd/admin
 ```
 
-For PostgreSQL integration tests, set `TEST_DATABASE_URL` to a disposable database;
-each test creates and cleans up its own schema. Target database tests also create
-and drop their own databases and login roles, so the role needs `CREATEDB` and
-`CREATEROLE` (the Compose `sqlwise` user has both):
+Start the isolated PostgreSQL test database with:
 
 ```sh
-TEST_DATABASE_URL=postgres://sqlwise:sqlwise_dev_only@localhost:5433/sqlwise_platform?sslmode=disable   go test -race -shuffle=on -count=1 ./...
+docker compose up -d --wait postgres-test
+TEST_DATABASE_URL='postgres://sqlwise_test:sqlwise_test_only@localhost:5435/sqlwise_test?sslmode=disable' go test -race -p 1 -shuffle=on -count=1 ./...
 ```
 
-Without that variable, DB tests are explicitly skipped, and a skipped run is not a
-passing one. MySQL tests additionally need `TEST_MYSQL_URL`, a root DSN that may
-create and drop databases:
+The test database is separate from the platform and demo databases. PostgreSQL
+tests create and clean up their own schemas; target tests also create and drop
+databases and roles. The test role has the required privileges.
+
+Start the isolated MySQL test server with:
 
 ```sh
-TEST_MYSQL_URL='root:mysql_root_dev_only@tcp(localhost:3307)/' go test -race -count=1 ./...
+docker compose up -d --wait mysql-test
+TEST_MYSQL_URL='root:mysql_test_only@tcp(localhost:3308)/' go test -race -p 1 -shuffle=on -count=1 ./...
 ```
+
+To run both integration suites together:
+
+```sh
+docker compose up -d --wait postgres-test mysql-test
+TEST_DATABASE_URL='postgres://sqlwise_test:sqlwise_test_only@localhost:5435/sqlwise_test?sslmode=disable' TEST_MYSQL_URL='root:mysql_test_only@tcp(localhost:3308)/' go test -race -p 1 -shuffle=on -count=1 ./...
+```
+
+Stop them with `docker compose stop postgres-test mysql-test`.
+Without the corresponding variable, those integration tests are skipped.
 
 CI provisions PostgreSQL and MySQL and sets both, so these tests run.
 

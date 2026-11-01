@@ -17,4 +17,5 @@ COPY package.json pnpm-lock.yaml ./
 RUN vp install --frozen-lockfile
 COPY vite.config.ts tsconfig.json ./
 COPY web ./web
+COPY internal/web/views ./internal/web/views
 CMD ["vp", "dev", "--host", "0.0.0.0"]
