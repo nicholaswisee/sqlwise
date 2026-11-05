@@ -286,7 +286,7 @@ export function MigrationHistoryPage({ db }: { db: string }) {
                   autoCapitalize="none"
                   value={sql}
                   onChange={(e) => setSQL(e.target.value)}
-                  className={`${styles.input} h-auto min-h-72 resize-y py-3 font-mono text-sm`}
+                  className="w-full rounded-lg border border-slate-300 bg-slate-50 p-3 font-mono text-sm leading-6 text-slate-900 hover:border-slate-400 focus-visible:border-cyan-700 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-cyan-700"
                 />
               </div>
               <ErrorBox error={error} />
@@ -444,6 +444,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
   });
   const [title, setTitle] = useState<string>();
   const [sql, setSQL] = useState<string>();
+  const [baseRevision, setBaseRevision] = useState<number>();
   const [editError, setEditError] = useState<unknown>();
   const [result, setResult] = useState<{ attempt?: Attempt; message?: string }>();
   const [plan, setPlan] = useState<{
@@ -459,6 +460,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
       routeKey.current = next;
       setTitle(undefined);
       setSQL(undefined);
+      setBaseRevision(undefined);
       setEditError(undefined);
       setResult(undefined);
       setPlan({ pending: false });
@@ -483,12 +485,20 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
     onSuccess: async (saved) => {
       setTitle(undefined);
       setSQL(undefined);
+      setBaseRevision(undefined);
       setEditError(undefined);
+      client.setQueryData<Detail>(keys.detail(db, id), (current) =>
+        current ? { ...current, draft: saved } : current,
+      );
       await invalidate();
       if (saved.id !== id)
         await navigate({ to: path(db, `migrations/${encodeURIComponent(saved.id)}`) as never });
     },
-    onError: setEditError,
+    onError: async (error) => {
+      setEditError(error);
+      if (error instanceof ApiError && error.status === 409)
+        await client.invalidateQueries({ queryKey: keys.detail(db, id) });
+    },
   });
   const execute = useMutation({
     mutationFn: (input: {
@@ -637,7 +647,11 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                 onSubmit={(e) => {
                   e.preventDefault();
                   setEditError(undefined);
-                  save.mutate({ title: editTitle, sql: editSQL, expected_revision: d.revision });
+                  save.mutate({
+                    title: editTitle,
+                    sql: editSQL,
+                    expected_revision: baseRevision ?? d.revision,
+                  });
                 }}
               >
                 <div className="space-y-1.5">
@@ -650,7 +664,10 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                     maxLength={200}
                     className={styles.input}
                     value={editTitle}
-                    onChange={(e) => setTitle(e.target.value)}
+                    onChange={(e) => {
+                      setBaseRevision((revision) => revision ?? d.revision);
+                      setTitle(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -665,11 +682,50 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                     spellCheck={false}
                     autoCapitalize="none"
                     value={editSQL}
-                    onChange={(e) => setSQL(e.target.value)}
-                    className={`${styles.input} h-auto min-h-72 resize-y py-3 font-mono text-sm`}
+                    onChange={(e) => {
+                      setBaseRevision((revision) => revision ?? d.revision);
+                      setSQL(e.target.value);
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 p-3 font-mono text-sm leading-6 text-slate-900 hover:border-slate-400 focus-visible:border-cyan-700 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-cyan-700"
                   />
                 </div>
+                {baseRevision !== undefined && baseRevision !== d.revision && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+                    This draft changed on the server after you began editing. Your SQL is preserved,
+                    and saving uses revision {baseRevision} so the server can reject an outdated
+                    edit.
+                    <button
+                      type="button"
+                      className={`${styles.button} mt-3`}
+                      onClick={() => {
+                        setTitle(d.title);
+                        setSQL(d.sql);
+                        setBaseRevision(undefined);
+                        setEditError(undefined);
+                      }}
+                    >
+                      Reload latest revision
+                    </button>
+                  </div>
+                )}
                 <ErrorBox error={editError} />
+                {editError instanceof ApiError && editError.status === 409 && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+                    Resolve this revision conflict before saving again.
+                    <button
+                      type="button"
+                      className={`${styles.button} mt-3`}
+                      onClick={() => {
+                        setTitle(d.title);
+                        setSQL(d.sql);
+                        setBaseRevision(undefined);
+                        setEditError(undefined);
+                      }}
+                    >
+                      Reload latest revision
+                    </button>
+                  </div>
+                )}
                 <button disabled={save.isPending} className={styles.button}>
                   {save.isPending ? "Saving…" : `Save revision ${d.revision + 1}`}
                 </button>
@@ -734,7 +790,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
             pending={plan.pending}
             error={plan.error}
             result={plan.result}
-            stale={!!plan.result && planIsStale(plan.requestSQL, planInput)}
+            stale={!!plan.result && (planIsStale(plan.requestSQL, planInput) || !!plan.error)}
           />
         </div>
       </div>
@@ -920,7 +976,7 @@ export function SchemaDiffPage({ db }: { db: string }) {
             value={desired}
             onChange={(e) => setDesired(e.target.value)}
             aria-describedby="desired-help"
-            className={`${styles.input} h-auto resize-y py-3 font-mono text-sm`}
+            className="w-full rounded-lg border border-slate-300 bg-slate-50 p-3 font-mono text-sm leading-6 text-slate-900 hover:border-slate-400 focus-visible:border-cyan-700 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-cyan-700"
           />
         </div>
         <ErrorBox error={error} />
