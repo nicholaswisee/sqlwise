@@ -788,7 +788,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
             </section>
           )}
         </div>
-        <div className="min-w-0 flex-[1_1_420px]">
+        <div className="min-w-0 flex-[1_1_420px] *:mt-0">
           <PlanPanel
             sql={planInput}
             onExplain={(request) => explain.mutate(request)}
