@@ -18,13 +18,13 @@ type apiErrorEnvelope struct {
 type apiErrorBody struct {
 	Code    string            `json:"code"`
 	Message string            `json:"message"`
-	Fields  map[string]string `json:"fields,omitempty"`
+	Fields  map[string]string `json:"fields"`
 }
 
 func apiData(c *gin.Context, data any) { c.JSON(http.StatusOK, gin.H{"data": data}) }
 
 func apiError(c *gin.Context, status int, code, message string) {
-	c.AbortWithStatusJSON(status, apiErrorEnvelope{Error: apiErrorBody{Code: code, Message: message}})
+	c.AbortWithStatusJSON(status, apiErrorEnvelope{Error: apiErrorBody{Code: code, Message: message, Fields: map[string]string{}}})
 }
 
 func apiFailure(c *gin.Context, err error) {

@@ -50,7 +50,31 @@ func TestAPIDecodeRequiresSingleJSONValue(t *testing.T) {
 			if tc.status != http.StatusNoContent && !strings.Contains(w.Header().Get("Content-Type"), "application/json") {
 				t.Fatalf("non-JSON error: %s", w.Header().Get("Content-Type"))
 			}
+			if tc.status != http.StatusNoContent && !strings.Contains(w.Body.String(), `"fields":{}`) {
+				t.Fatalf("error fields missing or non-empty: %s", w.Body)
+			}
 		})
+	}
+}
+
+func TestAPISessionIncludesNeedsRefreshWithoutPolicy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &Auth{access: nil}
+	r := gin.New()
+	r.GET("/", func(c *gin.Context) {
+		c.Set("auth_session", auth.Session{})
+		h.apiSession(c)
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	var response struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := response.Data["needs_refresh"]; !ok || value != false {
+		t.Fatalf("needs_refresh=%v present=%t body=%s", value, ok, w.Body)
 	}
 }
 
