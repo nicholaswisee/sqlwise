@@ -42,10 +42,10 @@ const keys = {
   attempt: (db: string, id: string, attempt: string) =>
     ["migration-attempt", db, id, attempt] as const,
 };
-function ErrorBox({ error }: { error: unknown }) {
+function ErrorBox({ error, className = "mt-4" }: { error: unknown; className?: string }) {
   if (!error) return null;
   return (
-    <p role="alert" className={`${styles.alert} mt-4`}>
+    <p role="alert" className={`${styles.alert} ${className}`}>
       {error instanceof ApiError
         ? error.message
         : "The request could not be completed. Check your connection and try again."}
@@ -63,7 +63,7 @@ function Status({ value }: { value: string }) {
 }
 function SQL({ children }: { children: string }) {
   return (
-    <pre className="max-w-full overflow-auto whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-sm leading-6 text-slate-900">
+    <pre className="max-h-[32rem] max-w-full overflow-auto whitespace-pre rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-sm leading-6 text-slate-900">
       <code>{children}</code>
     </pre>
   );
@@ -71,13 +71,18 @@ function SQL({ children }: { children: string }) {
 function Shell({
   workspace,
   active,
+  title,
   children,
 }: {
   workspace: History["workspace"];
   active: "migrations" | "schema-diff";
+  title: string;
   children: ReactNode;
 }) {
   const { session } = useAuthenticatedContext();
+  useEffect(() => {
+    document.title = `${title} | ${workspace.name} | sqlwise`;
+  }, [title, workspace.name]);
   return (
     <WorkspaceShell workspace={workspace} username={session.user.username} active={active}>
       {children}
@@ -109,7 +114,7 @@ function AttemptsTable({
     );
   return (
     <div className={`${styles.panel} mt-3 overflow-x-auto`}>
-      <table className="w-full min-w-[44rem] border-collapse text-left text-sm">
+      <table className="w-full min-w-[44rem] text-left text-sm tabular-nums">
         <thead>
           <tr>
             {[
@@ -124,17 +129,17 @@ function AttemptsTable({
               <th
                 key={h}
                 scope="col"
-                className="border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600"
+                className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-600"
               >
-                {h}
+                {h === "Details" ? <span className="sr-only">{h}</span> : h}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {attempts.map((a) => (
-            <tr key={a.id} className="border-b border-slate-100 last:border-0">
-              <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-900">
+            <tr key={a.id}>
+              <td className="border-b border-slate-100 px-4 py-2.5 align-top whitespace-nowrap font-mono text-slate-900">
                 {a.applied_version > 0 ? (
                   versionLabel(a.applied_version)
                 ) : (
@@ -143,7 +148,7 @@ function AttemptsTable({
                   </span>
                 )}
               </td>
-              <td className="px-4 py-3">
+              <td className="border-b border-slate-100 px-4 py-2.5 align-top">
                 <Status value={a.status} />
                 {a.error && (
                   <p className="mt-1.5 max-w-md break-words text-xs leading-5 text-slate-600">
@@ -152,7 +157,7 @@ function AttemptsTable({
                 )}
               </td>
               {showMigration && (
-                <td className="break-words px-4 py-3">
+                <td className="border-b border-slate-100 px-4 py-2.5 align-top break-words">
                   <Link
                     className={styles.link}
                     to={path(db, `migrations/${encodeURIComponent(a.migration_id)}`) as never}
@@ -161,14 +166,16 @@ function AttemptsTable({
                   </Link>
                 </td>
               )}
-              <td className="break-all px-4 py-3 text-slate-900">{a.executor_name}</td>
-              <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-700">
+              <td className="border-b border-slate-100 px-4 py-2.5 align-top break-all text-slate-900">
+                {a.executor_name}
+              </td>
+              <td className="border-b border-slate-100 px-4 py-2.5 align-top whitespace-nowrap font-mono text-slate-700">
                 {formatDate(a.started_at)}
               </td>
-              <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-700">
+              <td className="border-b border-slate-100 px-4 py-2.5 align-top whitespace-nowrap font-mono text-slate-700">
                 {formatDate(a.finished_at)}
               </td>
-              <td className="whitespace-nowrap px-4 py-3">
+              <td className="border-b border-slate-100 px-4 py-2.5 align-top whitespace-nowrap">
                 <Link
                   className={styles.link}
                   to={
@@ -230,7 +237,7 @@ export function MigrationHistoryPage({ db }: { db: string }) {
     );
   const data = query.data;
   return (
-    <Shell workspace={data.workspace} active="migrations">
+    <Shell workspace={data.workspace} active="migrations" title="Migrations">
       <div>
         <h1 className={styles.heading}>Migrations</h1>
         <p className={`${styles.muted} mt-1`}>
@@ -570,7 +577,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
   const d = data.draft;
   const planInput = isEditable ? editSQL : d.sql;
   return (
-    <Shell workspace={data.workspace} active="migrations">
+    <Shell workspace={data.workspace} active="migrations" title={d.title}>
       <div className="flex flex-wrap items-start gap-6">
         <div className="min-w-0 flex-[999_1_560px] space-y-6">
           <div>
@@ -839,14 +846,14 @@ export function AttemptDetailPage({
   const w = history.data.workspace;
   const a = query.data;
   return (
-    <Shell workspace={w} active="migrations">
+    <Shell workspace={w} active="migrations" title="Attempt">
       <Link
         to={path(db, `migrations/${encodeURIComponent(id)}`) as never}
         className={`${styles.link} inline-flex min-h-11 items-center break-words text-sm`}
       >
         Back to {a.migration_title}
       </Link>
-      <h1 className={`${styles.heading} mt-2 flex flex-wrap items-center gap-3`}>
+      <h1 className={`${styles.heading} flex flex-wrap items-center gap-3`}>
         {a.applied_version > 0
           ? `Version ${a.applied_version}`
           : `Candidate version ${a.candidate_version}`}{" "}
@@ -855,14 +862,17 @@ export function AttemptDetailPage({
       <dl
         className={`${styles.panel} mt-6 grid gap-x-6 gap-y-4 p-5 text-sm sm:grid-cols-2 lg:grid-cols-3`}
       >
-        {[
+        {([
           ["Executor", a.executor_name],
-          ["Draft revision", a.draft_revision],
-          ["Statements", a.statement_count],
-          ["Started", formatDate(a.started_at)],
-          ["Finished", formatDate(a.finished_at)],
-          ["SQL SHA-256", a.sql_hash],
-        ].map(([label, value]) => (
+          ["Draft revision", <span className="font-mono">{a.draft_revision}</span>],
+          ["Statements", <span className="font-mono">{a.statement_count}</span>],
+          ["Started", <span className="font-mono">{formatDate(a.started_at)}</span>],
+          ["Finished", <span className="font-mono">{formatDate(a.finished_at)}</span>],
+          [
+            "SQL SHA-256",
+            <span className="break-all font-mono text-xs leading-5">{a.sql_hash}</span>,
+          ],
+        ] as const).map(([label, value]) => (
           <div key={label}>
             <dt className="text-slate-600">{label}</dt>
             <dd className="mt-0.5 break-all text-slate-900">{value}</dd>
@@ -945,7 +955,7 @@ export function SchemaDiffPage({ db }: { db: string }) {
   const w = history.data.workspace;
   const fresh = !!proposal && reviewFor === desired;
   return (
-    <Shell workspace={w} active="schema-diff">
+    <Shell workspace={w} active="schema-diff" title="Schema diff">
       <h1 className={styles.heading}>Schema diff</h1>
       <p className={`${styles.muted} mt-1 max-w-3xl leading-6`}>
         Compare the live schema with a desired snapshot. Preview never changes the database.
@@ -979,118 +989,124 @@ export function SchemaDiffPage({ db }: { db: string }) {
             className="w-full rounded-lg border border-slate-300 bg-slate-50 p-3 font-mono text-sm leading-6 text-slate-900 hover:border-slate-400 focus-visible:border-cyan-700 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-cyan-700"
           />
         </div>
-        <ErrorBox error={error} />
-        <button disabled={preview.isPending} className={styles.primary}>
-          {preview.isPending ? "Reading live schema…" : "Preview changes"}
-        </button>
+        <div className="flex flex-wrap items-center gap-4">
+          <button disabled={preview.isPending} className={styles.primary}>
+            Preview changes
+          </button>
+          <span
+            className={`text-sm text-slate-600 ${preview.isPending ? "" : "invisible"}`}
+            role="status"
+          >
+            Reading live schema…
+          </span>
+        </div>
       </form>
-      {proposal && (
-        <section
-          aria-live="polite"
-          aria-labelledby="changes-heading"
-          className={`${styles.panel} mt-8 space-y-5 p-5 sm:p-6`}
-        >
-          <h2 id="changes-heading" className="break-words text-lg font-semibold text-slate-900">
-            Changes in schema <span className="font-mono">{proposal.schema}</span>
-          </h2>
-          {!fresh && (
-            <p
-              role="status"
-              className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
-            >
-              The desired snapshot changed. Preview it again before creating a draft.
-            </p>
-          )}
-          {proposal.changes.length === 0 ? (
-            <p className="text-sm text-slate-700">
-              The live schema already matches the desired snapshot.
-            </p>
-          ) : (
-            <ul className="divide-y divide-slate-100 text-sm">
-              {proposal.changes.map((change, i) => (
-                <li key={i} className="flex flex-wrap items-start gap-2 break-words py-2">
-                  {change.destructive && (
-                    <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-950 ring-1 ring-amber-300">
-                      Destructive
-                    </span>
-                  )}
-                  <span className="min-w-0 text-slate-900">{change.text}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {proposal.warnings.length > 0 && (
-            <div>
-              <h3 className="text-base font-semibold text-slate-900">Warnings</h3>
-              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950">
-                <ul className="list-disc space-y-2 pl-5">
-                  {proposal.warnings.map((warning, i) => (
-                    <li key={i} className="break-words">
-                      {warning}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          )}
-          {proposal.sql && (
-            <>
+      <div aria-live="polite" className="mt-8 space-y-6">
+        <ErrorBox error={error} className="" />
+        {proposal && (
+          <section aria-labelledby="changes-heading" className={`${styles.panel} p-5 sm:p-6`}>
+            <h2 id="changes-heading" className="break-words text-lg font-semibold text-slate-900">
+              Changes in schema <span className="font-mono">{proposal.schema}</span>
+            </h2>
+            {!fresh && (
+              <p
+                role="status"
+                className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+              >
+                The desired snapshot changed. Preview it again before creating a draft.
+              </p>
+            )}
+            {proposal.changes.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-700">
+                The live schema already matches the desired snapshot.
+              </p>
+            ) : (
+              <ul className="mt-3 divide-y divide-slate-100 text-sm">
+                {proposal.changes.map((change, i) => (
+                  <li key={i} className="flex flex-wrap items-start gap-2 break-words py-2">
+                    {change.destructive && (
+                      <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-950 ring-1 ring-amber-300">
+                        Destructive
+                      </span>
+                    )}
+                    <span className="min-w-0 text-slate-900">{change.text}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {proposal.warnings.length > 0 && (
               <div>
-                <h3 className="text-base font-semibold text-slate-900">Candidate SQL</h3>
-                <div className="mt-3">
-                  <SQL>{proposal.sql}</SQL>
+                <h3 className="mt-6 text-base font-semibold text-slate-900">Warnings</h3>
+                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950">
+                  <ul className="list-disc space-y-2 pl-5">
+                    {proposal.warnings.map((warning, i) => (
+                      <li key={i} className="break-words">
+                        {warning}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               </div>
-              {w.can_edit ? (
-                <>
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      setError(undefined);
-                      useDraft.mutate({
-                        desired,
-                        source_fingerprint: proposal.source_fingerprint,
-                        title,
-                      });
-                    }}
-                    className="flex flex-wrap items-end gap-4 border-t border-slate-200 pt-5"
-                  >
-                    <div className="min-w-64 flex-1 space-y-1.5">
-                      <label htmlFor="draft-title" className={styles.label}>
-                        Draft title
-                      </label>
-                      <input
-                        id="draft-title"
-                        maxLength={200}
-                        value={title}
-                        placeholder={`Schema diff for ${proposal.schema}`}
-                        onChange={(e) => setTitle(e.target.value)}
-                        className={styles.input}
-                      />
-                    </div>
-                    <button disabled={!fresh || useDraft.isPending} className={styles.primary}>
-                      {useDraft.isPending ? "Creating draft…" : "Use as draft"}
-                    </button>
-                  </form>
-                  <p className="text-sm text-slate-600">
-                    Creates an editable draft only. It is not executed.
+            )}
+            {proposal.sql && (
+              <>
+                <div>
+                  <h3 className="mt-6 text-base font-semibold text-slate-900">Candidate SQL</h3>
+                  <div className="mt-3">
+                    <SQL>{proposal.sql}</SQL>
+                  </div>
+                </div>
+                {w.can_edit ? (
+                  <>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        setError(undefined);
+                        useDraft.mutate({
+                          desired,
+                          source_fingerprint: proposal.source_fingerprint,
+                          title,
+                        });
+                      }}
+                      className="mt-6 flex flex-wrap items-end gap-4 border-t border-slate-200 pt-5"
+                    >
+                      <div className="min-w-64 flex-1 space-y-1.5">
+                        <label htmlFor="draft-title" className={styles.label}>
+                          Draft title
+                        </label>
+                        <input
+                          id="draft-title"
+                          maxLength={200}
+                          value={title}
+                          placeholder={`Schema diff for ${proposal.schema}`}
+                          onChange={(e) => setTitle(e.target.value)}
+                          className={styles.input}
+                        />
+                      </div>
+                      <button disabled={!fresh || useDraft.isPending} className={styles.primary}>
+                        {useDraft.isPending ? "Creating draft…" : "Use as draft"}
+                      </button>
+                    </form>
+                    <p className="mt-3 text-sm text-slate-600">
+                      Creates an editable draft only. It is not executed.
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-6 text-sm text-slate-600">
+                    View + Edit access is required to turn this into a draft.
                   </p>
-                </>
-              ) : (
-                <p className="text-sm text-slate-600">
-                  View + Edit access is required to turn this into a draft.
-                </p>
-              )}
-            </>
-          )}
-          {!proposal.sql && proposal.changes.length > 0 && (
-            <p className="text-sm text-slate-600">
-              No SQL was generated for these changes. Write a migration manually if they are
-              intended.
-            </p>
-          )}
-        </section>
-      )}
+                )}
+              </>
+            )}
+            {!proposal.sql && proposal.changes.length > 0 && (
+              <p className="mt-6 text-sm text-slate-600">
+                No SQL was generated for these changes. Write a migration manually if they are
+                intended.
+              </p>
+            )}
+          </section>
+        )}
+      </div>
     </Shell>
   );
 }
