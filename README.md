@@ -135,6 +135,18 @@ pnpm run spa:test
 pnpm run spa:build
 ```
 
+Browser checks use Chromium at 1440px, 390px, and 320px:
+
+```sh
+vp exec playwright install chromium
+# Keep the Go API running on port 8080; Playwright starts the SPA dev server.
+pnpm run spa:e2e
+# Or test a separately running Go server serving the production SPA build:
+SQLWISE_E2E_URL=http://localhost:8080 pnpm run spa:e2e
+```
+
+Set `SQLWISE_E2E_USERNAME` and `SQLWISE_E2E_PASSWORD` if the test administrator differs from the local defaults. Two browser harness tests are development-only and are skipped against the production URL; all application flow tests still run.
+
 ## Team
 
 | Student ID | Member                         | Main contributions                                                                          |
