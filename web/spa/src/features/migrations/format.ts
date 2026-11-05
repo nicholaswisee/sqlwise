@@ -28,11 +28,11 @@ export function statusClass(status: string): string {
   return (
     (
       {
-        succeeded: "bg-emerald-50 text-emerald-900 ring-emerald-200",
-        failed: "bg-rose-50 text-rose-900 ring-rose-200",
-        running: "bg-cyan-50 text-cyan-900 ring-cyan-200",
-        partially_applied: "bg-amber-50 text-amber-950 ring-amber-300",
-        unknown: "bg-amber-50 text-amber-950 ring-amber-300",
+        succeeded: "bg-emerald-50 text-emerald-800 ring-emerald-200",
+        failed: "bg-rose-50 text-rose-800 ring-rose-200",
+        running: "bg-sky-50 text-sky-800 ring-sky-200",
+        partially_applied: "bg-amber-50 text-amber-900 ring-amber-300",
+        unknown: "bg-amber-50 text-amber-900 ring-amber-300",
       } as Record<string, string>
     )[status] ?? "bg-slate-100 text-slate-700 ring-slate-200"
   );

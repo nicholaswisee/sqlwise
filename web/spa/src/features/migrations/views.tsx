@@ -36,6 +36,8 @@ const snapshotExample = `{
 }`;
 
 const path = (db: string, tail: string) => `/databases/${encodeURIComponent(db)}/${tail}`;
+const statusChip =
+  "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1";
 const keys = {
   history: (db: string) => ["migrations", db] as const,
   detail: (db: string, id: string) => ["migration", db, id] as const,
@@ -53,13 +55,7 @@ function ErrorBox({ error, className = "mt-4" }: { error: unknown; className?: s
   );
 }
 function Status({ value }: { value: string }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${statusClass(value)}`}
-    >
-      {statusLabel(value)}
-    </span>
-  );
+  return <span className={`${statusChip} ${statusClass(value)}`}>{statusLabel(value)}</span>;
 }
 function SQL({ children }: { children: string }) {
   return (
@@ -329,7 +325,9 @@ export function MigrationHistoryPage({ db }: { db: string }) {
                         {d.updated_by_name}
                       </p>
                     </div>
-                    <span className="text-xs text-slate-700">
+                    <span
+                      className={`${statusChip} ${statusClass(d.applied_version > 0 ? "succeeded" : d.last_status)}`}
+                    >
                       {d.applied_version > 0
                         ? `Applied as ${versionLabel(d.applied_version)}`
                         : d.last_status
@@ -865,19 +863,26 @@ export function AttemptDetailPage({
         {(
           [
             ["Executor", a.executor_name],
-            ["Draft revision", <span className="font-mono">{a.draft_revision}</span>],
-            ["Statements", <span className="font-mono">{a.statement_count}</span>],
-            ["Started", <span className="font-mono">{formatDate(a.started_at)}</span>],
-            ["Finished", <span className="font-mono">{formatDate(a.finished_at)}</span>],
-            [
-              "SQL SHA-256",
-              <span className="break-all font-mono text-xs leading-5">{a.sql_hash}</span>,
-            ],
+            ["Draft revision", a.draft_revision],
+            ["Statements", a.statement_count],
+            ["Started", formatDate(a.started_at)],
+            ["Finished", formatDate(a.finished_at)],
+            ["SQL SHA-256", a.sql_hash],
           ] as const
         ).map(([label, value]) => (
-          <div key={label}>
+          <div key={label} className={label === "SQL SHA-256" ? "min-w-0" : undefined}>
             <dt className="text-slate-600">{label}</dt>
-            <dd className="mt-0.5 break-all text-slate-900">{value}</dd>
+            <dd
+              className={
+                label === "Executor"
+                  ? "mt-0.5 break-all text-slate-900"
+                  : label === "SQL SHA-256"
+                    ? "mt-0.5 break-all font-mono text-xs leading-5 text-slate-900"
+                    : "mt-0.5 font-mono text-slate-900"
+              }
+            >
+              {value}
+            </dd>
           </div>
         ))}
         {a.reconciled_at && (
@@ -1027,7 +1032,7 @@ export function SchemaDiffPage({ db }: { db: string }) {
                 {proposal.changes.map((change, i) => (
                   <li key={i} className="flex flex-wrap items-start gap-2 break-words py-2">
                     {change.destructive && (
-                      <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-950 ring-1 ring-amber-300">
+                      <span className={`${statusChip} bg-amber-50 text-amber-900 ring-amber-300`}>
                         Destructive
                       </span>
                     )}
@@ -1039,7 +1044,7 @@ export function SchemaDiffPage({ db }: { db: string }) {
             {proposal.warnings.length > 0 && (
               <div>
                 <h3 className="mt-6 text-base font-semibold text-slate-900">Warnings</h3>
-                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950">
+                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
                   <ul className="list-disc space-y-2 pl-5">
                     {proposal.warnings.map((warning, i) => (
                       <li key={i} className="break-words">
