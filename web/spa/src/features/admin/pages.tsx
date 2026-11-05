@@ -295,7 +295,15 @@ export function ConnectionsPage() {
     (!query.data || (query.error instanceof ApiError && [403, 404].includes(query.error.status)))
   )
     return (
-      <QueryFailure title="Connections" error={query.error} retry={() => void query.refetch()} />
+      <QueryFailure
+        title="Connections"
+        error={query.error}
+        retry={
+          query.error instanceof ApiError && query.error.status === 409
+            ? actions.onRefresh
+            : () => void query.refetch()
+        }
+      />
     );
   const { run, ...status } = actions;
   const stale =
@@ -330,7 +338,11 @@ export function ConnectionPage({ id }: { id: string }) {
       <QueryFailure
         title="Edit connection"
         error={query.error}
-        retry={() => void query.refetch()}
+        retry={
+          query.error instanceof ApiError && query.error.status === 409
+            ? actions.onRefresh
+            : () => void query.refetch()
+        }
       />
     );
   const { run, ...status } = actions;

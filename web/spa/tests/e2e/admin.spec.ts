@@ -89,3 +89,112 @@ test("stale authorization requires explicit refresh and does not resubmit a reje
   await expect(name).toHaveValue("unsaved rename");
   expect(writes).toBe(1);
 });
+
+test("connections list authorization conflict refreshes session before reloading connections", async ({
+  page,
+}) => {
+  let sessions = 0;
+  let reads = 0;
+  let recoverListAfter = Number.POSITIVE_INFINITY;
+  await page.route("**/api/v1/auth/session", (route) => {
+    sessions++;
+    return route.fulfill(envelope(session));
+  });
+  await page.route("**/api/v1/admin/databases", (route) => {
+    reads++;
+    return sessions <= recoverListAfter
+      ? route.fulfill(
+          apiError("authorization_stale", "Your permissions changed. Refresh and try again.", 409),
+        )
+      : route.fulfill(
+          envelope({
+            connections: [
+              {
+                id: "db-1",
+                name: "Analytics",
+                dbms: "PostgreSQL",
+                address: "localhost:5432/analytics",
+                username: "app",
+                tls: "verify-full",
+                active: true,
+              },
+            ],
+          }),
+        );
+  });
+  let detailReads = 0;
+  let recoverDetailAfter = Number.POSITIVE_INFINITY;
+  await page.route("**/api/v1/admin/databases/db-1", (route) => {
+    detailReads++;
+    return sessions <= recoverDetailAfter
+      ? route.fulfill(
+          apiError("authorization_stale", "Your permissions changed. Refresh and try again.", 409),
+        )
+      : route.fulfill(
+          envelope({
+            form: {
+              id: "db-1",
+              name: "Analytics",
+              dbms: "postgresql",
+              host: "localhost",
+              port: "5432",
+              database: "analytics",
+              username: "app",
+              tls: "verify-full",
+              active: true,
+              existing: true,
+              sandbox: false,
+            },
+            capabilities: [],
+            receipt_sql: "",
+          }),
+        );
+  });
+
+  await page.goto("/admin/databases");
+  await expect.poll(() => reads).toBeGreaterThan(0);
+  await expect(page.getByText("Your permissions changed. Refresh and try again.")).toBeVisible();
+  recoverListAfter = sessions;
+  await page.getByRole("button", { name: "Refresh session and data" }).click();
+  await expect(page.getByRole("link", { name: "Analytics" })).toBeVisible();
+  expect(sessions).toBeGreaterThan(1);
+  expect(reads).toBeGreaterThan(1);
+  await expect(page).toHaveTitle("Connections | sqlwise");
+  await page.getByRole("link", { name: "Analytics" }).click();
+  await expect.poll(() => detailReads).toBeGreaterThan(0);
+  await expect(page.getByText("Your permissions changed. Refresh and try again.")).toBeVisible();
+  recoverDetailAfter = sessions;
+  await page.getByRole("button", { name: "Refresh session and data" }).click();
+  await expect(page.getByRole("heading", { name: "Connection settings" })).toBeVisible();
+  expect(sessions).toBeGreaterThan(2);
+  expect(detailReads).toBeGreaterThan(1);
+  await expect(page).toHaveTitle("Edit connection | sqlwise");
+});
+
+test("admin route document titles match their legacy page titles", async ({ page }) => {
+  await mockSession(page);
+  await page.route("**/api/v1/admin/users", (route) => route.fulfill(envelope(snapshot)));
+  const groupData = { ...snapshot, selected_group: { id: "g1", name: "Operations", active: true } };
+  await page.route("**/api/v1/admin/groups", (route) => route.fulfill(envelope(groupData)));
+  await page.route("**/api/v1/admin/groups/g1/members", (route) =>
+    route.fulfill(envelope(groupData)),
+  );
+  await page.route("**/api/v1/admin/groups/g1/databases", (route) =>
+    route.fulfill(envelope(groupData)),
+  );
+  await page.route("**/api/v1/admin/databases", (route) =>
+    route.fulfill(envelope({ connections: [] })),
+  );
+  const routes = [
+    ["/admin", "Administration | sqlwise"],
+    ["/admin/users", "Users | sqlwise"],
+    ["/admin/groups", "Groups | sqlwise"],
+    ["/admin/groups/g1/members", "Group members | sqlwise"],
+    ["/admin/groups/g1/databases", "Group database access | sqlwise"],
+    ["/admin/databases", "Connections | sqlwise"],
+  ];
+  for (const [path, title] of routes) {
+    await page.goto(path);
+    await expect(page).toHaveTitle(title);
+  }
+});

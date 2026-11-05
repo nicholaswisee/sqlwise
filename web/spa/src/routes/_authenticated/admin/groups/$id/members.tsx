@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { MembersPage } from "../../../../../features/admin/pages";
 
 export const Route = createFileRoute("/_authenticated/admin/groups/$id/members")({
+  head: () => ({ meta: [{ title: "Group members | sqlwise" }] }),
   component: GroupMembersRoute,
 });
 
