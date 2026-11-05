@@ -15,48 +15,103 @@ export interface LoginChallenge {
 }
 export type LoginResult = Pick<Session, "user" | "csrf_token" | "expires_at">;
 
+export interface AuthSnapshot {
+  session: Session | null;
+  revision: number;
+  logoutUnconfirmed?: true;
+}
+
 export function createAuth(api: ApiClient, queryClient: QueryClient) {
-  let identity: string | null = null;
-  function clear() {
-    identity = null;
+  let snapshot: AuthSnapshot = { session: null, revision: 0 };
+  const listeners = new Set<() => void>();
+  function publish(next: AuthSnapshot) {
+    snapshot = next;
+    for (const listener of listeners) listener();
+  }
+  function clear(logoutUnconfirmed = false) {
+    publish({
+      session: null,
+      revision: snapshot.revision + 1,
+      ...(logoutUnconfirmed ? { logoutUnconfirmed: true as const } : {}),
+    });
     api.clear();
     void queryClient.cancelQueries();
     queryClient.clear();
   }
-  function adopt<T extends LoginResult>(value: T): T {
-    if (identity !== null && identity !== value.user.id) clear();
-    identity = value.user.id;
-    api.setCSRF(value.csrf_token);
-    return value;
+  function attempt(init: RequestInit = {}) {
+    const revision = snapshot.revision;
+    const timeout = AbortSignal.timeout(15_000);
+    const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    return {
+      revision,
+      init: { ...init, signal },
+      check() {
+        if (revision !== snapshot.revision)
+          throw new DOMException("Authentication changed", "AbortError");
+        signal.throwIfAborted();
+      },
+    };
   }
   return {
     clear,
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     async session(init?: RequestInit): Promise<Session | null> {
+      const current = attempt(init);
       try {
-        return adopt(await api.request<Session>("/auth/session", init));
+        const value = await api.request<Session>("/auth/session", current.init);
+        current.check();
+        if (snapshot.session && snapshot.session.user.id !== value.user.id) clear();
+        api.setCSRF(value.csrf_token);
+        publish({ session: value, revision: snapshot.revision });
+        return value;
       } catch (error) {
-        if (error instanceof ApiError && error.status === 401) return null;
+        if (error instanceof ApiError && error.status === 401) {
+          if (snapshot.revision === current.revision) clear();
+          return null;
+        }
         throw error;
       }
     },
     async loginChallenge(init?: RequestInit) {
-      const value = await api.request<LoginChallenge>("/auth/login-challenge", init);
+      const current = attempt(init);
+      const value = await api.request<LoginChallenge>("/auth/login-challenge", current.init);
+      current.check();
       api.setCSRF(value.csrf_token);
       return value;
     },
-    async login(input: { username: string; password: string }): Promise<LoginResult> {
+    async login(
+      input: { username: string; password: string },
+      init?: RequestInit,
+    ): Promise<LoginResult> {
+      const current = attempt(init);
       const result = await api.request<LoginResult>("/auth/login", {
+        ...current.init,
         method: "POST",
         body: JSON.stringify(input),
       });
+      current.check();
       clear();
-      return adopt(result);
+      api.setCSRF(result.csrf_token);
+      return result;
     },
     async logout(): Promise<void> {
+      let unconfirmed = false;
       try {
-        await api.request<void>("/auth/logout", { method: "POST" });
+        await api.request<void>("/auth/logout", {
+          method: "POST",
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch (error) {
+        unconfirmed = true;
+        throw error;
       } finally {
-        clear();
+        clear(unconfirmed);
       }
     },
   };
