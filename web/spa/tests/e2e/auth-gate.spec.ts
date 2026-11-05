@@ -191,6 +191,7 @@ test("failed challenge can be retried explicitly", async ({ page }) => {
 });
 
 test("real StrictMode replay settles the gate without stale errors", async ({ page }) => {
+  test.skip(!!process.env.SQLWISE_E2E_URL, "The StrictMode harness is intentionally dev-only.");
   await page.route("**/api/v1/auth/session", (route) =>
     route.fulfill({ json: { data: session() } }),
   );
@@ -213,6 +214,7 @@ test("real StrictMode replay settles the gate without stale errors", async ({ pa
 });
 
 test("intent preloading protected routes does not bootstrap auth", async ({ page }) => {
+  test.skip(!!process.env.SQLWISE_E2E_URL, "The router harness is intentionally dev-only.");
   const requests: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("/api/v1/")) requests.push(request.url());

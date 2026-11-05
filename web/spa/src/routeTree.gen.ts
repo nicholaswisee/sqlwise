@@ -10,33 +10,275 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as AuthenticatedAccountRouteImport } from './routes/_authenticated/account'
+import { Route as AuthenticatedAdminRouteRouteImport } from './routes/_authenticated/admin/route'
+import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin/index'
+import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
+import { Route as AuthenticatedDatabasesIndexRouteImport } from './routes/_authenticated/databases/index'
+import { Route as AuthenticatedAdminDatabasesIndexRouteImport } from './routes/_authenticated/admin/databases/index'
+import { Route as AuthenticatedAdminDatabasesIdRouteImport } from './routes/_authenticated/admin/databases/$id'
+import { Route as AuthenticatedAdminGroupsIndexRouteImport } from './routes/_authenticated/admin/groups/index'
+import { Route as AuthenticatedDatabasesDatabaseIDIndexRouteImport } from './routes/_authenticated/databases/$databaseID/index'
+import { Route as AuthenticatedDatabasesDatabaseIDSchemaDiffRouteImport } from './routes/_authenticated/databases/$databaseID/schema-diff'
+import { Route as AuthenticatedAdminGroupsIdDatabasesRouteImport } from './routes/_authenticated/admin/groups/$id/databases'
+import { Route as AuthenticatedAdminGroupsIdMembersRouteImport } from './routes/_authenticated/admin/groups/$id/members'
+import { Route as AuthenticatedDatabasesDatabaseIDMigrationsIndexRouteImport } from './routes/_authenticated/databases/$databaseID/migrations/index'
+import { Route as AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteImport } from './routes/_authenticated/databases/$databaseID/migrations/$migrationID'
+import { Route as AuthenticatedDatabasesDatabaseIDTablesTableIDRouteImport } from './routes/_authenticated/databases/$databaseID/tables/$tableID'
+import { Route as AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRouteImport } from './routes/_authenticated/databases/$databaseID/migrations/$migrationID/index'
+import { Route as AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRouteImport } from './routes/_authenticated/databases/$databaseID/migrations/$migrationID/attempts/$attemptID'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedRoute = AuthenticatedRouteImport.update({
+  id: '/_authenticated',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedAccountRoute = AuthenticatedAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedAdminRouteRoute = AuthenticatedAdminRouteRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedAdminIndexRoute = AuthenticatedAdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthenticatedAdminRouteRoute,
+} as any)
+const AuthenticatedAdminUsersRoute = AuthenticatedAdminUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AuthenticatedAdminRouteRoute,
+} as any)
+const AuthenticatedDatabasesIndexRoute =
+  AuthenticatedDatabasesIndexRouteImport.update({
+    id: '/databases/',
+    path: '/databases/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAdminDatabasesIndexRoute =
+  AuthenticatedAdminDatabasesIndexRouteImport.update({
+    id: '/databases/',
+    path: '/databases/',
+    getParentRoute: () => AuthenticatedAdminRouteRoute,
+  } as any)
+const AuthenticatedAdminDatabasesIdRoute =
+  AuthenticatedAdminDatabasesIdRouteImport.update({
+    id: '/databases/$id',
+    path: '/databases/$id',
+    getParentRoute: () => AuthenticatedAdminRouteRoute,
+  } as any)
+const AuthenticatedAdminGroupsIndexRoute =
+  AuthenticatedAdminGroupsIndexRouteImport.update({
+    id: '/groups/',
+    path: '/groups/',
+    getParentRoute: () => AuthenticatedAdminRouteRoute,
+  } as any)
+const AuthenticatedDatabasesDatabaseIDIndexRoute =
+  AuthenticatedDatabasesDatabaseIDIndexRouteImport.update({
+    id: '/databases/$databaseID/',
+    path: '/databases/$databaseID/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedDatabasesDatabaseIDSchemaDiffRoute =
+  AuthenticatedDatabasesDatabaseIDSchemaDiffRouteImport.update({
+    id: '/databases/$databaseID/schema-diff',
+    path: '/databases/$databaseID/schema-diff',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAdminGroupsIdDatabasesRoute =
+  AuthenticatedAdminGroupsIdDatabasesRouteImport.update({
+    id: '/groups/$id/databases',
+    path: '/groups/$id/databases',
+    getParentRoute: () => AuthenticatedAdminRouteRoute,
+  } as any)
+const AuthenticatedAdminGroupsIdMembersRoute =
+  AuthenticatedAdminGroupsIdMembersRouteImport.update({
+    id: '/groups/$id/members',
+    path: '/groups/$id/members',
+    getParentRoute: () => AuthenticatedAdminRouteRoute,
+  } as any)
+const AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute =
+  AuthenticatedDatabasesDatabaseIDMigrationsIndexRouteImport.update({
+    id: '/databases/$databaseID/migrations/',
+    path: '/databases/$databaseID/migrations/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute =
+  AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteImport.update({
+    id: '/databases/$databaseID/migrations/$migrationID',
+    path: '/databases/$databaseID/migrations/$migrationID',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedDatabasesDatabaseIDTablesTableIDRoute =
+  AuthenticatedDatabasesDatabaseIDTablesTableIDRouteImport.update({
+    id: '/databases/$databaseID/tables/$tableID',
+    path: '/databases/$databaseID/tables/$tableID',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute =
+  AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () =>
+      AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute,
+  } as any)
+const AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute =
+  AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRouteImport.update(
+    {
+      id: '/attempts/$attemptID',
+      path: '/attempts/$attemptID',
+      getParentRoute: () =>
+        AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute,
+    } as any,
+  )
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/admin': typeof AuthenticatedAdminRouteRouteWithChildren
+  '/account': typeof AuthenticatedAccountRoute
+  '/admin/users': typeof AuthenticatedAdminUsersRoute
+  '/admin/': typeof AuthenticatedAdminIndexRoute
+  '/databases/': typeof AuthenticatedDatabasesIndexRoute
+  '/admin/databases/$id': typeof AuthenticatedAdminDatabasesIdRoute
+  '/databases/$databaseID/schema-diff': typeof AuthenticatedDatabasesDatabaseIDSchemaDiffRoute
+  '/admin/databases/': typeof AuthenticatedAdminDatabasesIndexRoute
+  '/admin/groups/': typeof AuthenticatedAdminGroupsIndexRoute
+  '/databases/$databaseID/': typeof AuthenticatedDatabasesDatabaseIDIndexRoute
+  '/admin/groups/$id/databases': typeof AuthenticatedAdminGroupsIdDatabasesRoute
+  '/admin/groups/$id/members': typeof AuthenticatedAdminGroupsIdMembersRoute
+  '/databases/$databaseID/migrations/$migrationID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren
+  '/databases/$databaseID/tables/$tableID': typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRoute
+  '/databases/$databaseID/migrations/': typeof AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute
+  '/databases/$databaseID/migrations/$migrationID/': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute
+  '/databases/$databaseID/migrations/$migrationID/attempts/$attemptID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/account': typeof AuthenticatedAccountRoute
+  '/admin/users': typeof AuthenticatedAdminUsersRoute
+  '/admin': typeof AuthenticatedAdminIndexRoute
+  '/databases': typeof AuthenticatedDatabasesIndexRoute
+  '/admin/databases/$id': typeof AuthenticatedAdminDatabasesIdRoute
+  '/databases/$databaseID/schema-diff': typeof AuthenticatedDatabasesDatabaseIDSchemaDiffRoute
+  '/admin/databases': typeof AuthenticatedAdminDatabasesIndexRoute
+  '/admin/groups': typeof AuthenticatedAdminGroupsIndexRoute
+  '/databases/$databaseID': typeof AuthenticatedDatabasesDatabaseIDIndexRoute
+  '/admin/groups/$id/databases': typeof AuthenticatedAdminGroupsIdDatabasesRoute
+  '/admin/groups/$id/members': typeof AuthenticatedAdminGroupsIdMembersRoute
+  '/databases/$databaseID/tables/$tableID': typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRoute
+  '/databases/$databaseID/migrations': typeof AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute
+  '/databases/$databaseID/migrations/$migrationID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute
+  '/databases/$databaseID/migrations/$migrationID/attempts/$attemptID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/login': typeof LoginRoute
+  '/_authenticated/admin': typeof AuthenticatedAdminRouteRouteWithChildren
+  '/_authenticated/account': typeof AuthenticatedAccountRoute
+  '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
+  '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
+  '/_authenticated/databases/': typeof AuthenticatedDatabasesIndexRoute
+  '/_authenticated/admin/databases/$id': typeof AuthenticatedAdminDatabasesIdRoute
+  '/_authenticated/databases/$databaseID/schema-diff': typeof AuthenticatedDatabasesDatabaseIDSchemaDiffRoute
+  '/_authenticated/admin/databases/': typeof AuthenticatedAdminDatabasesIndexRoute
+  '/_authenticated/admin/groups/': typeof AuthenticatedAdminGroupsIndexRoute
+  '/_authenticated/databases/$databaseID/': typeof AuthenticatedDatabasesDatabaseIDIndexRoute
+  '/_authenticated/admin/groups/$id/databases': typeof AuthenticatedAdminGroupsIdDatabasesRoute
+  '/_authenticated/admin/groups/$id/members': typeof AuthenticatedAdminGroupsIdMembersRoute
+  '/_authenticated/databases/$databaseID/migrations/$migrationID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren
+  '/_authenticated/databases/$databaseID/tables/$tableID': typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRoute
+  '/_authenticated/databases/$databaseID/migrations/': typeof AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute
+  '/_authenticated/databases/$databaseID/migrations/$migrationID/': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute
+  '/_authenticated/databases/$databaseID/migrations/$migrationID/attempts/$attemptID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/admin'
+    | '/account'
+    | '/admin/users'
+    | '/admin/'
+    | '/databases/'
+    | '/admin/databases/$id'
+    | '/databases/$databaseID/schema-diff'
+    | '/admin/databases/'
+    | '/admin/groups/'
+    | '/databases/$databaseID/'
+    | '/admin/groups/$id/databases'
+    | '/admin/groups/$id/members'
+    | '/databases/$databaseID/migrations/$migrationID'
+    | '/databases/$databaseID/tables/$tableID'
+    | '/databases/$databaseID/migrations/'
+    | '/databases/$databaseID/migrations/$migrationID/'
+    | '/databases/$databaseID/migrations/$migrationID/attempts/$attemptID'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/login'
+    | '/account'
+    | '/admin/users'
+    | '/admin'
+    | '/databases'
+    | '/admin/databases/$id'
+    | '/databases/$databaseID/schema-diff'
+    | '/admin/databases'
+    | '/admin/groups'
+    | '/databases/$databaseID'
+    | '/admin/groups/$id/databases'
+    | '/admin/groups/$id/members'
+    | '/databases/$databaseID/tables/$tableID'
+    | '/databases/$databaseID/migrations'
+    | '/databases/$databaseID/migrations/$migrationID'
+    | '/databases/$databaseID/migrations/$migrationID/attempts/$attemptID'
+  id:
+    | '__root__'
+    | '/'
+    | '/_authenticated'
+    | '/login'
+    | '/_authenticated/admin'
+    | '/_authenticated/account'
+    | '/_authenticated/admin/users'
+    | '/_authenticated/admin/'
+    | '/_authenticated/databases/'
+    | '/_authenticated/admin/databases/$id'
+    | '/_authenticated/databases/$databaseID/schema-diff'
+    | '/_authenticated/admin/databases/'
+    | '/_authenticated/admin/groups/'
+    | '/_authenticated/databases/$databaseID/'
+    | '/_authenticated/admin/groups/$id/databases'
+    | '/_authenticated/admin/groups/$id/members'
+    | '/_authenticated/databases/$databaseID/migrations/$migrationID'
+    | '/_authenticated/databases/$databaseID/tables/$tableID'
+    | '/_authenticated/databases/$databaseID/migrations/'
+    | '/_authenticated/databases/$databaseID/migrations/$migrationID/'
+    | '/_authenticated/databases/$databaseID/migrations/$migrationID/attempts/$attemptID'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
+  LoginRoute: typeof LoginRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +290,224 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/account': {
+      id: '/_authenticated/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AuthenticatedAccountRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/admin': {
+      id: '/_authenticated/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AuthenticatedAdminRouteRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/admin/': {
+      id: '/_authenticated/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AuthenticatedAdminIndexRouteImport
+      parentRoute: typeof AuthenticatedAdminRouteRoute
+    }
+    '/_authenticated/admin/users': {
+      id: '/_authenticated/admin/users'
+      path: '/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AuthenticatedAdminUsersRouteImport
+      parentRoute: typeof AuthenticatedAdminRouteRoute
+    }
+    '/_authenticated/databases/': {
+      id: '/_authenticated/databases/'
+      path: '/databases'
+      fullPath: '/databases/'
+      preLoaderRoute: typeof AuthenticatedDatabasesIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/admin/databases/': {
+      id: '/_authenticated/admin/databases/'
+      path: '/databases'
+      fullPath: '/admin/databases/'
+      preLoaderRoute: typeof AuthenticatedAdminDatabasesIndexRouteImport
+      parentRoute: typeof AuthenticatedAdminRouteRoute
+    }
+    '/_authenticated/admin/databases/$id': {
+      id: '/_authenticated/admin/databases/$id'
+      path: '/databases/$id'
+      fullPath: '/admin/databases/$id'
+      preLoaderRoute: typeof AuthenticatedAdminDatabasesIdRouteImport
+      parentRoute: typeof AuthenticatedAdminRouteRoute
+    }
+    '/_authenticated/admin/groups/': {
+      id: '/_authenticated/admin/groups/'
+      path: '/groups'
+      fullPath: '/admin/groups/'
+      preLoaderRoute: typeof AuthenticatedAdminGroupsIndexRouteImport
+      parentRoute: typeof AuthenticatedAdminRouteRoute
+    }
+    '/_authenticated/databases/$databaseID/': {
+      id: '/_authenticated/databases/$databaseID/'
+      path: '/databases/$databaseID'
+      fullPath: '/databases/$databaseID/'
+      preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/databases/$databaseID/schema-diff': {
+      id: '/_authenticated/databases/$databaseID/schema-diff'
+      path: '/databases/$databaseID/schema-diff'
+      fullPath: '/databases/$databaseID/schema-diff'
+      preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDSchemaDiffRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/admin/groups/$id/databases': {
+      id: '/_authenticated/admin/groups/$id/databases'
+      path: '/groups/$id/databases'
+      fullPath: '/admin/groups/$id/databases'
+      preLoaderRoute: typeof AuthenticatedAdminGroupsIdDatabasesRouteImport
+      parentRoute: typeof AuthenticatedAdminRouteRoute
+    }
+    '/_authenticated/admin/groups/$id/members': {
+      id: '/_authenticated/admin/groups/$id/members'
+      path: '/groups/$id/members'
+      fullPath: '/admin/groups/$id/members'
+      preLoaderRoute: typeof AuthenticatedAdminGroupsIdMembersRouteImport
+      parentRoute: typeof AuthenticatedAdminRouteRoute
+    }
+    '/_authenticated/databases/$databaseID/migrations/': {
+      id: '/_authenticated/databases/$databaseID/migrations/'
+      path: '/databases/$databaseID/migrations'
+      fullPath: '/databases/$databaseID/migrations/'
+      preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/databases/$databaseID/migrations/$migrationID': {
+      id: '/_authenticated/databases/$databaseID/migrations/$migrationID'
+      path: '/databases/$databaseID/migrations/$migrationID'
+      fullPath: '/databases/$databaseID/migrations/$migrationID'
+      preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/databases/$databaseID/tables/$tableID': {
+      id: '/_authenticated/databases/$databaseID/tables/$tableID'
+      path: '/databases/$databaseID/tables/$tableID'
+      fullPath: '/databases/$databaseID/tables/$tableID'
+      preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/databases/$databaseID/migrations/$migrationID/': {
+      id: '/_authenticated/databases/$databaseID/migrations/$migrationID/'
+      path: '/'
+      fullPath: '/databases/$databaseID/migrations/$migrationID/'
+      preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRouteImport
+      parentRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute
+    }
+    '/_authenticated/databases/$databaseID/migrations/$migrationID/attempts/$attemptID': {
+      id: '/_authenticated/databases/$databaseID/migrations/$migrationID/attempts/$attemptID'
+      path: '/attempts/$attemptID'
+      fullPath: '/databases/$databaseID/migrations/$migrationID/attempts/$attemptID'
+      preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRouteImport
+      parentRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute
+    }
   }
 }
 
+interface AuthenticatedAdminRouteRouteChildren {
+  AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
+  AuthenticatedAdminIndexRoute: typeof AuthenticatedAdminIndexRoute
+  AuthenticatedAdminDatabasesIdRoute: typeof AuthenticatedAdminDatabasesIdRoute
+  AuthenticatedAdminDatabasesIndexRoute: typeof AuthenticatedAdminDatabasesIndexRoute
+  AuthenticatedAdminGroupsIndexRoute: typeof AuthenticatedAdminGroupsIndexRoute
+  AuthenticatedAdminGroupsIdDatabasesRoute: typeof AuthenticatedAdminGroupsIdDatabasesRoute
+  AuthenticatedAdminGroupsIdMembersRoute: typeof AuthenticatedAdminGroupsIdMembersRoute
+}
+
+const AuthenticatedAdminRouteRouteChildren: AuthenticatedAdminRouteRouteChildren =
+  {
+    AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
+    AuthenticatedAdminIndexRoute: AuthenticatedAdminIndexRoute,
+    AuthenticatedAdminDatabasesIdRoute: AuthenticatedAdminDatabasesIdRoute,
+    AuthenticatedAdminDatabasesIndexRoute:
+      AuthenticatedAdminDatabasesIndexRoute,
+    AuthenticatedAdminGroupsIndexRoute: AuthenticatedAdminGroupsIndexRoute,
+    AuthenticatedAdminGroupsIdDatabasesRoute:
+      AuthenticatedAdminGroupsIdDatabasesRoute,
+    AuthenticatedAdminGroupsIdMembersRoute:
+      AuthenticatedAdminGroupsIdMembersRoute,
+  }
+
+const AuthenticatedAdminRouteRouteWithChildren =
+  AuthenticatedAdminRouteRoute._addFileChildren(
+    AuthenticatedAdminRouteRouteChildren,
+  )
+
+interface AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteChildren {
+  AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute
+  AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute
+}
+
+const AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteChildren: AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteChildren =
+  {
+    AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute:
+      AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute,
+    AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute:
+      AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute,
+  }
+
+const AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren =
+  AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute._addFileChildren(
+    AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteChildren,
+  )
+
+interface AuthenticatedRouteChildren {
+  AuthenticatedAdminRouteRoute: typeof AuthenticatedAdminRouteRouteWithChildren
+  AuthenticatedAccountRoute: typeof AuthenticatedAccountRoute
+  AuthenticatedDatabasesIndexRoute: typeof AuthenticatedDatabasesIndexRoute
+  AuthenticatedDatabasesDatabaseIDSchemaDiffRoute: typeof AuthenticatedDatabasesDatabaseIDSchemaDiffRoute
+  AuthenticatedDatabasesDatabaseIDIndexRoute: typeof AuthenticatedDatabasesDatabaseIDIndexRoute
+  AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren
+  AuthenticatedDatabasesDatabaseIDTablesTableIDRoute: typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRoute
+  AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute
+}
+
+const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedAdminRouteRoute: AuthenticatedAdminRouteRouteWithChildren,
+  AuthenticatedAccountRoute: AuthenticatedAccountRoute,
+  AuthenticatedDatabasesIndexRoute: AuthenticatedDatabasesIndexRoute,
+  AuthenticatedDatabasesDatabaseIDSchemaDiffRoute:
+    AuthenticatedDatabasesDatabaseIDSchemaDiffRoute,
+  AuthenticatedDatabasesDatabaseIDIndexRoute:
+    AuthenticatedDatabasesDatabaseIDIndexRoute,
+  AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute:
+    AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren,
+  AuthenticatedDatabasesDatabaseIDTablesTableIDRoute:
+    AuthenticatedDatabasesDatabaseIDTablesTableIDRoute,
+  AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute:
+    AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute,
+}
+
+const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
+  AuthenticatedRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthenticatedRoute: AuthenticatedRouteWithChildren,
+  LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

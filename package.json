@@ -12,8 +12,8 @@
     "go:generate": "go tool templ generate",
     "go:test": "go test ./...",
     "go:build": "go build -o bin/sqlwise ./cmd/server",
-    "build:all": "vp run go:generate && vp build && vp run go:build",
-    "ci": "vp check && vp run go:generate && vp run go:test && vp build"
+    "build:all": "vp run go:generate && vp run spa:build && vp run go:build",
+    "ci": "vp check && vp run spa:check && vp run spa:test && vp run go:generate && vp run go:test && vp build && vp run spa:build"
   },
   "dependencies": {
     "@tanstack/react-query": "5.105.2",
