@@ -78,6 +78,89 @@ func TestAPISessionIncludesNeedsRefreshWithoutPolicy(t *testing.T) {
 	}
 }
 
+func TestAPISessionWithoutPolicyReportsStaleAndFreshEpochs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	pool := testdb.Open(t)
+	store := auth.NewStore(pool)
+	if err := store.ApplySchema(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := auth.ParseCredentials("api-stale-user", "a sufficiently long password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BootstrapAdmin(context.Background(), credentials); err != nil {
+		t.Fatal(err)
+	}
+	service, err := auth.NewService(store, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewAuth(service, views.Assets{}, false)
+	r := gin.New()
+	h.RegisterAPI(r)
+	challengeResponse := httptest.NewRecorder()
+	r.ServeHTTP(challengeResponse, httptest.NewRequest(http.MethodGet, "/api/v1/auth/login-challenge", nil))
+	var challenge struct {
+		Data struct {
+			CSRF string `json:"csrf_token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(challengeResponse.Body.Bytes(), &challenge); err != nil {
+		t.Fatal(err)
+	}
+	login := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"api-stale-user","password":"a sufficiently long password"}`))
+	login.Header.Set("Content-Type", "application/json")
+	login.Header.Set("X-CSRF-Token", challenge.Data.CSRF)
+	login.AddCookie(challengeResponse.Result().Cookies()[0])
+	loginResponse := httptest.NewRecorder()
+	r.ServeHTTP(loginResponse, login)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", loginResponse.Code, loginResponse.Body)
+	}
+	sessionCookie := loginResponse.Result().Cookies()[0]
+	var principal struct {
+		Data struct {
+			User struct {
+				ID string `json:"id"`
+			} `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(loginResponse.Body.Bytes(), &principal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE users SET authz_epoch=authz_epoch+1 WHERE id=$1`, principal.Data.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	getSession := func(cookie *http.Cookie) (*httptest.ResponseRecorder, bool) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+		req.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		var body struct {
+			Data struct {
+				NeedsRefresh bool `json:"needs_refresh"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return w, body.Data.NeedsRefresh
+	}
+	staleResponse, needsRefresh := getSession(sessionCookie)
+	if staleResponse.Code != http.StatusOK || !needsRefresh {
+		t.Fatalf("stale session status=%d needs_refresh=%t body=%s", staleResponse.Code, needsRefresh, staleResponse.Body)
+	}
+	replacement := staleResponse.Result().Cookies()
+	if len(replacement) != 1 || replacement[0].Name != sessionCookie.Name || replacement[0].Value == sessionCookie.Value {
+		t.Fatalf("stale response did not preserve replacement cookie: %+v", replacement)
+	}
+	freshResponse, needsRefresh := getSession(replacement[0])
+	if freshResponse.Code != http.StatusOK || needsRefresh {
+		t.Fatalf("fresh session status=%d needs_refresh=%t body=%s", freshResponse.Code, needsRefresh, freshResponse.Body)
+	}
+}
+
 func TestAPIAuthChallengeLoginSessionLogout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pool := testdb.Open(t)

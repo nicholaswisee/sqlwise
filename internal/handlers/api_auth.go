@@ -127,6 +127,7 @@ func (h *Auth) requireAPISession(readOnly bool) gin.HandlerFunc {
 			apiFailure(c, err)
 			return
 		}
+		c.Set("api_needs_refresh", errors.Is(err, auth.ErrAuthorizationEpoch))
 		c.Request = c.Request.WithContext(ctx)
 		c.Set("auth_session", session)
 		c.Next()
@@ -166,7 +167,7 @@ func (h *Auth) RequireAPIDatabasePermission(checker DatabasePermissionChecker, p
 
 func (h *Auth) apiSession(c *gin.Context) {
 	session := c.MustGet("auth_session").(auth.Session)
-	data := gin.H{"user": apiPrincipal(session.Principal), "csrf_token": session.CSRFToken, "expires_at": session.ExpiresAt, "databases": []any{}, "needs_refresh": false}
+	data := gin.H{"user": apiPrincipal(session.Principal), "csrf_token": session.CSRFToken, "expires_at": session.ExpiresAt, "databases": []any{}, "needs_refresh": c.GetBool("api_needs_refresh")}
 	if h.access == nil {
 		apiData(c, data)
 		return
