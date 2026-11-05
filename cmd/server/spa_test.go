@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -70,6 +71,16 @@ func TestSPAStaticServing(t *testing.T) {
 			}
 			if strings.Contains(test.path, "api") && !strings.HasPrefix(res.Header().Get("Content-Type"), "application/json") {
 				t.Fatalf("API miss content type = %q", res.Header().Get("Content-Type"))
+			}
+			if strings.Contains(test.path, "api") {
+				var envelope struct {
+					Error struct {
+						Fields map[string]string `json:"fields"`
+					} `json:"error"`
+				}
+				if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil || envelope.Error.Fields == nil {
+					t.Fatalf("API error requires fields object: %s", res.Body.String())
+				}
 			}
 			if test.method == "HEAD" && res.Body.Len() != 0 {
 				t.Fatal("HEAD must not return a response body")

@@ -188,7 +188,7 @@ func (h *Migrations) apiExecute(c *gin.Context) {
 	if e != nil {
 		if a.ID != "" {
 			status, code, message := apiMigrationError(e)
-			c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": code, "message": message, "attempt": apiAttemptDTO(a)}})
+			c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": code, "message": message, "fields": gin.H{}, "attempt": apiAttemptDTO(a)}})
 			return
 		}
 		apiMigrationFailure(c, e)

@@ -84,7 +84,7 @@ func frontendMiss(c *gin.Context, status int) {
 		if status == http.StatusMethodNotAllowed {
 			code = "method_not_allowed"
 		}
-		c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": code, "message": http.StatusText(status)}})
+		c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": code, "message": http.StatusText(status), "fields": gin.H{}}})
 		return
 	}
 	c.AbortWithStatus(status)

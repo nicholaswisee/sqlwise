@@ -58,6 +58,11 @@ func apiTrack(stops []views.TrackStop) []apiTrackStop {
 	return out
 }
 
+func apiHandleCapabilities(handle database.Handle) apiCapabilities {
+	cap := handle.Capabilities()
+	return apiCapabilities{cap.ConnectionTest, cap.SchemaInspection, cap.DataPreview, cap.MigrationExecution, cap.AtomicMigrations, cap.SchemaDiff, cap.Explain, cap.ExplainAnalyze}
+}
+
 type apiSchemaColumn struct {
 	Name       string  `json:"name"`
 	Type       string  `json:"type"`
@@ -179,6 +184,7 @@ func (h *DatabaseViewer) apiExplorer(c *gin.Context) {
 		return
 	}
 	defer handle.Close()
+	w.Capabilities = apiHandleCapabilities(handle)
 	inspector, err := database.As[database.SchemaInspector](handle)
 	if err != nil {
 		apiExplorerFailure(c, err)
@@ -248,6 +254,7 @@ func (h *DatabaseViewer) apiTable(c *gin.Context) {
 		return
 	}
 	defer handle.Close()
+	w.Capabilities = apiHandleCapabilities(handle)
 	reader, err := database.As[database.TableReader](handle)
 	if err != nil {
 		apiExplorerFailure(c, err)

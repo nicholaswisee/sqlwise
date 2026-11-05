@@ -87,7 +87,7 @@ func (f *spaWorkspaceFixture) register(t *testing.T, conn database.Connection) s
 	t.Helper()
 	r := f.request(t, "POST", "/api/v1/admin/databases", &f.Admin, map[string]any{
 		"name": "Isolated API target", "dbms": conn.DBMS, "host": conn.Host, "port": strconv.Itoa(conn.Port),
-		"database": conn.Database, "username": conn.Username, "password": conn.Password, "tls": conn.TLS,
+		"database": conn.Database, "username": conn.Username, "password": conn.Password, "tls": conn.TLS, "sandbox": conn.Sandbox,
 	}, http.StatusCreated)
 	d := spaData[struct {
 		Form struct {
@@ -132,7 +132,7 @@ func TestSPAWorkspacePostgresHTTP(t *testing.T) {
 	f := newSPAWorkspaceFixture(t)
 	target := migrationtest.TargetDatabase(t)
 	cc := target.Config().ConnConfig
-	id := f.register(t, database.Connection{DBMS: database.PostgreSQL, Host: cc.Host, Port: int(cc.Port), Database: cc.Database, Username: cc.User, Password: cc.Password, TLS: database.TLSDisable})
+	id := f.register(t, database.Connection{DBMS: database.PostgreSQL, Host: cc.Host, Port: int(cc.Port), Database: cc.Database, Username: cc.User, Password: cc.Password, TLS: database.TLSDisable, Sandbox: true})
 	base := "/api/v1/databases/" + id
 	if _, err := target.Exec(t.Context(), `CREATE TABLE items (id integer PRIMARY KEY, label text, data bytea);
 		INSERT INTO items VALUES (1, NULL, NULL), (2, 'two', '\xdeadbeef'), (3, repeat('x',5000), NULL), (4, 'four', NULL)`); err != nil {
@@ -162,10 +162,13 @@ func TestSPAWorkspacePostgresHTTP(t *testing.T) {
 				Name string `json:"name"`
 			} `json:"tables"`
 			Workspace struct {
-				CanEdit bool `json:"can_edit"`
+				CanEdit      bool `json:"can_edit"`
+				Capabilities struct {
+					ExplainAnalyze bool `json:"explain_analyze"`
+				} `json:"capabilities"`
 			} `json:"workspace"`
 		}](t, f.request(t, "GET", base, &f.Viewer, nil, 200))
-		if explorer.Schema != "public" || len(explorer.Tables) != 1 || explorer.Tables[0].Name != "items" || explorer.Workspace.CanEdit {
+		if explorer.Schema != "public" || len(explorer.Tables) != 1 || explorer.Tables[0].Name != "items" || explorer.Workspace.CanEdit || !explorer.Workspace.Capabilities.ExplainAnalyze {
 			t.Fatalf("explorer=%+v", explorer)
 		}
 		path := base + "/tables/" + database.TableRef{Schema: "public", Name: "items"}.ID()
@@ -176,11 +179,14 @@ func TestSPAWorkspacePostgresHTTP(t *testing.T) {
 			Ordered   bool               `json:"ordered"`
 			Rows      [][]map[string]any `json:"rows"`
 			Workspace struct {
-				ID string `json:"id"`
+				ID           string `json:"id"`
+				Capabilities struct {
+					ExplainAnalyze bool `json:"explain_analyze"`
+				} `json:"capabilities"`
 			} `json:"workspace"`
 		}
 		first := spaData[page](t, f.request(t, "GET", path+"?limit=2", &f.Viewer, nil, 200))
-		if len(first.Rows) != 2 || !first.HasNext || !first.Ordered || first.Limit != 2 || first.Workspace.ID != id {
+		if len(first.Rows) != 2 || !first.HasNext || !first.Ordered || first.Limit != 2 || first.Workspace.ID != id || !first.Workspace.Capabilities.ExplainAnalyze {
 			t.Fatalf("first page=%+v", first)
 		}
 		if first.Rows[0][1]["null"] != true || first.Rows[1][2]["binary"] != true || first.Rows[1][2]["text"] != `\xdeadbeef` {
@@ -235,15 +241,16 @@ func TestSPAWorkspacePostgresHTTP(t *testing.T) {
 		failed := f.request(t, "POST", failedPath+"/execute", &f.Editor, spaConfirmation(failedDraft, 1), 422)
 		var failure struct {
 			Error struct {
-				Code    string     `json:"code"`
-				Attempt spaAttempt `json:"attempt"`
+				Code    string            `json:"code"`
+				Attempt spaAttempt        `json:"attempt"`
+				Fields  map[string]string `json:"fields"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(failed.Body.Bytes(), &failure); err != nil {
 			t.Fatal(err)
 		}
 		fa := failure.Error.Attempt
-		if failure.Error.Code != "validation" || fa.ID == "" || fa.Status != "failed" || fa.FailedStatement != 2 || fa.SQL != failedDraft.SQL {
+		if failure.Error.Code != "validation" || failure.Error.Fields == nil || fa.ID == "" || fa.Status != "failed" || fa.FailedStatement != 2 || fa.SQL != failedDraft.SQL {
 			t.Fatalf("lost failed attempt: %s", failed.Body)
 		}
 		var exists bool
@@ -295,7 +302,12 @@ func TestSPAWorkspacePostgresHTTP(t *testing.T) {
 		}
 		f.request(t, "POST", base+"/explain", &f.Viewer, map[string]any{"sql": "SELECT * FROM items", "mode": "analyze", "confirmed": true}, 403)
 		f.request(t, "POST", base+"/explain", &f.Editor, map[string]any{"sql": "SELECT * FROM items", "mode": "analyze"}, 422)
-		f.request(t, "POST", base+"/explain", &f.Editor, map[string]any{"sql": "SELECT * FROM items", "mode": "analyze", "confirmed": true}, 422)
+		analyzed := f.request(t, "POST", base+"/explain", &f.Editor, map[string]any{"sql": "SELECT * FROM items", "mode": "analyze", "confirmed": true}, 200)
+		if spaData[struct {
+			Mode string `json:"mode"`
+		}](t, analyzed).Mode != "analyze" {
+			t.Fatalf("analyze response=%s", analyzed.Body)
+		}
 		var exists bool
 		var rows, after int
 		if err := target.QueryRow(t.Context(), "SELECT to_regclass('public.preview_only') IS NOT NULL, (SELECT count(*) FROM items)").Scan(&exists, &rows); err != nil || exists || rows != 4 {
