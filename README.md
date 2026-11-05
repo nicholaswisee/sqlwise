@@ -7,8 +7,8 @@ sqlwise is a database management web app built for the IF3110 Web Application De
 
 [![Go](https://img.shields.io/badge/Go-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
 [![Gin](https://img.shields.io/badge/Gin-008ECF?style=for-the-badge&logo=gin&logoColor=white)](https://github.com/gin-gonic/gin)
-[![templ](https://img.shields.io/badge/templ-0A7C86?style=for-the-badge&logo=go&logoColor=white)](https://templ.guide/)
-[![HTMX](https://img.shields.io/badge/HTMX-3366CC?style=for-the-badge&logo=htmx&logoColor=white)](https://htmx.org/)
+[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev/)
+[![TanStack](https://img.shields.io/badge/TanStack_Start%20%2F%20Router%20%2F%20Query-FF4154?style=for-the-badge)](https://tanstack.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![MySQL](https://img.shields.io/badge/MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white)](https://www.mysql.com/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
@@ -50,7 +50,7 @@ Open <http://localhost:8080/login>. On a **new platform database**, the default 
 
 These are application credentials, not database credentials. Existing administrator accounts keep their passwords. To set different initial credentials, copy `.env.example` to `.env` and change `SQLWISE_ADMIN_USERNAME` and `SQLWISE_ADMIN_PASSWORD` before the first startup.
 
-Use `docker compose logs -f app frontend` for logs, `docker compose up -d --build` after source changes, and `docker compose down` to stop the stack without removing database volumes.
+Use `docker compose logs -f app` for logs, `docker compose up -d --build` after source changes, and `docker compose down` to stop the stack without removing database volumes. The image builds the SPA with Node and serves its static client from Go; no Node application server runs in production.
 
 ## Run manually
 
@@ -67,11 +67,11 @@ go run ./cmd/admin -username admin
 
 The admin command prompts for a password. Skip it if an administrator already exists.
 
-Start Vite+ in one terminal:
+Start the SPA development server in one terminal:
 
 ```sh
 vp install
-vp dev
+pnpm run spa:dev
 ```
 
 In another terminal, load the environment and start the Go server:
@@ -80,11 +80,18 @@ In another terminal, load the environment and start the Go server:
 set -a
 . ./.env
 set +a
-go tool templ generate
 go run ./cmd/server
 ```
 
-Then open <http://localhost:8080/login> and sign in with the administrator password you chose.
+Open the URL printed by the SPA development server and sign in with the administrator password you chose. Its `/api/v1` requests proxy to Go on port 8080, keeping cookie and CSRF handling same-origin. The Go process can run API-only during development without a frontend build. To serve the built SPA directly from Go on <http://localhost:8080/login>, run `pnpm run spa:build` first.
+
+## SPA and retained legacy frontend
+
+The active frontend lives in `web/spa` and uses TanStack Start in static SPA mode, TanStack Router, and TanStack Query. It calls Go JSON endpoints under `/api/v1`; Go still owns authentication, session rotation, permissions, connections, queries, and migration execution. The frontend foundation follows Better T Stack's frontend-only approach, without adding its JavaScript backend, ORM, or authentication service.
+
+The previous templ/HTMX frontend remains in `internal/web/views`, `web/src`, and the legacy Vite configuration. Its templates, generated Go, HTML handlers, and regression tests are retained; production no longer mounts those HTML routes. `vp build` and `go tool templ generate` still check the legacy frontend. The optional Compose `legacy` profile retains the old frontend asset-development service, not a second production UI.
+
+This refactor changes only the frontend and its API/serving boundary. It does **not** introduce M2 approval, rollback/forward, queue, worker, or database-schema changes; migration execution retains its existing synchronous behavior. Keeping the legacy source is not a guarantee that an older application release will be safe after future M2 data/schema changes.
 
 ## Demo target databases
 
@@ -123,6 +130,9 @@ go tool templ generate
 go vet ./...
 vp check
 vp build
+pnpm run spa:check
+pnpm run spa:test
+pnpm run spa:build
 ```
 
 ## Team
