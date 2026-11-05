@@ -111,6 +111,16 @@ test("direct attempt route and migration SQL details link render immutable execu
   await expect(page.getByRole("heading", { name: "Executed SQL (immutable)" })).toBeVisible();
 });
 
+test("populated execution history scrolls inside its table without widening the page", async ({
+  page,
+}) => {
+  await mockMigration(page, () => draft(1));
+  await page.goto("/databases/db-1/migrations");
+  await expect(page.getByRole("heading", { name: "Execution history", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "SQL and details", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test("a revision refresh never submits local SQL against the newer server revision", async ({
   page,
 }) => {

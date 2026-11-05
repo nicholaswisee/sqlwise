@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"sqlwise/internal/migration"
+	"sqlwise/internal/schemadiff"
 )
 
 func TestMigrationAPIDTOsAllowlistImmutableSafeEvidence(t *testing.T) {
@@ -28,5 +29,15 @@ func TestMigrationAPIDTOsAllowlistImmutableSafeEvidence(t *testing.T) {
 		if strings.Contains(strings.ToLower(text), forbidden) {
 			t.Fatalf("unexpected private field %q in %s", forbidden, text)
 		}
+	}
+}
+
+func TestSchemaDiffAPINoChangesUsesEmptyArrays(t *testing.T) {
+	body, err := json.Marshal(apiProposal(schemadiff.Proposal{Schema: "public"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"warnings":[]`) || !strings.Contains(string(body), `"changes":[]`) {
+		t.Fatalf("empty proposal collections must be arrays: %s", body)
 	}
 }

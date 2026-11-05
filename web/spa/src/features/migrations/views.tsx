@@ -129,7 +129,7 @@ function AttemptsTable({
               <th
                 key={h}
                 scope="col"
-                className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-600"
+                className="relative whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-600"
               >
                 {h === "Details" ? <span className="sr-only">{h}</span> : h}
               </th>
@@ -862,17 +862,19 @@ export function AttemptDetailPage({
       <dl
         className={`${styles.panel} mt-6 grid gap-x-6 gap-y-4 p-5 text-sm sm:grid-cols-2 lg:grid-cols-3`}
       >
-        {([
-          ["Executor", a.executor_name],
-          ["Draft revision", <span className="font-mono">{a.draft_revision}</span>],
-          ["Statements", <span className="font-mono">{a.statement_count}</span>],
-          ["Started", <span className="font-mono">{formatDate(a.started_at)}</span>],
-          ["Finished", <span className="font-mono">{formatDate(a.finished_at)}</span>],
+        {(
           [
-            "SQL SHA-256",
-            <span className="break-all font-mono text-xs leading-5">{a.sql_hash}</span>,
-          ],
-        ] as const).map(([label, value]) => (
+            ["Executor", a.executor_name],
+            ["Draft revision", <span className="font-mono">{a.draft_revision}</span>],
+            ["Statements", <span className="font-mono">{a.statement_count}</span>],
+            ["Started", <span className="font-mono">{formatDate(a.started_at)}</span>],
+            ["Finished", <span className="font-mono">{formatDate(a.finished_at)}</span>],
+            [
+              "SQL SHA-256",
+              <span className="break-all font-mono text-xs leading-5">{a.sql_hash}</span>,
+            ],
+          ] as const
+        ).map(([label, value]) => (
           <div key={label}>
             <dt className="text-slate-600">{label}</dt>
             <dd className="mt-0.5 break-all text-slate-900">{value}</dd>

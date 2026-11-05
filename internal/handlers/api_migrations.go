@@ -258,7 +258,7 @@ type apiDiffProposal struct {
 }
 
 func apiProposal(p schemadiff.Proposal) apiDiffProposal {
-	v := apiDiffProposal{Schema: p.Schema, SourceFingerprint: p.SourceFingerprint, Warnings: p.Warnings, SQL: p.SQL, RequiresReview: p.RequiresReview, Changes: []apiDiffChange{}}
+	v := apiDiffProposal{Schema: p.Schema, SourceFingerprint: p.SourceFingerprint, Warnings: append([]string{}, p.Warnings...), SQL: p.SQL, RequiresReview: p.RequiresReview, Changes: []apiDiffChange{}}
 	for _, c := range p.Changes {
 		v.Changes = append(v.Changes, apiDiffChange{c.String(), c.Destructive})
 	}
