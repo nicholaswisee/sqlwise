@@ -44,6 +44,39 @@ func TestAdminAPIPostgresMutationAndAuthorization(t *testing.T) {
 	NewAccessAdmin(h, policy, views.Assets{}).RegisterAPI(r)
 
 	adminCookie, csrf := apiIntegrationLogin(t, r, "api-admin", "a sufficiently long admin password")
+	empty := apiIntegrationRequest(t, r, http.MethodGet, "/api/v1/admin/groups", "", &adminCookie, csrf)
+	if empty.Code != http.StatusOK {
+		t.Fatalf("empty snapshot status=%d body=%s", empty.Code, empty.Body)
+	}
+	var snapshot map[string]json.RawMessage
+	if err := json.Unmarshal(empty.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(snapshot["data"], &data); err != nil {
+		t.Fatal(err)
+	}
+	var initialUsers []struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal(data["users"], &initialUsers); err != nil {
+		t.Fatal(err)
+	}
+	adminID := ""
+	for _, u := range initialUsers {
+		if u.Username == "api-admin" {
+			adminID = u.ID
+		}
+	}
+	if adminID == "" {
+		t.Fatalf("admin missing from snapshot: %s", empty.Body)
+	}
+	for _, key := range []string{"users", "groups", "databases", "memberships", "grants"} {
+		if string(data[key]) == "null" || len(data[key]) == 0 {
+			t.Errorf("snapshot %s should be a JSON array, got %s", key, data[key])
+		}
+	}
 	create := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/users", `{"username":"managed-user","password":"a sufficiently long user password"}`, &adminCookie, csrf)
 	if create.Code != http.StatusOK {
 		t.Fatalf("create user status=%d body=%s", create.Code, create.Body)
@@ -76,6 +109,21 @@ func TestAdminAPIPostgresMutationAndAuthorization(t *testing.T) {
 	if rename.Code != http.StatusOK || !strings.Contains(rename.Body.String(), "renamed-user") {
 		t.Fatalf("rename status=%d body=%s", rename.Code, rename.Body)
 	}
+	for _, tc := range []struct {
+		path, body string
+		want       string
+	}{
+		{"/api/v1/admin/users/" + userID, `{"password":"another sufficiently long password"}`, "renamed-user"},
+		{"/api/v1/admin/users/" + userID + "/active", `{"active":false}`, `"active":false`},
+		{"/api/v1/admin/users/" + userID + "/active", `{"active":true}`, `"active":true`},
+		{"/api/v1/admin/users/" + userID + "/admin", `{"admin":true}`, `"is_platform_admin":true`},
+		{"/api/v1/admin/users/" + userID + "/admin", `{"admin":false}`, `"is_platform_admin":false`},
+	} {
+		got := apiIntegrationRequest(t, r, http.MethodPost, tc.path, tc.body, &adminCookie, csrf)
+		if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), tc.want) {
+			t.Errorf("POST %s status=%d body=%s", tc.path, got.Code, got.Body)
+		}
+	}
 
 	group := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/groups", `{"name":"operators"}`, &adminCookie, csrf)
 	if group.Code != http.StatusOK {
@@ -105,15 +153,39 @@ func TestAdminAPIPostgresMutationAndAuthorization(t *testing.T) {
 	if member.Code != http.StatusOK || !strings.Contains(member.Body.String(), userID) {
 		t.Fatalf("add member status=%d body=%s", member.Code, member.Body)
 	}
+	for _, tc := range []struct{ path, body, want string }{
+		{"/api/v1/admin/groups/" + groupID, `{"name":"renamed operators"}`, "renamed operators"},
+		{"/api/v1/admin/groups/" + groupID + "/active", `{"active":false}`, `"active":false`},
+		{"/api/v1/admin/groups/" + groupID + "/active", `{"active":true}`, `"active":true`},
+	} {
+		got := apiIntegrationRequest(t, r, http.MethodPost, tc.path, tc.body, &adminCookie, csrf)
+		if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), tc.want) {
+			t.Errorf("POST %s status=%d body=%s", tc.path, got.Code, got.Body)
+		}
+	}
+	removedMember := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/groups/"+groupID+"/members/remove", `{"user_id":"`+userID+`"}`, &adminCookie, csrf)
+	var memberSnapshot struct {
+		Data struct {
+			Memberships []json.RawMessage `json:"memberships"`
+		} `json:"data"`
+	}
+	if removedMember.Code != http.StatusOK || json.Unmarshal(removedMember.Body.Bytes(), &memberSnapshot) != nil || len(memberSnapshot.Data.Memberships) != 0 {
+		t.Fatalf("remove member status=%d body=%s", removedMember.Code, removedMember.Body)
+	}
 
 	bad := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/users/"+userID, `{"username":""}`, &adminCookie, csrf)
 	if bad.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("validation status=%d body=%s", bad.Code, bad.Body)
 	}
-	userCookie, userCSRF := apiIntegrationLogin(t, r, "renamed-user", "a sufficiently long user password")
+	userCookie, userCSRF := apiIntegrationLogin(t, r, "renamed-user", "another sufficiently long password")
 	denied := apiIntegrationRequest(t, r, http.MethodGet, "/api/v1/admin/users", "", &userCookie, userCSRF)
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("non-admin status=%d body=%s", denied.Code, denied.Body)
+	}
+	adminCookie, csrf = apiIntegrationLogin(t, r, "api-admin", "a sufficiently long admin password")
+	self := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/users/"+adminID+"/admin", `{"admin":false}`, &adminCookie, csrf)
+	if self.Code != http.StatusUnauthorized || !strings.Contains(self.Body.String(), "session_expired") {
+		t.Fatalf("self-demotion status=%d body=%s", self.Code, self.Body)
 	}
 }
 

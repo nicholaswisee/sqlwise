@@ -4,12 +4,15 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
 	"sqlwise/internal/database"
@@ -60,10 +63,17 @@ func TestConnectionsAPIPostgresCreateEditActiveAndSecretRedaction(t *testing.T) 
 	r := gin.New()
 	authHandler.RegisterAPI(r)
 	h := NewConnectionAdmin(authHandler, policy, connectionStore, database.NewPools(connectionStore), views.Assets{})
+	t.Cleanup(h.pools.Close)
 	h.RegisterAPI(r)
+	NewAccessAdmin(authHandler, policy, views.Assets{}).RegisterAPI(r)
+	r.GET("/api/v1/test-target/:databaseID", authHandler.RequireAPISession(), authHandler.RequireAPIDatabasePermission(policy, "databaseID", access.View), func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	cookie, csrf := apiIntegrationLogin(t, r, "connection-admin", "a sufficiently long password")
 
-	payload := `{"name":"managed target","dbms":"postgresql","host":"db.invalid","port":"5432","database":"app","username":"wire_user","password":"sentinel-secret","tls":"disable","sandbox":true}`
+	pg, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := fmt.Sprintf(`{"name":"managed target","dbms":"postgresql","host":%q,"port":%q,"database":%q,"username":%q,"password":%q,"tls":"disable","sandbox":true}`, pg.ConnConfig.Host, fmt.Sprint(pg.ConnConfig.Port), pg.ConnConfig.Database, pg.ConnConfig.User, pg.ConnConfig.Password)
 	created := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/databases", payload, &cookie, csrf)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body)
@@ -89,8 +99,43 @@ func TestConnectionsAPIPostgresCreateEditActiveAndSecretRedaction(t *testing.T) 
 	if id == "" || detail.Data.Form.Name != "managed target" || len(detail.Data.Capabilities) == 0 || detail.Data.ReceiptSQL == "" {
 		t.Fatalf("incomplete detail: %s", created.Body)
 	}
+	deniedTarget := apiIntegrationRequest(t, r, http.MethodGet, "/api/v1/test-target/"+id, "", &cookie, csrf)
+	if deniedTarget.Code != http.StatusForbidden {
+		t.Fatalf("platform admin without grants status=%d body=%s", deniedTarget.Code, deniedTarget.Body)
+	}
+	group := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/groups", `{"name":"database readers"}`, &cookie, csrf)
+	var groupData struct {
+		Data struct {
+			Groups []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"groups"`
+		} `json:"data"`
+	}
+	if group.Code != http.StatusOK || json.Unmarshal(group.Body.Bytes(), &groupData) != nil {
+		t.Fatalf("create group status=%d body=%s", group.Code, group.Body)
+	}
+	var groupID string
+	for _, g := range groupData.Data.Groups {
+		if g.Name == "database readers" {
+			groupID = g.ID
+		}
+	}
+	grant := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/groups/"+groupID+"/databases", `{"database_id":"`+id+`","permission":"view"}`, &cookie, csrf)
+	if grant.Code != http.StatusOK || !strings.Contains(grant.Body.String(), id) {
+		t.Fatalf("set grant status=%d body=%s", grant.Code, grant.Body)
+	}
+	removeGrant := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/groups/"+groupID+"/databases/remove", `{"database_id":"`+id+`"}`, &cookie, csrf)
+	var grantsAfter struct {
+		Data struct {
+			Grants []json.RawMessage `json:"grants"`
+		} `json:"data"`
+	}
+	if removeGrant.Code != http.StatusOK || json.Unmarshal(removeGrant.Body.Bytes(), &grantsAfter) != nil || len(grantsAfter.Data.Grants) != 0 {
+		t.Fatalf("remove grant status=%d body=%s", removeGrant.Code, removeGrant.Body)
+	}
 	tested := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/databases/"+id+"/test", `{}`, &cookie, csrf)
-	if tested.Code != http.StatusOK || !strings.Contains(tested.Body.String(), `"ran":true`) || !strings.Contains(tested.Body.String(), `"ok":false`) {
+	if tested.Code != http.StatusOK || !strings.Contains(tested.Body.String(), `"ran":true`) || !strings.Contains(tested.Body.String(), `"ok":true`) {
 		t.Fatalf("test result status=%d body=%s", tested.Code, tested.Body)
 	}
 	active := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/databases/"+id+"/active", `{"active":false}`, &cookie, csrf)

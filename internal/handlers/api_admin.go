@@ -80,7 +80,10 @@ func (h *AccessAdmin) apiSnapshot(c *gin.Context, groupID string) {
 		apiFailure(c, err)
 		return
 	}
-	dto := adminSnapshotDTO{}
+	dto := adminSnapshotDTO{
+		Users: []apiAdminUser{}, Groups: []apiAdminGroup{}, Databases: []apiAdminDatabase{},
+		Memberships: []apiAdminMembership{}, Grants: []apiAdminGrant{},
+	}
 	for _, x := range data.Users {
 		dto.Users = append(dto.Users, apiAdminUser{x.ID, x.Username, x.Active, x.IsPlatformAdmin})
 	}
