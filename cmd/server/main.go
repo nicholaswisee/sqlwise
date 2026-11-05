@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -70,6 +71,11 @@ func newHTTPRouter() *gin.Engine {
 		defer func() {
 			if recover() != nil {
 				log.Print("http request failed")
+				if c.Request.URL.Path == "/api" || strings.HasPrefix(c.Request.URL.Path, "/api/") {
+					c.Header("Cache-Control", "no-store")
+					c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "internal_error", "message": "The request could not be completed.", "fields": gin.H{}}})
+					return
+				}
 				c.AbortWithStatus(http.StatusInternalServerError)
 			}
 		}()

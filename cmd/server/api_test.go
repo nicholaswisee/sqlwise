@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
 	"sqlwise/internal/database"
@@ -25,6 +26,19 @@ func TestAPIRouterDoesNotMountLegacyPages(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest("GET", "/health", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"ok"`) {
 		t.Fatalf("health = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAPIPanicReturnsSafeJSON(t *testing.T) {
+	router := newAPIRouter(nil, nil)
+	router.GET("/api/v1/broken", func(c *gin.Context) { panic("private connection secret") })
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("GET", "/api/v1/broken", nil))
+	if response.Code != http.StatusInternalServerError || !strings.HasPrefix(response.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("panic response = %d %q", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "private connection secret") || !strings.Contains(response.Body.String(), `"fields":{}`) {
+		t.Fatalf("unsafe panic response: %s", response.Body.String())
 	}
 }
 
