@@ -6,7 +6,7 @@ sqlwise is a database management web app built for the IF3110 Web Application De
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/stack-diagram-dark.png">
-  <img src="docs/stack-diagram.png" alt="SQLwise stack: browser UI with HTMX, TypeScript, and Tailwind CSS; Go, Gin, and templ application; PostgreSQL and optional MySQL databases; Vite+ and Docker tooling.">
+  <img src="docs/stack-diagram.png" alt="SQLwise stack: React and TypeScript browser UI with TanStack Start, Router, Query, and Tailwind CSS; same-origin Go and Gin JSON API; PostgreSQL platform database and PostgreSQL or MySQL target databases; Vite+ builds a static SPA served by Go in Docker without a Node.js production server.">
 </picture>
 
 [Open the standalone diagram](docs/stack-diagram.html).
