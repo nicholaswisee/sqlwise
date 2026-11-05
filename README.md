@@ -2,21 +2,14 @@
 
 sqlwise is a database management web app built for the IF3110 Web Application Development course. Teams can explore databases, manage access, plan schema changes, and track migrations from one interface.
 
-<div align="center">
-  <h3>Tech Stacks</h3>
+## Tech stack
 
-[![Go](https://img.shields.io/badge/Go-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
-[![Gin](https://img.shields.io/badge/Gin-008ECF?style=for-the-badge&logo=gin&logoColor=white)](https://github.com/gin-gonic/gin)
-[![templ](https://img.shields.io/badge/templ-0A7C86?style=for-the-badge&logo=go&logoColor=white)](https://templ.guide/)
-[![HTMX](https://img.shields.io/badge/HTMX-3366CC?style=for-the-badge&logo=htmx&logoColor=white)](https://htmx.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![MySQL](https://img.shields.io/badge/MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white)](https://www.mysql.com/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Vite+](https://img.shields.io/badge/Vite%2B-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://www.viteplus.dev/)
-[![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/stack-diagram-dark.png">
+  <img src="docs/stack-diagram.png" alt="SQLwise stack: browser UI with HTMX, TypeScript, and Tailwind CSS; Go, Gin, and templ application; PostgreSQL and optional MySQL databases; Vite+ and Docker tooling.">
+</picture>
 
-</div>
+[Open the standalone diagram](docs/stack-diagram.html).
 
 ## Features
 
