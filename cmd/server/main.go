@@ -18,11 +18,6 @@ func main() {
 	if os.Getenv("APP_ENV") == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	assets, err := views.LoadAssets()
-	if err != nil {
-		log.Fatalf("load frontend assets: %v", err)
-	}
-
 	service, pool, err := connectAuth()
 	if err != nil {
 		log.Fatal(err)
@@ -40,8 +35,14 @@ func main() {
 	}
 	defer closeTargets()
 	policy := access.NewService(access.NewStore(pool), service)
-	router := newRouter(assets, service, policy)
-	registerDatabaseRoutes(router, service, policy, pool, assets, targets)
+	router := newAPIRouter(service, policy)
+	registerDatabaseAPIRoutes(router, service, policy, pool, targets)
+	if err := registerSPA(router, "web/spa/dist/client"); err != nil {
+		if os.Getenv("APP_ENV") == "production" {
+			log.Fatal(err)
+		}
+		log.Print("SPA assets unavailable; use the SPA development server or run pnpm run spa:build")
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -58,7 +59,7 @@ func main() {
 	}
 }
 
-func newRouter(assets views.Assets, service *auth.Service, policies ...*access.Service) *gin.Engine {
+func newHTTPRouter() *gin.Engine {
 	router := gin.New()
 	if err := router.SetTrustedProxies(nil); err != nil {
 		panic(err)
@@ -74,6 +75,16 @@ func newRouter(assets views.Assets, service *auth.Service, policies ...*access.S
 		}()
 		c.Next()
 	})
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"service": "sqlwise", "status": "ok"})
+	})
+	return router
+}
+
+// newRouter retains the Milestone 1 HTML router for legacy regression tests.
+// The application entry point mounts newAPIRouter and the static SPA instead.
+func newRouter(assets views.Assets, service *auth.Service, policies ...*access.Service) *gin.Engine {
+	router := newHTTPRouter()
 
 	if os.Getenv("APP_ENV") == "production" {
 		router.Static("/assets", "./web/dist/assets")
@@ -81,9 +92,6 @@ func newRouter(assets views.Assets, service *auth.Service, policies ...*access.S
 
 	router.GET("/", func(c *gin.Context) {
 		handlers.Render(c, http.StatusOK, views.Home(assets))
-	})
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"service": "sqlwise", "status": "ok"})
 	})
 	if service != nil {
 		var policy *access.Service
