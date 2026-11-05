@@ -700,7 +700,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                       onClick={() => {
                         setTitle(d.title);
                         setSQL(d.sql);
-                        setBaseRevision(undefined);
+                        setBaseRevision(d.revision);
                         setEditError(undefined);
                       }}
                     >
@@ -718,7 +718,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                       onClick={() => {
                         setTitle(d.title);
                         setSQL(d.sql);
-                        setBaseRevision(undefined);
+                        setBaseRevision(d.revision);
                         setEditError(undefined);
                       }}
                     >
@@ -790,7 +790,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
             pending={plan.pending}
             error={plan.error}
             result={plan.result}
-            stale={!!plan.result && (planIsStale(plan.requestSQL, planInput) || !!plan.error)}
+            stale={!!plan.result && planIsStale(plan.requestSQL, planInput)}
           />
         </div>
       </div>
