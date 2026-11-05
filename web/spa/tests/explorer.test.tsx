@@ -64,7 +64,7 @@ test("table cells preserve binary text, NULL, truncation, and absolute page offs
   expect(html).toContain('value="75" selected=""');
   expect(html).toContain("leading-6 text-slate-800");
   expect(html).toContain(
-    'class="rounded-xl border border-slate-200 bg-white max-h-\[70vh\] overflow-auto"',
+    'class="rounded-xl border border-slate-200 bg-white max-h-[70vh] overflow-auto"',
   );
   expect(html).toContain("hover:border-slate-400");
   expect(html).toContain('name="limit"');

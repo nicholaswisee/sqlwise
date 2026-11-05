@@ -148,7 +148,10 @@ export function useAdminActions() {
   };
 }
 
-export const field = (data: FormData, name: string) => String(data.get(name) ?? "");
+export const field = (data: FormData, name: string) => {
+  const value = data.get(name);
+  return typeof value === "string" ? value : "";
+};
 export const connectionBody = (data: FormData) => ({
   name: field(data, "name"),
   dbms: field(data, "dbms"),

@@ -40,9 +40,6 @@ function DatabaseSchemaPage() {
         data={query.data!}
         selectedTableName={table}
         onSchemaChange={(next) => void navigate({ search: { schema: next }, resetScroll: false })}
-        schemaHref={(next) =>
-          `/databases/${encodeURIComponent(databaseID)}?schema=${encodeURIComponent(next)}`
-        }
         tableHref={(currentSchema, selected) =>
           `/databases/${encodeURIComponent(databaseID)}?schema=${encodeURIComponent(currentSchema)}&table=${encodeURIComponent(selected)}`
         }

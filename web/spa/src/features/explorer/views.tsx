@@ -81,7 +81,6 @@ export function DatabaseList({
 export function SchemaExplorer({
   data,
   onSchemaChange,
-  schemaHref,
   tableHref,
   dataHref,
   selectedTableName,
@@ -90,7 +89,6 @@ export function SchemaExplorer({
 }: {
   data: SchemaExplorerDTO;
   onSchemaChange: (schema: string) => void;
-  schemaHref: (schema: string) => string;
   tableHref: (schema: string, table: string) => string;
   dataHref: (tableId: string) => string;
   selectedTableName?: string;

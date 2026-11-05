@@ -1,7 +1,16 @@
 import { QueryClient } from "@tanstack/react-query";
 import { expect, test } from "vite-plus/test";
 import { createApi } from "../src/lib/api";
-import { performAdminWrite } from "../src/features/admin/data";
+import { field, performAdminWrite } from "../src/features/admin/data";
+
+test("admin text fields never coerce an uploaded file into a credential", () => {
+  const form = new FormData();
+  form.set("username", "editor");
+  form.set("password", new Blob(["not a text field"]), "password.txt");
+  expect(field(form, "username")).toBe("editor");
+  expect(field(form, "missing")).toBe("");
+  expect(field(form, "password")).toBe("");
+});
 
 test("credential-bearing writes never retain their password in the query mutation cache", async () => {
   const client = new QueryClient();
