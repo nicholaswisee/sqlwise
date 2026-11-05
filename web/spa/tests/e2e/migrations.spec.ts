@@ -173,9 +173,56 @@ test("a revision refresh never submits local SQL against the newer server revisi
   await page.getByRole("button", { name: "Reload latest revision" }).last().click();
   await expect(sql).toHaveValue(attempt.sql);
   await expect(page.getByRole("button", { name: "Save revision 3" })).toBeVisible();
+  await sql.fill("CREATE TABLE second_edit (id int);");
+  await page.getByRole("button", { name: "Save revision 3" }).click();
+  expect(saveBody).toMatchObject({
+    sql: "CREATE TABLE second_edit (id int);",
+    expected_revision: 2,
+  });
+  await expect(sql).toHaveValue("CREATE TABLE second_edit (id int);");
 });
 
-test("failed plan refresh keeps the old result visibly stale with the error", async ({ page }) => {
+test("failed plan refresh warns about the retained plan without claiming unchanged SQL changed", async ({
+  page,
+}) => {
+  await mockMigration(page, () => draft(1));
+  let calls = 0;
+  await page.route("**/api/v1/databases/db-1/explain", (route) =>
+    ++calls === 2
+      ? route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { code: "unavailable", message: "Plan service unavailable." },
+          }),
+        })
+      : route.fulfill(
+          envelope({
+            dialect: "postgresql",
+            mode: "explain",
+            sql_hash: "hash",
+            warnings: [],
+            root: { type: "Seq Scan", startup_cost: 0, total_cost: 1, plan_rows: 1, children: [] },
+          }),
+        ),
+  );
+  await page.goto(migrationURL);
+  await page.getByRole("button", { name: "Show plan" }).click();
+  await expect(page.getByText("Seq Scan", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Show plan" }).click();
+  await expect(page.getByRole("alert")).toContainText("Plan service unavailable.");
+  await expect(page.getByRole("status")).toContainText(
+    "The latest plan request failed. Showing the previous plan; show the plan again to refresh it.",
+  );
+  await expect(page.getByRole("status")).not.toContainText("SQL changed after this plan");
+  await expect(page.getByText("Seq Scan", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Show plan" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("status")).toHaveCount(0);
+  await expect(page.getByText("Seq Scan", { exact: false })).toBeVisible();
+});
+
+test("failed plan refresh after SQL edits retains the SQL-changed warning", async ({ page }) => {
   await mockMigration(page, () => draft(1));
   let calls = 0;
   await page.route("**/api/v1/databases/db-1/explain", (route) =>
@@ -200,8 +247,9 @@ test("failed plan refresh keeps the old result visibly stale with the error", as
   await page.goto(migrationURL);
   await page.getByRole("button", { name: "Show plan" }).click();
   await expect(page.getByText("Seq Scan", { exact: false })).toBeVisible();
+  await page.getByLabel("SQL", { exact: true }).fill("CREATE TABLE edited (id int);");
   await page.getByRole("button", { name: "Show plan" }).click();
   await expect(page.getByRole("alert")).toContainText("Plan service unavailable.");
   await expect(page.getByRole("status")).toContainText("SQL changed after this plan");
-  await expect(page.getByText("Seq Scan", { exact: false })).toBeVisible();
+  await expect(page.getByRole("status")).not.toContainText("latest plan request failed");
 });

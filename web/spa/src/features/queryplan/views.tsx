@@ -92,14 +92,22 @@ export function PlanPanel({
         </div>
       </form>
       <div className="group mt-4" aria-live="polite">
-        {stale && (
+        {stale ? (
           <p
             role="status"
             className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950"
           >
             The SQL changed after this plan was made. Show the plan again to update it.
           </p>
-        )}
+        ) : error && result ? (
+          <p
+            role="status"
+            className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950"
+          >
+            The latest plan request failed. Showing the previous plan; show the plan again to
+            refresh it.
+          </p>
+        ) : null}
         {error && (
           <p role="alert" className={styles.alert}>
             {error}
