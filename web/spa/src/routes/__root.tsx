@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   createRootRouteWithContext,
+  ClientOnly,
   HeadContent,
   Link,
   Outlet,
@@ -26,7 +27,12 @@ export const Route = createRootRouteWithContext<AppContext>()({
       },
     ],
   }),
-  component: Outlet,
+  // The prerendered SPA shell has no route UI to hydrate.
+  component: () => (
+    <ClientOnly>
+      <Outlet />
+    </ClientOnly>
+  ),
   shellComponent: RootDocument,
   notFoundComponent: () => (
     <main className="mx-auto max-w-5xl px-4 py-16">
