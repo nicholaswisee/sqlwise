@@ -292,6 +292,11 @@ export function TableDataView({
 }) {
   const from = data.rows.length ? data.offset + 1 : 0,
     to = data.offset + data.rows.length;
+  const pageSizes = [25, 50, 100, 200];
+  if (!pageSizes.includes(data.limit) && data.limit > 0) {
+    const index = pageSizes.findIndex((size) => data.limit < size);
+    pageSizes.splice(index < 0 ? pageSizes.length : index, 0, data.limit);
+  }
   return (
     <div>
       {loading ? (
@@ -310,138 +315,159 @@ export function TableDataView({
                 to={schemaHref(data.schema, data.table) as never}
                 className={`${styles.link} inline-flex min-h-11 items-center gap-1.5 text-sm`}
               >
-                ‹ Schema {data.schema}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M10 3.5 5.5 8l4.5 4.5"></path>
+                </svg>
+                Schema {data.schema}
               </Link>
               <h1 className="break-all font-mono text-2xl font-medium tracking-tight text-slate-900">
                 {data.schema}.{data.table}
               </h1>
             </div>
-            <label className="flex flex-wrap items-center gap-3 text-sm font-medium text-slate-800">
-              Rows per page
+            <form
+              className="flex flex-wrap items-center gap-3"
+              onSubmit={(event) => event.preventDefault()}
+            >
+              <label htmlFor="limit" className="text-sm font-medium text-slate-800">
+                Rows per page
+              </label>
               <select
-                aria-label="Rows per page"
+                id="limit"
+                name="limit"
                 value={data.limit}
                 onChange={(e) =>
-                  onLimitChange(Math.max(1, Math.min(500, Number(e.target.value) || 50)))
+                  onLimitChange(Math.max(1, Math.min(200, Number(e.target.value) || 50)))
                 }
-                className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm tabular-nums"
+                className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 hover:border-slate-400 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-cyan-700 tabular-nums"
               >
-                {[25, 50, 100, 200].map((n) => (
+                {pageSizes.map((n) => (
                   <option key={n} value={n}>
                     {n}
                   </option>
                 ))}
               </select>
-            </label>
+            </form>
           </div>
-          {!data.ordered && (
-            <p
-              role="status"
-              className="mt-4 rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-800"
-            >
-              This table has no primary key, so rows may appear in a different order on each page.
-            </p>
-          )}
-          {data.truncated && (
-            <p
-              role="status"
-              className="mt-4 rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-800"
-            >
-              This page was shortened to stay within the response size limit.
-            </p>
-          )}
-          <div className={`${styles.panel} mt-6 max-h-[70vh] max-w-full overflow-auto`}>
-            <table className="w-full border-separate border-spacing-0 text-left text-sm tabular-nums">
-              <thead>
-                <tr>
-                  {data.columns.map((c) => (
-                    <th
-                      key={c.name}
-                      scope="col"
-                      className="sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 align-bottom"
-                    >
-                      <span className="block font-semibold text-slate-800">{c.name}</span>
-                      <span className="block font-mono text-xs font-normal text-slate-600">
-                        {c.type}
-                      </span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((row, i) => (
-                  <tr
-                    key={i}
-                    className="even:bg-slate-50 hover:bg-cyan-50 [&>td]:border-b [&>td]:border-slate-100"
-                  >
-                    {row.map((cell, j) => {
-                      const long =
-                        !cell.null &&
-                        (Array.from(cell.text).length > 48 || cell.text.includes("\n"));
-                      return (
-                        <td
-                          key={j}
-                          className={`px-3 py-2 align-top font-mono text-[13px] leading-5 text-slate-900 ${long ? "min-w-64 max-w-md" : "whitespace-nowrap"}`}
-                        >
-                          {cell.null ? (
-                            <span className="italic text-slate-600">NULL</span>
-                          ) : (
-                            <span
-                              className={
-                                long
-                                  ? cell.binary
-                                    ? "break-all"
-                                    : "whitespace-pre-wrap break-words"
-                                  : "whitespace-pre"
-                              }
-                            >
-                              {cell.text}
-                            </span>
-                          )}
-                          {cell.truncated && (
-                            <span className="ml-1 font-sans text-xs text-cyan-800">
-                              … truncated
-                            </span>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!data.rows.length && (
-              <p className="p-6 text-sm text-slate-600">No rows on this page.</p>
+          <div className="mt-6">
+            {!data.ordered && (
+              <p
+                role="status"
+                className="mb-4 rounded-lg border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-800"
+              >
+                This table has no primary key, so rows may appear in a different order on each page.
+              </p>
             )}
+            {data.truncated && (
+              <p
+                role="status"
+                className="mb-4 rounded-lg border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-800"
+              >
+                This page was shortened to stay within the response size limit.
+              </p>
+            )}
+            <div className={`${styles.panel} max-h-[70vh] overflow-auto`}>
+              <table className="w-full border-separate border-spacing-0 text-left text-sm tabular-nums">
+                <thead>
+                  <tr>
+                    {data.columns.map((c) => (
+                      <th
+                        key={c.name}
+                        scope="col"
+                        className="sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 align-bottom"
+                      >
+                        <span className="block font-semibold text-slate-800">{c.name}</span>
+                        <span className="block font-mono text-xs font-normal text-slate-600">
+                          {c.type}
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((row, i) => (
+                    <tr
+                      key={i}
+                      className="even:bg-slate-50 hover:bg-cyan-50 [&>td]:border-b [&>td]:border-slate-100"
+                    >
+                      {row.map((cell, j) => {
+                        const long =
+                          !cell.null &&
+                          (Array.from(cell.text).length > 48 || cell.text.includes("\n"));
+                        return (
+                          <td
+                            key={j}
+                            className={`px-3 py-2 align-top font-mono text-[13px] leading-5 text-slate-900 ${long ? "min-w-64 max-w-md" : "whitespace-nowrap"}`}
+                          >
+                            {cell.null ? (
+                              <span className="italic text-slate-600">NULL</span>
+                            ) : (
+                              <span
+                                className={
+                                  long
+                                    ? cell.binary
+                                      ? "break-all"
+                                      : "whitespace-pre-wrap break-words"
+                                    : "whitespace-pre"
+                                }
+                              >
+                                {cell.text}
+                              </span>
+                            )}
+                            {cell.truncated && (
+                              <span className="ml-1 font-sans text-xs text-cyan-800">
+                                … truncated
+                              </span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!data.rows.length && (
+                <p className="p-6 text-sm text-slate-600">No rows on this page.</p>
+              )}
+            </div>
+            <nav
+              aria-label="Pages"
+              className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm"
+            >
+              <span className="text-slate-700 tabular-nums">
+                {data.rows.length ? `Rows ${from}–${to}` : ""}
+              </span>
+              <span className="flex gap-2">
+                {data.offset > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onPage(Math.max(0, data.offset - data.limit), data.limit)}
+                    className={styles.button}
+                  >
+                    Previous
+                  </button>
+                )}
+                {data.has_next && (
+                  <button
+                    type="button"
+                    onClick={() => onPage(data.offset + data.limit, data.limit)}
+                    className={styles.button}
+                  >
+                    Next
+                  </button>
+                )}
+              </span>
+            </nav>
           </div>
-          <nav
-            aria-label="Pages"
-            className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm"
-          >
-            <span className="text-slate-700 tabular-nums">
-              {data.rows.length ? `Rows ${from}–${to}` : ""}
-            </span>
-            <span className="flex gap-2">
-              {data.offset > 0 && (
-                <button
-                  type="button"
-                  onClick={() => onPage(Math.max(0, data.offset - data.limit), data.limit)}
-                  className={styles.button}
-                >
-                  Previous
-                </button>
-              )}
-              {data.has_next && (
-                <button
-                  type="button"
-                  onClick={() => onPage(data.offset + data.limit, data.limit)}
-                  className={styles.button}
-                >
-                  Next
-                </button>
-              )}
-            </span>
-          </nav>
         </>
       )}
     </div>
