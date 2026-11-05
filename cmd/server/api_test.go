@@ -8,6 +8,7 @@ import (
 
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
+	"sqlwise/internal/database"
 	"sqlwise/internal/migration"
 )
 
@@ -37,13 +38,26 @@ func TestAPIRegistrationGuardsAllFeatures(t *testing.T) {
 	if err := migration.NewStore(f.pool).ApplySchema(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	cipher, err := database.NewCipher("I7fWIhEZr5Q+tMLSjrP1LXprBoDi1Iz65M5fQ4oPbr4=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := database.NewStore(f.pool, cipher)
+	pools := database.NewPools(store)
+	t.Cleanup(pools.Close)
 	router := newAPIRouter(service, policy)
-	registerDatabaseAPIRoutes(router, service, policy, f.pool, databaseTargets{})
+	registerDatabaseAPIRoutes(router, service, policy, f.pool, databaseTargets{store: store, pools: pools})
 	for _, test := range []struct{ method, path string }{
 		{"GET", "/api/v1/auth/session"},
 		{"POST", "/api/v1/auth/logout"},
 		{"GET", "/api/v1/admin/users"},
 		{"POST", "/api/v1/admin/groups"},
+		{"GET", "/api/v1/admin/databases"},
+		{"POST", "/api/v1/admin/databases/a/test"},
+		{"GET", "/api/v1/databases"},
+		{"GET", "/api/v1/databases/a"},
+		{"GET", "/api/v1/databases/a/tables/b"},
+		{"POST", "/api/v1/databases/a/explain"},
 		{"GET", "/api/v1/databases/a/migrations"},
 		{"PATCH", "/api/v1/databases/a/migrations/b"},
 		{"POST", "/api/v1/databases/a/migrations/b/execute"},
