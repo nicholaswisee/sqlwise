@@ -51,6 +51,12 @@ jobs:
       - name: Check frontend
         run: vp check
 
+      - name: Check SPA types
+        run: vp run spa:check
+
+      - name: Test SPA
+        run: vp run spa:test
+
       - name: Generate templ
         run: go tool templ generate
 
@@ -78,8 +84,41 @@ jobs:
       - name: Build assets
         run: vp build
 
+      - name: Build static SPA
+        run: vp run spa:build
+
       - name: Build Go server
         run: go build -o bin/sqlwise ./cmd/server
 
       - name: Build administrator setup
         run: go build -o bin/sqlwise-admin ./cmd/admin
+
+      - name: SPA browser tests through Go static serving
+        env:
+          APP_ENV: production
+          DATABASE_URL: postgres://sqlwise_test:sqlwise_ci_only@localhost:5432/sqlwise_test?sslmode=disable
+          SQLWISE_CONNECTION_KEY: I7fWIhEZr5Q+tMLSjrP1LXprBoDi1Iz65M5fQ4oPbr4=
+          SQLWISE_E2E_URL: http://localhost:8080
+          SQLWISE_E2E_USERNAME: admin
+          SQLWISE_E2E_PASSWORD: SqlwiseAdminLocal2026!
+        run: |
+          vp exec playwright install --with-deps chromium
+          printf '%s' "$SQLWISE_E2E_PASSWORD" | ./bin/sqlwise-admin -username "$SQLWISE_E2E_USERNAME" -password-stdin -if-not-exists
+          ./bin/sqlwise > "$RUNNER_TEMP/sqlwise-spa.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://localhost:8080/health; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://localhost:8080/health
+          env -u SQLWISE_E2E_URL vp run spa:e2e
+          vp run spa:e2e
+
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spa-browser-results
+          path: web/spa/test-results/
+          if-no-files-found: ignore

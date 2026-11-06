@@ -1,2 +1,7 @@
 sqlwise_bootstrap_agent.md
 sqlwise_bonus_scaffold_agent.md
+web/spa/dist/
+web/spa/.tanstack/
+web/spa/src/routeTree.gen.ts
+web/spa/test-results/
+web/spa/playwright-report/

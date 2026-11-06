@@ -1,5 +1,9 @@
 node_modules/
 web/dist/
+web/spa/dist/
+web/spa/.tanstack/
+web/spa/test-results/
+web/spa/playwright-report/
 coverage/
 bin/
 tmp/
