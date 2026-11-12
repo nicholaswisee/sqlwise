@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"sqlwise/internal/auth"
+	"sqlwise/internal/telemetry"
 )
 
 // RequireSession binds the originally presented evidence, never its replacement.
@@ -55,6 +56,9 @@ func (h *Auth) requireSession(readOnly bool) gin.HandlerFunc {
 		if err != nil {
 			h.sessionFailure(c, err)
 			return
+		}
+		if actor, ok := auth.UserIDFromContext(ctx); ok {
+			ctx = telemetry.WithActor(ctx, actor)
 		}
 		// Rotation is committed; preserve its winner even if fresh validation fails.
 		h.setReplacement(c, session.Replacement)
