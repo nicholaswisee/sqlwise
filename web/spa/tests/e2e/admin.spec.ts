@@ -198,3 +198,45 @@ test("admin route document titles match their legacy page titles", async ({ page
     await expect(page).toHaveTitle(title);
   }
 });
+
+test("group leader selection shows eligible members and can be cleared", async ({ page }) => {
+  await mockSession(page);
+  let leaderId = "";
+  const groupData = () => ({
+    ...snapshot,
+    users: [
+      { id: "user-1", username: "member", active: true, is_platform_admin: false },
+      { id: "user-2", username: "inactive", active: false, is_platform_admin: false },
+    ],
+    groups: [{ id: "g1", name: "Operations", active: true, leader_user_id: leaderId }],
+    selected_group: { id: "g1", name: "Operations", active: true, leader_user_id: leaderId },
+    memberships: [
+      { group_id: "g1", user_id: "user-1", username: "member", group_name: "Operations" },
+      { group_id: "g1", user_id: "user-2", username: "inactive", group_name: "Operations" },
+    ],
+  });
+  await page.route("**/api/v1/admin/groups/g1/members", (route) =>
+    route.fulfill(envelope(groupData())),
+  );
+  await page.route("**/api/v1/admin/groups/g1/leader", (route) => {
+    expect(route.request().method()).toBe("POST");
+    leaderId = route.request().postDataJSON().user_id;
+    return route.fulfill(envelope(groupData()));
+  });
+
+  await page.goto("/admin/groups/g1/members");
+  await expect(page.getByText("No leader assigned.", { exact: false })).toBeVisible();
+  const selector = page.getByRole("combobox", { name: "Leader" });
+  await expect(selector.locator("option")).toHaveCount(2);
+  await selector.selectOption("user-1");
+  await page.getByRole("button", { name: "Save leader" }).click();
+  await expect(page.getByText("Changes saved successfully.")).toBeVisible();
+  await expect(selector).toHaveValue("user-1");
+  await selector.selectOption("");
+  await page.getByRole("button", { name: "Save leader" }).click();
+  await expect(selector).toHaveValue("");
+  expect(leaderId).toBe("");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});

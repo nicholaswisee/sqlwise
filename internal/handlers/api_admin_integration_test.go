@@ -153,6 +153,23 @@ func TestAdminAPIPostgresMutationAndAuthorization(t *testing.T) {
 	if member.Code != http.StatusOK || !strings.Contains(member.Body.String(), userID) {
 		t.Fatalf("add member status=%d body=%s", member.Code, member.Body)
 	}
+	leaderPath := "/api/v1/admin/groups/" + groupID + "/leader"
+	missingLeader := apiIntegrationRequest(t, r, http.MethodPost, leaderPath, `{}`, &adminCookie, csrf)
+	if missingLeader.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing leader field status=%d body=%s", missingLeader.Code, missingLeader.Body)
+	}
+	setLeader := apiIntegrationRequest(t, r, http.MethodPost, leaderPath, `{"user_id":"`+userID+`"}`, &adminCookie, csrf)
+	if setLeader.Code != http.StatusOK || !strings.Contains(setLeader.Body.String(), `"leader_user_id":"`+userID+`"`) {
+		t.Fatalf("set leader status=%d body=%s", setLeader.Code, setLeader.Body)
+	}
+	clearLeader := apiIntegrationRequest(t, r, http.MethodPost, leaderPath, `{"user_id":""}`, &adminCookie, csrf)
+	if clearLeader.Code != http.StatusOK || !strings.Contains(clearLeader.Body.String(), `"leader_user_id":""`) {
+		t.Fatalf("clear leader status=%d body=%s", clearLeader.Code, clearLeader.Body)
+	}
+	setLeader = apiIntegrationRequest(t, r, http.MethodPost, leaderPath, `{"user_id":"`+userID+`"}`, &adminCookie, csrf)
+	if setLeader.Code != http.StatusOK {
+		t.Fatalf("restore leader status=%d body=%s", setLeader.Code, setLeader.Body)
+	}
 	for _, tc := range []struct{ path, body, want string }{
 		{"/api/v1/admin/groups/" + groupID, `{"name":"renamed operators"}`, "renamed operators"},
 		{"/api/v1/admin/groups/" + groupID + "/active", `{"active":false}`, `"active":false`},
@@ -172,6 +189,9 @@ func TestAdminAPIPostgresMutationAndAuthorization(t *testing.T) {
 	if removedMember.Code != http.StatusOK || json.Unmarshal(removedMember.Body.Bytes(), &memberSnapshot) != nil || len(memberSnapshot.Data.Memberships) != 0 {
 		t.Fatalf("remove member status=%d body=%s", removedMember.Code, removedMember.Body)
 	}
+	if !strings.Contains(removedMember.Body.String(), `"leader_user_id":""`) {
+		t.Fatalf("removed member remains leader: %s", removedMember.Body)
+	}
 
 	bad := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/users/"+userID, `{"username":""}`, &adminCookie, csrf)
 	if bad.Code != http.StatusUnprocessableEntity {
@@ -181,6 +201,10 @@ func TestAdminAPIPostgresMutationAndAuthorization(t *testing.T) {
 	denied := apiIntegrationRequest(t, r, http.MethodGet, "/api/v1/admin/users", "", &userCookie, userCSRF)
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("non-admin status=%d body=%s", denied.Code, denied.Body)
+	}
+	denied = apiIntegrationRequest(t, r, http.MethodPost, leaderPath, `{"user_id":""}`, &userCookie, userCSRF)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("non-admin leader status=%d body=%s", denied.Code, denied.Body)
 	}
 	adminCookie, csrf = apiIntegrationLogin(t, r, "api-admin", "a sufficiently long admin password")
 	self := apiIntegrationRequest(t, r, http.MethodPost, "/api/v1/admin/users/"+adminID+"/admin", `{"admin":false}`, &adminCookie, csrf)

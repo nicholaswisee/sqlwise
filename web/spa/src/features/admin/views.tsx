@@ -614,12 +614,14 @@ export interface MembersViewProps extends ViewStatus {
   connectionsAvailable: boolean;
   onAdd: FormAction;
   onRemove: (userId: string) => void | Promise<void>;
+  onLeader: FormAction;
 }
 export function MembersView({
   data,
   connectionsAvailable,
   onAdd,
   onRemove,
+  onLeader,
   message,
   error,
   pending = false,
@@ -636,6 +638,7 @@ export function MembersView({
       </AdminShell>
     );
   const memberships = data.memberships.filter((row) => row.group_id === group.id);
+  const leader = data.users.find((user) => user.id === group.leader_user_id);
   return (
     <AdminShell title="Group members" connectionsAvailable={connectionsAvailable}>
       <main>
@@ -650,6 +653,47 @@ export function MembersView({
           Adding or removing membership changes effective database access.
         </p>
         <Feedback status={{ message, error, refreshNeeded, onRefresh }} />
+        <section className={`${wsPanel} mt-6 p-5`}>
+          <h2 className={wsSubhead}>Group leader</h2>
+          <p className={`${wsMuted} mt-2`}>
+            {leader
+              ? `${leader.username}${leader.active ? "" : " (inactive; approvals are blocked until an active member is assigned)"}`
+              : "No leader assigned. Approvals for this group are blocked until an active member is assigned."}
+          </p>
+          <form onSubmit={stopSubmit(onLeader)} className="mt-4 flex flex-wrap items-end gap-3">
+            <div className="min-w-0 flex-[1_1_12rem] space-y-1.5">
+              <label htmlFor="group-leader" className={wsLabel}>
+                Leader
+              </label>
+              <select
+                id="group-leader"
+                name="user_id"
+                className={`${wsSelect} w-full`}
+                defaultValue={group.leader_user_id}
+                key={group.leader_user_id}
+              >
+                <option value="">No leader</option>
+                {leader && !leader.active && (
+                  <option value={leader.id} disabled>
+                    {leader.username} (inactive)
+                  </option>
+                )}
+                {memberships
+                  .filter((member) =>
+                    data.users.some((user) => user.id === member.user_id && user.active),
+                  )
+                  .map((member) => (
+                    <option key={member.user_id} value={member.user_id}>
+                      {member.username}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <Submit primary pending={pending}>
+              Save leader
+            </Submit>
+          </form>
+        </section>
         <div className="mt-6 flex flex-wrap items-start gap-6">
           <section className={`${wsPanel} min-w-0 flex-[1_1_18rem] p-5`}>
             <h2 className={wsSubhead}>Add member</h2>

@@ -16,9 +16,10 @@ type apiAdminUser struct {
 	IsPlatformAdmin bool   `json:"is_platform_admin"`
 }
 type apiAdminGroup struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Active bool   `json:"active"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Active       bool   `json:"active"`
+	LeaderUserID string `json:"leader_user_id"`
 }
 type apiAdminDatabase struct {
 	ID     string `json:"id"`
@@ -60,6 +61,7 @@ func (h *AccessAdmin) RegisterAPI(router *gin.Engine) {
 	a.POST("/groups/:id", h.apiUpdateGroup)
 	a.POST("/groups/:id/disable", h.apiDisableGroup)
 	a.POST("/groups/:id/active", h.apiGroupActive)
+	a.POST("/groups/:id/leader", h.apiSetGroupLeader)
 	a.GET("/groups/:id/members", h.apiMembers)
 	a.POST("/groups/:id/members", h.apiAddMember)
 	a.POST("/groups/:id/members/remove", h.apiRemoveMember)
@@ -88,7 +90,7 @@ func (h *AccessAdmin) apiSnapshot(c *gin.Context, groupID string) {
 		dto.Users = append(dto.Users, apiAdminUser{x.ID, x.Username, x.Active, x.IsPlatformAdmin})
 	}
 	for _, x := range data.Groups {
-		dto.Groups = append(dto.Groups, apiAdminGroup{x.ID, x.Name, x.Active})
+		dto.Groups = append(dto.Groups, apiAdminGroup{x.ID, x.Name, x.Active, x.LeaderUserID})
 	}
 	for _, x := range data.Databases {
 		dto.Databases = append(dto.Databases, apiAdminDatabase{x.ID, x.Name, x.Active})
@@ -100,7 +102,7 @@ func (h *AccessAdmin) apiSnapshot(c *gin.Context, groupID string) {
 		dto.Grants = append(dto.Grants, apiAdminGrant{x.GroupID, x.DatabaseID, x.GroupName, x.DatabaseName, x.Permission})
 	}
 	if data.SelectedGroup.ID != "" {
-		dto.SelectedGroup = &apiAdminGroup{data.SelectedGroup.ID, data.SelectedGroup.Name, data.SelectedGroup.Active}
+		dto.SelectedGroup = &apiAdminGroup{data.SelectedGroup.ID, data.SelectedGroup.Name, data.SelectedGroup.Active, data.SelectedGroup.LeaderUserID}
 	}
 	apiData(c, dto)
 }
@@ -235,6 +237,19 @@ func (h *AccessAdmin) apiGroupActive(c *gin.Context) {
 		return
 	}
 	h.apiMutate(c, "", h.policy.SetGroupActive(c.Request.Context(), c.Param("id"), *in.Active))
+}
+func (h *AccessAdmin) apiSetGroupLeader(c *gin.Context) {
+	var in struct {
+		UserID *string `json:"user_id"`
+	}
+	if !apiDecode(c, &in) {
+		return
+	}
+	if in.UserID == nil {
+		apiError(c, 422, "invalid_input", "User ID is required; use an empty value to clear the leader.")
+		return
+	}
+	h.apiMutate(c, c.Param("id"), h.policy.SetGroupLeader(c.Request.Context(), c.Param("id"), *in.UserID))
 }
 func (h *AccessAdmin) apiAddMember(c *gin.Context) {
 	var in struct {
