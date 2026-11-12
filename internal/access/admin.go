@@ -66,13 +66,14 @@ func (s *Service) AdminSnapshot(ctx context.Context) (AdminSnapshot, error) {
 			return err
 		}
 		rows.Close()
-		rows, err = tx.Query(ctx, `SELECT id,name,active FROM groups ORDER BY name,id`)
+		rows, err = tx.Query(ctx, `SELECT g.id,g.name,g.active,COALESCE(l.user_id,'')
+			FROM groups g LEFT JOIN group_leaders l ON l.group_id=g.id ORDER BY g.name,g.id`)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var g Group
-			if err := rows.Scan(&g.ID, &g.Name, &g.Active); err != nil {
+			if err := rows.Scan(&g.ID, &g.Name, &g.Active, &g.LeaderUserID); err != nil {
 				rows.Close()
 				return err
 			}

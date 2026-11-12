@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS group_memberships (
     PRIMARY KEY (user_id, group_id)
 );
 
+CREATE TABLE IF NOT EXISTS group_leaders (
+    group_id text PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+    user_id text NOT NULL,
+    FOREIGN KEY (user_id, group_id) REFERENCES group_memberships(user_id, group_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS group_database_grants (
     group_id text NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     database_id text NOT NULL REFERENCES database_registrations(id),

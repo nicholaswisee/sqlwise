@@ -22,9 +22,38 @@ var (
 )
 
 type Group struct {
-	ID     string
-	Name   string
-	Active bool
+	ID           string
+	Name         string
+	Active       bool
+	LeaderUserID string
+}
+
+func (s *Service) SetGroupLeader(ctx context.Context, groupID, userID string) error {
+	return s.mutatePolicy(ctx, func(tx pgx.Tx, _ time.Time) error {
+		if err := policyResource(ctx, tx, "groups", groupID); err != nil {
+			return err
+		}
+		if userID == "" {
+			_, err := tx.Exec(ctx, `DELETE FROM group_leaders WHERE group_id=$1`, groupID)
+			return err
+		}
+		if err := policyResource(ctx, tx, "users", userID); err != nil {
+			return err
+		}
+		var eligible bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(
+			SELECT 1 FROM group_memberships m JOIN users u ON u.id=m.user_id
+			JOIN groups g ON g.id=m.group_id
+			WHERE m.group_id=$1 AND m.user_id=$2 AND u.active AND g.active)`, groupID, userID).Scan(&eligible); err != nil {
+			return err
+		}
+		if !eligible {
+			return ErrInvalidInput
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO group_leaders(group_id,user_id) VALUES($1,$2)
+			ON CONFLICT(group_id) DO UPDATE SET user_id=EXCLUDED.user_id`, groupID, userID)
+		return err
+	})
 }
 
 func (s *Service) mutatePolicy(ctx context.Context, mutate func(pgx.Tx, time.Time) error) error {
