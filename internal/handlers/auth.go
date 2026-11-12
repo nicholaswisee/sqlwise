@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
+	"sqlwise/internal/telemetry"
 	"sqlwise/internal/web/views"
 )
 
@@ -81,6 +82,7 @@ func (h *Auth) login(c *gin.Context) {
 		h.failure(c, err)
 		return
 	}
+	c.Request = c.Request.WithContext(telemetry.WithActor(c.Request.Context(), issued.Principal.UserID))
 	h.setCookie(c, &http.Cookie{Name: sessionCookie, Value: issued.Token, Expires: issued.ExpiresAt, MaxAge: int(auth.SessionLifetime.Seconds())})
 	h.setCookie(c, &http.Cookie{Name: loginCookie, MaxAge: -1, Expires: time.Unix(1, 0)})
 	c.Redirect(http.StatusSeeOther, "/account")

@@ -60,6 +60,14 @@ func TestApplySchemaEnforcesGroupAndGrantConstraints(t *testing.T) {
 	}
 	_, err = pool.Exec(t.Context(), `INSERT INTO group_memberships (user_id, group_id) VALUES ('u1', 'g1')`)
 	requireSQLState(t, err, "23505")
+	_, err = pool.Exec(t.Context(), `INSERT INTO group_leaders(group_id,user_id) VALUES('g1','u-missing')`)
+	requireSQLState(t, err, "23503")
+	_, err = pool.Exec(t.Context(), `INSERT INTO group_leaders(group_id,user_id) VALUES('g1','u1')`)
+	if err != nil {
+		t.Fatal("insert leader:", err)
+	}
+	_, err = pool.Exec(t.Context(), `INSERT INTO group_leaders(group_id,user_id) VALUES('g1','u1')`)
+	requireSQLState(t, err, "23505")
 
 	_, err = pool.Exec(t.Context(), `INSERT INTO group_database_grants (group_id, database_id, permission) VALUES ('g-missing', 'db1', 'view')`)
 	requireSQLState(t, err, "23503")
@@ -109,7 +117,7 @@ func TestApplySchemaIsIdempotentAndPreservesData(t *testing.T) {
 			t.Fatal("reapply access schema:", err)
 		}
 	}
-	for table, want := range map[string]int{"users": 1, "auth_sessions": 1, "database_registrations": 1, "groups": 1, "group_memberships": 1, "group_database_grants": 1} {
+	for table, want := range map[string]int{"users": 1, "auth_sessions": 1, "database_registrations": 1, "groups": 1, "group_memberships": 1, "group_leaders": 0, "group_database_grants": 1} {
 		var count int
 		if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM "+table).Scan(&count); err != nil || count != want {
 			t.Errorf("%s count = %d, %v; want %d", table, count, err, want)

@@ -1,0 +1,52 @@
+{
+  "uid": "sqlwise-api",
+  "title": "SQLWise API",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP requests per second",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum by (route, status) (rate(sqlwise_http_requests_total[5m]))", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "HTTP p95 duration",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(sqlwise_http_request_duration_seconds_bucket[5m])))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Platform database connections",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "sqlwise_db_pool_active_connections", "legendFormat": "active", "refId": "A" },
+        { "expr": "sqlwise_db_pool_idle_connections", "legendFormat": "idle", "refId": "B" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Platform pool acquisition time",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [{ "expr": "rate(sqlwise_db_pool_acquire_seconds_total[5m])", "refId": "A" }]
+    }
+  ]
+}

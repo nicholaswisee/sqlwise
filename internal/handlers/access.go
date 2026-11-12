@@ -122,7 +122,7 @@ func accessPageData(snapshot access.AdminSnapshot, session auth.Session, groupID
 		users[user.ID] = user.Username
 	}
 	for _, group := range snapshot.Groups {
-		viewGroup := views.AccessGroup{ID: group.ID, Name: group.Name, Active: group.Active}
+		viewGroup := views.AccessGroup{ID: group.ID, Name: group.Name, Active: group.Active, LeaderUserID: group.LeaderUserID}
 		data.Groups = append(data.Groups, viewGroup)
 		groups[group.ID] = group.Name
 		if group.ID == groupID {

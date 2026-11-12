@@ -11,6 +11,7 @@ export interface AdminGroup {
   id: string;
   name: string;
   active: boolean;
+  leader_user_id: string;
 }
 
 export interface AdminDatabase {

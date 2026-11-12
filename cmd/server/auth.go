@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"sqlwise/internal/auth"
+	"sqlwise/internal/telemetry"
 )
 
 func connectAuth() (*auth.Service, *pgxpool.Pool, error) {
@@ -23,6 +24,7 @@ func connectAuth() (*auth.Service, *pgxpool.Pool, error) {
 	config.MaxConnLifetime = 30 * time.Minute
 	config.MaxConnIdleTime = 5 * time.Minute
 	config.ConnConfig.ConnectTimeout = 5 * time.Second
+	config.ConnConfig.Tracer = telemetry.PGXTracer{}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pool, err := pgxpool.NewWithConfig(ctx, config)
@@ -38,9 +40,10 @@ func connectAuth() (*auth.Service, *pgxpool.Pool, error) {
 		pool.Close()
 		return nil, nil, errors.New("authentication schema unavailable; run go run ./cmd/admin -schema-only")
 	}
-	if _, err := pool.Exec(ctx, `SELECT g.id,g.name,g.active,m.user_id,
+	if _, err := pool.Exec(ctx, `SELECT g.id,g.name,g.active,m.user_id,l.user_id,
 		d.id,d.name,d.active,x.permission FROM groups g
 		LEFT JOIN group_memberships m ON m.group_id=g.id
+		LEFT JOIN group_leaders l ON l.group_id=g.id
 		LEFT JOIN group_database_grants x ON x.group_id=g.id
 		LEFT JOIN database_registrations d ON d.id=x.database_id LIMIT 0`); err != nil {
 		pool.Close()

@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: SQLWise
+    orgId: 1
+    folder: SQLWise
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards/sqlwise

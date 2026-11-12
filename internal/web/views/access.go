@@ -8,8 +8,8 @@ type AccessUser struct {
 	IsPlatformAdmin bool
 }
 type AccessGroup struct {
-	ID, Name string
-	Active   bool
+	ID, Name, LeaderUserID string
+	Active                 bool
 }
 type AccessDatabase struct {
 	ID, Name string

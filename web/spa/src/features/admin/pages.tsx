@@ -238,6 +238,13 @@ export function MembersPage({ groupId }: { groupId: string }) {
           true,
         )
       }
+      onLeader={(form) =>
+        run(
+          `/admin/groups/${encodeURIComponent(groupId)}/leader`,
+          { user_id: field(form, "user_id") },
+          true,
+        )
+      }
     />
   );
 }

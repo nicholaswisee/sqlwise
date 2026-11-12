@@ -9,7 +9,7 @@ import (
 
 func TestRegisteredProtectedRoutesRequireSession(t *testing.T) {
 	f := newAuthFixture(t)
-	public := map[string]bool{"GET /": true, "GET /health": true, "GET /login": true, "POST /login": true}
+	public := map[string]bool{"GET /": true, "GET /health": true, "GET /metrics": true, "GET /login": true, "POST /login": true}
 	seenRequired := map[string]bool{}
 	invalid := &http.Cookie{Name: "sqlwise_session", Value: base64.RawURLEncoding.EncodeToString(make([]byte, 32))}
 
