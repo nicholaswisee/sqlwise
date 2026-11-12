@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -12,10 +12,16 @@ import (
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
 	"sqlwise/internal/handlers"
+	"sqlwise/internal/telemetry"
 	"sqlwise/internal/web/views"
 )
 
 func main() {
+	shutdownTelemetry, err := telemetry.Start(context.Background(), "sqlwise-api", os.Stdout)
+	if err != nil {
+		log.Fatal("initialize telemetry: ", err)
+	}
+	defer shutdownTelemetry(context.Background())
 	if os.Getenv("APP_ENV") == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -24,6 +30,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+	telemetry.BindPlatformPool(pool)
 	if err := checkMigrationSchema(pool); err != nil {
 		log.Fatal(err)
 	}
@@ -65,9 +72,7 @@ func newHTTPRouter() *gin.Engine {
 	if err := router.SetTrustedProxies(nil); err != nil {
 		panic(err)
 	}
-	router.Use(gin.LoggerWithFormatter(func(p gin.LogFormatterParams) string {
-		return fmt.Sprintf("http method=%s status=%d\n", p.Method, p.StatusCode)
-	}), func(c *gin.Context) {
+	router.Use(telemetry.HTTPMiddleware(), func(c *gin.Context) {
 		defer func() {
 			if recover() != nil {
 				log.Print("http request failed")
@@ -84,6 +89,7 @@ func newHTTPRouter() *gin.Engine {
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"service": "sqlwise", "status": "ok"})
 	})
+	router.GET("/metrics", gin.WrapH(telemetry.MetricsHandler()))
 	return router
 }
 

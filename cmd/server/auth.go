@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"sqlwise/internal/auth"
+	"sqlwise/internal/telemetry"
 )
 
 func connectAuth() (*auth.Service, *pgxpool.Pool, error) {
@@ -23,6 +24,7 @@ func connectAuth() (*auth.Service, *pgxpool.Pool, error) {
 	config.MaxConnLifetime = 30 * time.Minute
 	config.MaxConnIdleTime = 5 * time.Minute
 	config.ConnConfig.ConnectTimeout = 5 * time.Second
+	config.ConnConfig.Tracer = telemetry.PGXTracer{}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pool, err := pgxpool.NewWithConfig(ctx, config)
