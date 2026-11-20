@@ -1,9 +1,10 @@
 import { expect, test } from "vite-plus/test";
 import {
-  executePreconditions,
   formatDate,
-  isAttempt,
+  jobFinished,
+  outcomeLabel,
   planIsStale,
+  requestPreconditions,
   shortHash,
   statusLabel,
   versionLabel,
@@ -16,21 +17,23 @@ test("migration dates use the server display format and unfinished dates stay ex
   expect(formatDate("not a date")).toBe("N/A");
 });
 
-test("execution preconditions preserve the API field names and saved SQL hash", () => {
-  const draft = { revision: 7, sql_hash: "saved-hash" } as Draft;
-  expect(executePreconditions(draft, 12)).toEqual({
+test("review requests pin the saved definition, revision and expected version", () => {
+  const draft = { revision: 7, definition_hash: "definition-hash", sql_hash: "up-only" } as Draft;
+  expect(requestPreconditions(draft, 12, "rollback")).toEqual({
+    operation: "rollback",
     expected_revision: 7,
+    expected_definition_hash: "definition-hash",
     expected_version: 12,
-    expected_sql_hash: "saved-hash",
   });
 });
 
-test("failed plan requests cannot make a prior plan appear current and error attempts are narrowed", () => {
+test("stale plans are flagged and only finished jobs stop polling", () => {
   expect(planIsStale("old SQL", "edited SQL")).toBe(true);
   expect(planIsStale("edited SQL", "edited SQL")).toBe(false);
-  expect(isAttempt({ id: "attempt", status: "failed" })).toBe(true);
-  expect(isAttempt({ id: 3, status: "failed" })).toBe(false);
-  expect(isAttempt(undefined)).toBe(false);
+  expect(jobFinished({ status: "queued" })).toBe(false);
+  expect(jobFinished({ status: "running" })).toBe(false);
+  expect(jobFinished({ status: "failed" })).toBe(true);
+  expect(jobFinished(undefined)).toBe(false);
 });
 
 test("migration history labels match the server helpers", () => {
@@ -39,4 +42,5 @@ test("migration history labels match the server helpers", () => {
   expect(versionLabel(4)).toBe("v4");
   expect(statusLabel("partially_applied")).toBe("Partially applied");
   expect(statusLabel("unknown")).toBe("Outcome unknown");
+  expect(outcomeLabel({ operation: "rollback", applied_version: 2 })).toBe("Rolled back as v2");
 });

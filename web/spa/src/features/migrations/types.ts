@@ -5,6 +5,11 @@ export type Draft = {
   database_id: string;
   title: string;
   sql: string;
+  sql_down: string;
+  irreversible: boolean;
+  irreversible_reason: string;
+  definition_hash: string;
+  executed: boolean;
   sql_hash: string;
   dialect: string;
   revision: number;
@@ -21,6 +26,9 @@ export type Attempt = {
   database_id: string;
   migration_id: string;
   migration_title: string;
+  operation: Operation;
+  request_id?: string;
+  cancels_execution_id?: string;
   draft_revision: number;
   candidate_version: number;
   applied_version: number;
@@ -41,12 +49,17 @@ export type History = {
   current_version: number;
   drafts: Draft[];
   attempts: Attempt[];
+  committed: Attempt[];
+  head: Head;
 };
 export type Detail = {
   workspace: WorkspaceDTO;
   current_version: number;
   draft: Draft;
   attempts: Attempt[];
+  requests: Request[];
+  eligible: Operation[];
+  head: Head;
   blocked: string;
   blocked_by?: Attempt | null;
 };
@@ -58,4 +71,45 @@ export type Proposal = {
   requires_review: boolean;
   changes: { text: string; destructive: boolean }[];
 };
-export type AttemptError = { attempt?: unknown };
+export type Operation = "up" | "rollback" | "forward";
+export type Head = {
+  active: { migration_id: string; execution_id: string }[];
+  pending: { migration_id: string; execution_id: string }[];
+};
+export type Approval = {
+  group_id: string;
+  group_name: string;
+  permission: string;
+  leader_name: string;
+  leader_active: boolean;
+  decision: "" | "approved" | "rejected";
+  decided_by?: string;
+  decided_at?: string | null;
+  can_decide: boolean;
+};
+export type Request = {
+  id: string;
+  migration_id: string;
+  migration_title: string;
+  operation: Operation;
+  definition_revision: number;
+  definition_hash: string;
+  expected_version: number;
+  cancels_execution_id?: string;
+  requested_by_name: string;
+  status: "draft" | "pending_review" | "approved" | "rejected" | "queued";
+  review_round: number;
+  stale?: string;
+  execution_id?: string;
+  approvals: Approval[];
+  execution: Attempt | null;
+  created_at: string;
+  updated_at: string;
+};
+export type Job = {
+  job_id: string;
+  request_id: string;
+  execution_id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  error?: string;
+};

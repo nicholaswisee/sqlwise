@@ -38,24 +38,36 @@ export function statusClass(status: string): string {
   );
 }
 
-export function executePreconditions(draft: Draft, currentVersion: number) {
+export function requestPreconditions(draft: Draft, currentVersion: number, operation: Operation) {
   return {
+    operation,
     expected_revision: draft.revision,
+    expected_definition_hash: draft.definition_hash,
     expected_version: currentVersion,
-    expected_sql_hash: draft.sql_hash,
   };
 }
 
-export function isAttempt(value: unknown): value is Attempt {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as Attempt).id === "string" &&
-    typeof (value as Attempt).status === "string"
-  );
+export function operationLabel(operation: Operation): string {
+  return { up: "Apply", rollback: "Roll back", forward: "Forward" }[operation];
+}
+export function outcomeLabel(attempt: Pick<Attempt, "operation" | "applied_version">): string {
+  const verb = { up: "Applied", rollback: "Rolled back", forward: "Forwarded" }[attempt.operation];
+  return `${verb} as ${versionLabel(attempt.applied_version)}`;
+}
+export function requestStatusLabel(status: Request["status"]): string {
+  return {
+    draft: "Not submitted",
+    pending_review: "Waiting for review",
+    approved: "Approved",
+    rejected: "Rejected",
+    queued: "Queued for execution",
+  }[status];
+}
+export function jobFinished(job: Pick<Job, "status"> | undefined): boolean {
+  return job?.status === "succeeded" || job?.status === "failed";
 }
 
 export function planIsStale(plannedSQL: string | undefined, currentSQL: string): boolean {
   return plannedSQL !== undefined && plannedSQL !== currentSQL;
 }
-import type { Attempt, Draft } from "./types";
+import type { Attempt, Draft, Job, Operation, Request } from "./types";

@@ -7,12 +7,15 @@ import { styles } from "../../components/styles";
 import { WorkspaceShell } from "../../components/workspace";
 import { PlanPanel } from "../queryplan/views";
 import type { ExplainRequest, QueryPlan } from "../queryplan/types";
-import type { Attempt, AttemptError, Detail, Draft, History, Proposal } from "./types";
+import type { Attempt, Detail, Draft, History, Job, Operation, Proposal, Request } from "./types";
 import {
-  executePreconditions,
   formatDate,
-  isAttempt,
+  jobFinished,
+  operationLabel,
+  outcomeLabel,
   planIsStale,
+  requestPreconditions,
+  requestStatusLabel,
   shortHash,
   statusClass,
   statusLabel,
@@ -39,6 +42,7 @@ const path = (db: string, tail: string) => `/databases/${encodeURIComponent(db)}
 const statusChip =
   "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1";
 const keys = {
+  // Prefix of every history query, whichever rollback filter it uses.
   history: (db: string) => ["migrations", db] as const,
   detail: (db: string, id: string) => ["migration", db, id] as const,
   attempt: (db: string, id: string, attempt: string) =>
@@ -85,27 +89,96 @@ function Shell({
     </WorkspaceShell>
   );
 }
-function useHistory(db: string) {
+function useHistory(db: string, hideRollbacks = false) {
   const { api } = useAuthenticatedContext();
   return useQuery({
-    queryKey: keys.history(db),
+    queryKey: [...keys.history(db), { hideRollbacks }],
     queryFn: ({ signal }) =>
-      api.request<History>(`/databases/${encodeURIComponent(db)}/migrations`, { signal }),
+      api.request<History>(
+        `/databases/${encodeURIComponent(db)}/migrations${hideRollbacks ? "?hide_rollback=true" : ""}`,
+        { signal },
+      ),
+    placeholderData: (previous) => previous,
   });
+}
+type Rollback = Pick<Draft, "sql_down" | "irreversible" | "irreversible_reason">;
+const noRollback: Rollback = { sql_down: "", irreversible: false, irreversible_reason: "" };
+const codeArea =
+  "w-full rounded-lg border border-slate-300 bg-slate-50 p-3 font-mono text-sm leading-6 text-slate-900 hover:border-slate-400 focus-visible:border-cyan-700 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-cyan-700";
+function RollbackFields({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: Rollback;
+  onChange: (value: Rollback) => void;
+}) {
+  return (
+    <fieldset className="space-y-3">
+      <legend className={styles.label}>Rollback</legend>
+      <label className="flex min-h-11 items-center gap-2 text-sm text-slate-800">
+        <input
+          type="checkbox"
+          className="size-4 accent-cyan-700"
+          checked={value.irreversible}
+          onChange={(e) => onChange({ ...value, irreversible: e.target.checked })}
+        />
+        This migration cannot be rolled back
+      </label>
+      {value.irreversible ? (
+        <div className="space-y-1.5">
+          <label className={styles.label} htmlFor={`${id}-reason`}>
+            Why it cannot be rolled back
+          </label>
+          <input
+            id={`${id}-reason`}
+            required
+            maxLength={500}
+            value={value.irreversible_reason}
+            onChange={(e) => onChange({ ...value, irreversible_reason: e.target.value })}
+            className={styles.input}
+          />
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <label className={styles.label} htmlFor={`${id}-down`}>
+            SQL down
+          </label>
+          <p id={`${id}-down-help`} className="text-xs leading-5 text-slate-600">
+            Runs when this migration is rolled back. Required before execution is requested.
+          </p>
+          <textarea
+            id={`${id}-down`}
+            aria-describedby={`${id}-down-help`}
+            rows={6}
+            maxLength={262144}
+            spellCheck={false}
+            autoCapitalize="none"
+            value={value.sql_down}
+            onChange={(e) => onChange({ ...value, sql_down: e.target.value })}
+            className={codeArea}
+          />
+        </div>
+      )}
+    </fieldset>
+  );
 }
 function AttemptsTable({
   db,
   attempts,
   showMigration,
+  empty = "No executions yet.",
 }: {
   db: string;
   attempts: Attempt[];
   showMigration: boolean;
+  empty?: string;
 }) {
   if (!attempts.length)
     return (
       <p className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-600">
-        No executions yet.
+        {empty}
       </p>
     );
   return (
@@ -115,6 +188,7 @@ function AttemptsTable({
           <tr>
             {[
               "Version",
+              "Operation",
               "Status",
               ...(showMigration ? ["Migration"] : []),
               "Executor",
@@ -143,6 +217,9 @@ function AttemptsTable({
                     candidate {versionLabel(a.candidate_version)}
                   </span>
                 )}
+              </td>
+              <td className="border-b border-slate-100 px-4 py-2.5 align-top whitespace-nowrap text-slate-900">
+                {operationLabel(a.operation)}
               </td>
               <td className="border-b border-slate-100 px-4 py-2.5 align-top">
                 <Status value={a.status} />
@@ -194,14 +271,16 @@ function AttemptsTable({
 
 export function MigrationHistoryPage({ db }: { db: string }) {
   const { api } = useAuthenticatedContext();
-  const query = useHistory(db);
+  const [hideRollbacks, setHideRollbacks] = useState(false);
+  const query = useHistory(db, hideRollbacks);
   const [title, setTitle] = useState("");
   const [sql, setSQL] = useState("");
+  const [rollback, setRollback] = useState(noRollback);
   const [error, setError] = useState<unknown>();
   const navigate = useNavigate();
   const client = useQueryClient();
   const create = useMutation({
-    mutationFn: (input: { title: string; sql: string }) =>
+    mutationFn: (input: { title: string; sql: string } & Rollback) =>
       api.request<Draft>(`/databases/${encodeURIComponent(db)}/migrations`, {
         method: "POST",
         body: JSON.stringify(input),
@@ -210,6 +289,7 @@ export function MigrationHistoryPage({ db }: { db: string }) {
       setError(undefined);
       setTitle("");
       setSQL("");
+      setRollback(noRollback);
       await client.invalidateQueries({ queryKey: keys.history(db) });
       await navigate({ to: path(db, `migrations/${encodeURIComponent(draft.id)}`) as never });
     },
@@ -253,14 +333,14 @@ export function MigrationHistoryPage({ db }: { db: string }) {
               New migration
             </h2>
             <p className={`${styles.muted} mt-1 leading-6`}>
-              Saving creates a draft. Nothing runs until you review and execute it.
+              Saving creates a draft. Nothing runs until a review request is approved and executed.
             </p>
             <form
               className="mt-5 space-y-4"
               onSubmit={(e: FormEvent) => {
                 e.preventDefault();
                 setError(undefined);
-                create.mutate({ title, sql });
+                create.mutate({ title, sql, ...rollback });
               }}
             >
               <div className="space-y-1.5">
@@ -289,9 +369,10 @@ export function MigrationHistoryPage({ db }: { db: string }) {
                   autoCapitalize="none"
                   value={sql}
                   onChange={(e) => setSQL(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-slate-50 p-3 font-mono text-sm leading-6 text-slate-900 hover:border-slate-400 focus-visible:border-cyan-700 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-cyan-700"
+                  className={codeArea}
                 />
               </div>
+              <RollbackFields id="new" value={rollback} onChange={setRollback} />
               <ErrorBox error={error} />
               <button className={styles.primary} disabled={create.isPending}>
                 {create.isPending ? "Saving…" : "Save draft"}
@@ -330,7 +411,7 @@ export function MigrationHistoryPage({ db }: { db: string }) {
                     >
                       {d.applied_version > 0
                         ? `Applied as ${versionLabel(d.applied_version)}`
-                        : d.last_status
+                        : d.executed && d.last_status
                           ? `Draft, last attempt: ${statusLabel(d.last_status)}`
                           : "Draft"}
                     </span>
@@ -341,12 +422,51 @@ export function MigrationHistoryPage({ db }: { db: string }) {
           </section>
         </div>
       )}
+      {data.head.pending.length > 0 && (
+        <p className="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+          {data.head.pending.length} rolled-back{" "}
+          {data.head.pending.length === 1 ? "migration waits" : "migrations wait"} to be forwarded.
+          No new migration can be applied until then.
+        </p>
+      )}
+      <section aria-labelledby="committed-heading" className="mt-10">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+          <div>
+            <h2 id="committed-heading" className="text-lg font-semibold text-slate-900">
+              Committed history
+            </h2>
+            <p className={`${styles.muted} mt-1`}>
+              Successful executions in order. Rollbacks are recorded as new versions, never by
+              deleting history.
+            </p>
+          </div>
+          <label className="flex min-h-11 items-center gap-2 text-sm text-slate-800">
+            <input
+              type="checkbox"
+              className="size-4 accent-cyan-700"
+              checked={hideRollbacks}
+              onChange={(e) => setHideRollbacks(e.target.checked)}
+            />
+            Hide rollbacks
+          </label>
+        </div>
+        <AttemptsTable
+          db={db}
+          attempts={[...data.committed].reverse()}
+          showMigration
+          empty={
+            hideRollbacks && data.attempts.some((a) => a.status === "succeeded")
+              ? "Every committed migration was rolled back."
+              : "No committed migrations yet."
+          }
+        />
+      </section>
       <section aria-labelledby="history-heading" className="mt-10">
         <h2 id="history-heading" className="text-lg font-semibold text-slate-900">
           Execution history
         </h2>
         <p className={`${styles.muted} mt-1`}>
-          Every attempt is kept, newest first. Applied versions increase only on success.
+          Every attempt is kept, newest first, including failed ones.
         </p>
         <AttemptsTable db={db} attempts={data.attempts} showMigration />
       </section>
@@ -371,7 +491,7 @@ function Result({
         role="status"
         className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-950"
       >
-        <p className="font-semibold">Applied as {versionLabel(attempt.applied_version)}.</p>
+        <p className="font-semibold">{outcomeLabel(attempt)}.</p>
         <p>
           {attempt.statement_count} statements committed.{" "}
           <Link
@@ -435,6 +555,202 @@ function Result({
   );
 }
 
+const requestTone: Record<string, string> = {
+  approved: "succeeded",
+  rejected: "failed",
+  queued: "running",
+};
+function ReviewPanel({
+  data,
+  onRequest,
+  onAction,
+  onExecute,
+  busy,
+  executing,
+  error,
+}: {
+  data: Detail;
+  onRequest: (operation: Operation) => void;
+  onAction: (request: Request, action: "submit" | "approve" | "reject", body?: object) => void;
+  onExecute: (request: Request) => void;
+  busy: boolean;
+  executing: boolean;
+  error: unknown;
+}) {
+  const d = data.draft;
+  const canEdit = data.workspace.can_edit;
+  if (d.dialect !== "postgresql")
+    return (
+      <section aria-labelledby="review-heading" className={`${styles.panel} p-5 sm:p-6`}>
+        <h2 id="review-heading" className="text-lg font-semibold text-slate-900">
+          Review and execution
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-slate-700">
+          Reviewed execution is available for PostgreSQL targets only.
+        </p>
+      </section>
+    );
+  return (
+    <section aria-labelledby="review-heading" className={`${styles.panel} p-5 sm:p-6`}>
+      <h2 id="review-heading" className="text-lg font-semibold text-slate-900">
+        Review and execution
+      </h2>
+      <p className="mt-2 text-sm leading-6 text-slate-700">
+        Every execution needs a request approved by the leader of each group with access to this
+        database. Requests use saved revision {d.revision} (definition SHA-256{" "}
+        <code className="font-mono text-slate-900">{shortHash(d.definition_hash)}</code>); approved
+        requests run in the background in one transaction.
+      </p>
+      {canEdit &&
+        (data.eligible.length > 0 ? (
+          <div className="mt-4 flex flex-wrap gap-3">
+            {data.eligible.map((operation) => (
+              <button
+                key={operation}
+                type="button"
+                disabled={busy || !!data.blocked}
+                onClick={() => onRequest(operation)}
+                className={styles.button}
+              >
+                Request {operationLabel(operation).toLowerCase()} as{" "}
+                {versionLabel(data.current_version + 1)}
+              </button>
+            ))}
+          </div>
+        ) : (
+          !d.irreversible &&
+          !d.sql_down && (
+            <p className="mt-4 text-sm leading-6 text-slate-700">
+              Write SQL down, or mark the migration as irreversible, before requesting execution.
+            </p>
+          )
+        ))}
+      <ErrorBox error={error} />
+      {data.requests.length > 0 && (
+        <ul className="mt-5 space-y-4">
+          {data.requests.map((r) => (
+            <li key={r.id} className="rounded-lg border border-slate-200 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-slate-900">
+                  {operationLabel(r.operation)} revision {r.definition_revision} as{" "}
+                  {versionLabel(r.expected_version + 1)}
+                </p>
+                <span className={`${statusChip} ${statusClass(requestTone[r.status] ?? "")}`}>
+                  {requestStatusLabel(r.status)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-600">
+                Requested by {r.requested_by_name} on {formatDate(r.created_at)}
+                {r.review_round > 0 && ` · review round ${r.review_round}`}
+              </p>
+              {r.stale && (
+                <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm leading-6 text-amber-950">
+                  {r.stale}
+                </p>
+              )}
+              {r.status !== "draft" && r.status !== "queued" && (
+                <ul className="mt-3 divide-y divide-slate-100 text-sm">
+                  {r.approvals.map((a) => (
+                    <li
+                      key={a.group_id}
+                      className="flex flex-wrap items-center justify-between gap-2 py-2"
+                    >
+                      <span className="min-w-0 break-words text-slate-900">
+                        {a.group_name}{" "}
+                        <span className="text-slate-600">
+                          ({a.permission}) ·{" "}
+                          {a.leader_active && a.leader_name
+                            ? `leader ${a.leader_name}`
+                            : "no active leader"}
+                        </span>
+                      </span>
+                      {a.can_decide ? (
+                        <span className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => onAction(r, "approve", { group_id: a.group_id })}
+                            className={styles.button}
+                          >
+                            Approve<span className="sr-only"> for {a.group_name}</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => onAction(r, "reject", { group_id: a.group_id })}
+                            className={styles.button}
+                          >
+                            Reject<span className="sr-only"> for {a.group_name}</span>
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="text-slate-700">
+                          {a.decision === "approved"
+                            ? `Approved ${formatDate(a.decided_at)}`
+                            : a.decision === "rejected"
+                              ? `Rejected ${formatDate(a.decided_at)}`
+                              : "Waiting for the leader"}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {canEdit &&
+                (r.status === "draft" ||
+                  r.status === "rejected" ||
+                  (!!r.stale && (r.status === "pending_review" || r.status === "approved"))) && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onAction(r, "submit")}
+                    className={`${styles.button} mt-3`}
+                  >
+                    {r.status === "draft" ? "Submit for review" : "Submit for review again"}
+                  </button>
+                )}
+              {canEdit && r.status === "approved" && !r.stale && (
+                <button
+                  type="button"
+                  disabled={busy || !!data.blocked}
+                  onClick={() => onExecute(r)}
+                  className={`${styles.primary} mt-3`}
+                >
+                  {executing
+                    ? "Running in the background…"
+                    : `Execute ${operationLabel(r.operation).toLowerCase()} as ${versionLabel(r.expected_version + 1)}`}
+                </button>
+              )}
+              {r.status === "queued" && (
+                <p className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-700">
+                  {r.execution ? (
+                    <>
+                      <Status value={r.execution.status} />
+                      <Link
+                        className={styles.link}
+                        to={
+                          path(
+                            data.workspace.id,
+                            `migrations/${encodeURIComponent(r.migration_id)}/attempts/${encodeURIComponent(r.execution.id)}`,
+                          ) as never
+                        }
+                      >
+                        View execution
+                      </Link>
+                    </>
+                  ) : (
+                    "Queued. The worker runs it in the background."
+                  )}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
   const { api } = useAuthenticatedContext();
   const client = useQueryClient();
@@ -449,6 +765,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
   });
   const [title, setTitle] = useState<string>();
   const [sql, setSQL] = useState<string>();
+  const [rollback, setRollback] = useState<Rollback>();
   const [baseRevision, setBaseRevision] = useState<number>();
   const [editError, setEditError] = useState<unknown>();
   const [result, setResult] = useState<{ attempt?: Attempt; message?: string }>();
@@ -465,6 +782,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
       routeKey.current = next;
       setTitle(undefined);
       setSQL(undefined);
+      setRollback(undefined);
       setBaseRevision(undefined);
       setEditError(undefined);
       setResult(undefined);
@@ -474,7 +792,9 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
   const draft = query.data?.draft;
   const editTitle = title ?? draft?.title ?? "";
   const editSQL = sql ?? draft?.sql ?? "";
-  const isEditable = !!draft && query.data!.workspace.can_edit && draft.applied_version === 0;
+  const editRollback = rollback ?? draft ?? noRollback;
+  // Any execution, even a failed one, freezes the definition.
+  const isEditable = !!draft && query.data!.workspace.can_edit && !draft.executed;
   const invalidate = async () => {
     await Promise.all([
       client.invalidateQueries({ queryKey: keys.history(db) }),
@@ -482,7 +802,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
     ]);
   };
   const save = useMutation({
-    mutationFn: (input: { title: string; sql: string; expected_revision: number }) =>
+    mutationFn: (input: { title: string; sql: string; expected_revision: number } & Rollback) =>
       api.request<Draft>(
         `/databases/${encodeURIComponent(db)}/migrations/${encodeURIComponent(id)}`,
         { method: "PATCH", body: JSON.stringify(input) },
@@ -490,6 +810,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
     onSuccess: async (saved) => {
       setTitle(undefined);
       setSQL(undefined);
+      setRollback(undefined);
       setBaseRevision(undefined);
       setEditError(undefined);
       client.setQueryData<Detail>(keys.detail(db, id), (current) =>
@@ -505,28 +826,42 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
         await client.invalidateQueries({ queryKey: keys.detail(db, id) });
     },
   });
+  const review = useMutation({
+    mutationFn: ({ tail, body = {} }: { tail: string; body?: object }) =>
+      api.request<Request>(`/databases/${encodeURIComponent(db)}/${tail}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSettled: invalidate,
+  });
   const execute = useMutation({
-    mutationFn: (input: {
-      expected_revision: number;
-      expected_version: number;
-      expected_sql_hash: string;
-    }) =>
-      api.request<Attempt>(
+    // The execute endpoint only enqueues; the worker runs the SQL and the job is polled.
+    mutationFn: async (request: Request) => {
+      let job = await api.request<Job>(
         `/databases/${encodeURIComponent(db)}/migrations/${encodeURIComponent(id)}/execute`,
-        { method: "POST", body: JSON.stringify(input) },
-      ),
-    onSuccess: async (attempt) => {
-      setResult({ attempt });
+        {
+          method: "POST",
+          body: JSON.stringify({ request_id: request.id, idempotency_key: crypto.randomUUID() }),
+        },
+      );
       await invalidate();
+      while (!jobFinished(job)) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        job = await api.request<Job>(
+          `/databases/${encodeURIComponent(db)}/jobs/${encodeURIComponent(job.job_id)}`,
+        );
+      }
+      const done = await api.request<Request>(
+        `/databases/${encodeURIComponent(db)}/requests/${encodeURIComponent(request.id)}`,
+      );
+      return { job, attempt: done.execution ?? undefined };
     },
-    onError: async (error) => {
-      const e = error as ApiError & AttemptError;
-      setResult({
-        attempt: isAttempt(e.attempt) ? e.attempt : undefined,
-        message: error instanceof ApiError ? error.message : undefined,
-      });
-      await invalidate();
-    },
+    onMutate: () => setResult(undefined),
+    onSuccess: ({ job, attempt }) =>
+      setResult({ attempt, message: job.status === "failed" ? job.error : undefined }),
+    onError: (error) =>
+      setResult({ message: error instanceof ApiError ? error.message : undefined }),
+    onSettled: invalidate,
   });
   const reconcile = useMutation({
     mutationFn: (attempt: Attempt) =>
@@ -592,7 +927,9 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                 <dd className="inline text-slate-900">
                   {d.applied_version > 0
                     ? `Applied as ${versionLabel(d.applied_version)} (read-only)`
-                    : `Draft revision ${d.revision}`}
+                    : d.executed
+                      ? `Executed revision ${d.revision} (read-only)`
+                      : `Draft revision ${d.revision}`}
                 </dd>
               </div>
               <div>
@@ -655,6 +992,9 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                   save.mutate({
                     title: editTitle,
                     sql: editSQL,
+                    sql_down: editRollback.sql_down,
+                    irreversible: editRollback.irreversible,
+                    irreversible_reason: editRollback.irreversible_reason,
                     expected_revision: baseRevision ?? d.revision,
                   });
                 }}
@@ -691,9 +1031,17 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                       setBaseRevision((revision) => revision ?? d.revision);
                       setSQL(e.target.value);
                     }}
-                    className="w-full rounded-lg border border-slate-300 bg-slate-50 p-3 font-mono text-sm leading-6 text-slate-900 hover:border-slate-400 focus-visible:border-cyan-700 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-cyan-700"
+                    className={codeArea}
                   />
                 </div>
+                <RollbackFields
+                  id="edit"
+                  value={editRollback}
+                  onChange={(value) => {
+                    setBaseRevision((revision) => revision ?? d.revision);
+                    setRollback(value);
+                  }}
+                />
                 {baseRevision !== undefined && baseRevision !== d.revision && (
                   <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
                     This draft changed on the server after you began editing. Your SQL is preserved,
@@ -705,6 +1053,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                       onClick={() => {
                         setTitle(d.title);
                         setSQL(d.sql);
+                        setRollback(undefined);
                         setBaseRevision(d.revision);
                         setEditError(undefined);
                       }}
@@ -723,6 +1072,7 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                       onClick={() => {
                         setTitle(d.title);
                         setSQL(d.sql);
+                        setRollback(undefined);
                         setBaseRevision(d.revision);
                         setEditError(undefined);
                       }}
@@ -744,49 +1094,36 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
               <div className="mt-4">
                 <SQL>{d.sql}</SQL>
               </div>
+              <h3 className="mt-6 text-base font-semibold text-slate-900">SQL down</h3>
+              <div className="mt-3">
+                {d.irreversible ? (
+                  <p className="text-sm leading-6 text-slate-700">
+                    Irreversible: {d.irreversible_reason}
+                  </p>
+                ) : d.sql_down ? (
+                  <SQL>{d.sql_down}</SQL>
+                ) : (
+                  <p className="text-sm leading-6 text-slate-700">Not written yet.</p>
+                )}
+              </div>
             </section>
           )}
-          {isEditable && (
-            <section aria-labelledby="execute-heading" className={`${styles.panel} p-5 sm:p-6`}>
-              <h2 id="execute-heading" className="text-lg font-semibold text-slate-900">
-                Execute
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-slate-700">
-                Runs saved revision {d.revision} (SHA-256{" "}
-                <code className="font-mono text-slate-900">{shortHash(d.sql_hash)}</code>){" "}
-                {d.dialect === "mysql" ? "statement by statement" : "in one transaction"} as{" "}
-                <strong className="font-mono font-semibold text-slate-900">
-                  {versionLabel(data.current_version + 1)}
-                </strong>
-                .{" "}
-                {d.dialect === "mysql"
-                  ? "MySQL commits DDL immediately, so if a later statement fails the earlier ones stay applied."
-                  : "Any error rolls back every statement."}{" "}
-                Unsaved edits above are not executed.
-              </p>
-              <details className="mt-3">
-                <summary className="cursor-pointer py-2.5 text-sm font-medium text-cyan-700">
-                  Review the SQL that will run
-                </summary>
-                <div className="mt-2">
-                  <SQL>{d.sql}</SQL>
-                </div>
-              </details>
-              <button
-                type="button"
-                disabled={execute.isPending || !!data.blocked}
-                onClick={() => {
-                  setResult(undefined);
-                  execute.mutate(executePreconditions(d, data.current_version));
-                }}
-                className={`${styles.primary} mt-4`}
-              >
-                {execute.isPending
-                  ? "Executing… this can take up to 10 seconds."
-                  : `Execute as ${versionLabel(data.current_version + 1)}`}
-              </button>
-            </section>
-          )}
+          <ReviewPanel
+            data={data}
+            onRequest={(operation) =>
+              review.mutate({
+                tail: `migrations/${encodeURIComponent(id)}/requests`,
+                body: requestPreconditions(d, data.current_version, operation),
+              })
+            }
+            onAction={(request, action, body) =>
+              review.mutate({ tail: `requests/${encodeURIComponent(request.id)}/${action}`, body })
+            }
+            onExecute={(request) => execute.mutate(request)}
+            busy={review.isPending || execute.isPending}
+            executing={execute.isPending}
+            error={review.error}
+          />
         </div>
         <div className="min-w-0 flex-[1_1_420px] *:mt-0">
           <PlanPanel
@@ -862,6 +1199,7 @@ export function AttemptDetailPage({
       >
         {(
           [
+            ["Operation", operationLabel(a.operation)],
             ["Executor", a.executor_name],
             ["Draft revision", a.draft_revision],
             ["Statements", a.statement_count],
