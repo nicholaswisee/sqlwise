@@ -266,9 +266,15 @@ func TestMySQLAccessAndReconcileOverHTTP(t *testing.T) {
 	if response := f.do(http.MethodPost, location+"/execute", &f.Viewer, confirm, false, true); response.Code != http.StatusForbidden {
 		t.Fatalf("viewer execute = %d", response.Code)
 	}
-	executed := f.do(http.MethodPost, location+"/execute", &f.Editor, confirm, false, true)
-	if executed.Code != http.StatusUnprocessableEntity || !strings.Contains(executed.Body.String(), "were already committed") {
-		t.Fatalf("partial execute = %d %s", executed.Code, executed.Body)
+	// The legacy form never executes; the partial attempt to reconcile comes
+	// from the service's direct path.
+	if refused := f.do(http.MethodPost, location+"/execute", &f.Editor, confirm, false, true); refused.Code != http.StatusConflict || tableExists(t, target, "notes") {
+		t.Fatalf("legacy execute = %d %s", refused.Code, refused.Body)
+	}
+	migrations := migration.NewService(migration.NewStore(f.Pool), f.Access, migrationTargets{resolver: f.pools}, time.Now)
+	partial, err := migrations.Execute(f.Editor.Context, id, migrationID, migration.ExecuteInput{ExpectedRevision: 1, ExpectedSQLHash: hex.EncodeToString(sum[:])})
+	if !errors.Is(err, migration.ErrExecutionFailed) || partial.Status != migration.StatusPartiallyApplied {
+		t.Fatalf("partial execute = %+v, %v", partial, err)
 	}
 	if !tableExists(t, target, "notes") {
 		t.Fatal("committed statement missing on target")
