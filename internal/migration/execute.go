@@ -10,7 +10,9 @@ import (
 	"sqlwise/internal/access"
 )
 
-// Execute runs the stored SQL of a draft exactly as confirmed by the caller.
+// Execute is the Milestone 1 direct path: it applies a draft as confirmed by
+// the caller, without a reviewed request. No HTTP handler calls it; fixtures
+// and MySQL regression tests do. Reviewed executions go through Run.
 // It returns the recorded attempt whenever one was created, together with a
 // domain error for every outcome other than success.
 func (s *Service) Execute(ctx context.Context, databaseID, migrationID string, in ExecuteInput) (Attempt, error) {
@@ -63,16 +65,23 @@ func (s *Service) Execute(ctx context.Context, databaseID, migrationID string, i
 	if current != in.ExpectedVersion {
 		return Attempt{}, fail(ErrConflict, fmt.Sprintf("The database is at version %d, not %d. Reload to review the current history before executing.", current, in.ExpectedVersion))
 	}
+	head, err := s.store.head(ctx, s.store.pool, databaseID)
+	if err != nil {
+		return Attempt{}, err
+	}
+	if _, err := eligible(head, draft, OpUp); err != nil {
+		return Attempt{}, err
+	}
 
 	id, err := newID()
 	if err != nil {
 		return Attempt{}, err
 	}
-	attempt := Attempt{ID: id, DatabaseID: databaseID, MigrationID: migrationID, MigrationTitle: draft.Title,
+	attempt := Attempt{ID: id, DatabaseID: databaseID, MigrationID: migrationID, MigrationTitle: draft.Title, Operation: OpUp,
 		DraftRevision: draft.Revision, CandidateVersion: current + 1, SQL: draft.SQL, SQLHash: draft.SQLHash(),
 		Dialect: draft.Dialect, StatementCount: len(statements), ExecutorID: userID, Status: StatusRunning, StartedAt: s.now().UTC()}
 	// The durable running attempt precedes any target change.
-	if err := s.store.insertAttempt(ctx, attempt); err != nil {
+	if err := s.store.insertAttempt(ctx, s.store.pool, attempt); err != nil {
 		return Attempt{}, err
 	}
 	var kind error
