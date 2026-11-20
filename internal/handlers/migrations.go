@@ -27,10 +27,17 @@ type Migrations struct {
 	diff       *schemadiff.Service
 	assets     views.Assets
 	header     WorkspaceHeader
+	jobs       migration.Jobs
 }
 
 func NewMigrations(auth *Auth, policy DatabasePermissionChecker, migrations *migration.Service, diff *schemadiff.Service, assets views.Assets) *Migrations {
 	return &Migrations{auth: auth, policy: policy, migrations: migrations, diff: diff, assets: assets}
+}
+
+// WithJobs sets the queue that executes approved requests.
+func (h *Migrations) WithJobs(jobs migration.Jobs) *Migrations {
+	h.jobs = jobs
+	return h
 }
 
 // WithHeader adds the engine label and version track to every page.
@@ -282,46 +289,14 @@ func (h *Migrations) update(c *gin.Context) {
 	Render(c, code, views.MigrationDetail(h.assets, data))
 }
 
+// execute is retired: executions need an approved review request and run in
+// the worker, so the legacy form never runs SQL in the HTTP request.
 func (h *Migrations) execute(c *gin.Context) {
-	revision, okRevision := formInt(c, "expected_revision")
-	version, okVersion := formInt(c, "expected_version")
-	hash := c.Request.PostForm.Get("expected_sql_hash")
-	if !okRevision || !okVersion || len(hash) != 64 {
-		h.fail(c, &migration.Error{Kind: migration.ErrValidation, Message: "The confirmation form is incomplete. Reload the migration and confirm again."})
-		return
-	}
-	databaseID, migrationID := c.Param("databaseID"), c.Param("migrationID")
-	attempt, err := h.migrations.Execute(c.Request.Context(), databaseID, migrationID,
-		migration.ExecuteInput{ExpectedRevision: revision, ExpectedVersion: version, ExpectedSQLHash: hash})
-	if err == nil {
-		see(c, "/databases/"+databaseID+"/migrations/"+migrationID+"?attempt="+attempt.ID)
-		return
-	}
-	if errors.Is(err, auth.ErrSession) {
-		h.auth.rejectSession(c)
-		return
-	}
-	code, message := status(err)
-	result := views.ExecutionResultView{DatabaseID: databaseID, MigrationID: migrationID, Message: message}
-	if attempt.ID != "" {
-		row := attemptRow(attempt)
-		result.Attempt = &row
-	}
-	if htmx(c) {
-		h.render(c, code, views.ExecutionResult(result))
-		return
-	}
-	if code == http.StatusForbidden || code == http.StatusNotFound {
+	if _, err := h.migrations.Detail(c.Request.Context(), c.Param("databaseID"), c.Param("migrationID")); err != nil {
 		h.fail(c, err)
 		return
 	}
-	data, loadErr := h.detailData(c)
-	if loadErr != nil {
-		h.fail(c, loadErr)
-		return
-	}
-	data.Result = &result
-	Render(c, code, views.MigrationDetail(h.assets, data))
+	h.fail(c, &migration.Error{Kind: migration.ErrConflict, Message: "Executions now need an approved review request and run in the background. Use the migrations page of the app."})
 }
 
 func (h *Migrations) attempt(c *gin.Context) {

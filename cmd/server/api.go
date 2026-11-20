@@ -40,7 +40,9 @@ func registerDatabaseAPIRoutes(router *gin.Engine, service *auth.Service, policy
 		resolver = targets.pools
 	}
 	header := handlers.NewWorkspaceHeader(migrations, resolver)
-	handlers.NewMigrations(guard, policy, migrations, diff, views.Assets{}).WithHeader(header).RegisterAPI(router)
+	// TODO(jason): replace the in-process stand-in with the durable jobs queue.
+	jobs := migration.NewLocalQueue(migrations)
+	handlers.NewMigrations(guard, policy, migrations, diff, views.Assets{}).WithHeader(header).WithJobs(jobs).RegisterAPI(router)
 	if targets.pools != nil {
 		handlers.NewDatabaseViewer(guard, policy, targets.pools, views.Assets{}).WithHeader(header).RegisterAPI(router)
 		handlers.NewExplain(guard, policy, queryplan.NewService(policy, targets.pools), views.Assets{}).RegisterAPI(router)

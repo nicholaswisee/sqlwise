@@ -15,21 +15,26 @@ import (
 )
 
 type apiDraft struct {
-	ID             string            `json:"id"`
-	DatabaseID     string            `json:"database_id"`
-	Title          string            `json:"title"`
-	SQL            string            `json:"sql"`
-	SQLHash        string            `json:"sql_hash"`
-	Dialect        migration.Dialect `json:"dialect"`
-	Revision       int64             `json:"revision"`
-	AppliedVersion int64             `json:"applied_version"`
-	LastStatus     migration.Status  `json:"last_status"`
-	CreatedBy      string            `json:"created_by"`
-	CreatedByName  string            `json:"created_by_name"`
-	CreatedAt      time.Time         `json:"created_at"`
-	UpdatedBy      string            `json:"updated_by"`
-	UpdatedByName  string            `json:"updated_by_name"`
-	UpdatedAt      time.Time         `json:"updated_at"`
+	ID                 string            `json:"id"`
+	DatabaseID         string            `json:"database_id"`
+	Title              string            `json:"title"`
+	SQL                string            `json:"sql"`
+	SQLDown            string            `json:"sql_down"`
+	Irreversible       bool              `json:"irreversible"`
+	IrreversibleReason string            `json:"irreversible_reason"`
+	DefinitionHash     string            `json:"definition_hash"`
+	Executed           bool              `json:"executed"`
+	SQLHash            string            `json:"sql_hash"`
+	Dialect            migration.Dialect `json:"dialect"`
+	Revision           int64             `json:"revision"`
+	AppliedVersion     int64             `json:"applied_version"`
+	LastStatus         migration.Status  `json:"last_status"`
+	CreatedBy          string            `json:"created_by"`
+	CreatedByName      string            `json:"created_by_name"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedBy          string            `json:"updated_by"`
+	UpdatedByName      string            `json:"updated_by_name"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 type apiAttempt struct {
 	ID               string            `json:"id"`
@@ -37,6 +42,9 @@ type apiAttempt struct {
 	DatabaseID       string            `json:"database_id"`
 	MigrationID      string            `json:"migration_id"`
 	MigrationTitle   string            `json:"migration_title"`
+	Operation        string            `json:"operation"`
+	RequestID        string            `json:"request_id,omitempty"`
+	CancelsExecution string            `json:"cancels_execution_id,omitempty"`
 	DraftRevision    int64             `json:"draft_revision"`
 	CandidateVersion int64             `json:"candidate_version"`
 	AppliedVersion   int64             `json:"applied_version"`
@@ -54,10 +62,95 @@ type apiAttempt struct {
 }
 
 func apiDraftDTO(d migration.Draft) apiDraft {
-	return apiDraft{d.ID, d.DatabaseID, d.Title, d.SQL, d.SQLHash(), d.Dialect, d.Revision, d.AppliedVersion, d.LastStatus, d.CreatedBy, d.CreatedByName, d.CreatedAt, d.UpdatedBy, d.UpdatedByName, d.UpdatedAt}
+	return apiDraft{d.ID, d.DatabaseID, d.Title, d.SQL, d.SQLDown, d.Irreversible(), d.IrreversibleReason, d.DefinitionHash(), d.Executed(),
+		d.SQLHash(), d.Dialect, d.Revision, d.AppliedVersion, d.LastStatus, d.CreatedBy, d.CreatedByName, d.CreatedAt, d.UpdatedBy, d.UpdatedByName, d.UpdatedAt}
 }
 func apiAttemptDTO(a migration.Attempt) apiAttempt {
-	return apiAttempt{a.ID, a.Seq, a.DatabaseID, a.MigrationID, a.MigrationTitle, a.DraftRevision, a.CandidateVersion, a.AppliedVersion, a.SQL, a.SQLHash, a.Dialect, a.StatementCount, a.ExecutorName, a.Status, a.Error, a.FailedStatement, a.StartedAt, a.FinishedAt, a.ReconciledAt}
+	return apiAttempt{a.ID, a.Seq, a.DatabaseID, a.MigrationID, a.MigrationTitle, string(a.Operation), a.RequestID, a.CancelsExecutionID,
+		a.DraftRevision, a.CandidateVersion, a.AppliedVersion, a.SQL, a.SQLHash, a.Dialect, a.StatementCount, a.ExecutorName, a.Status, a.Error,
+		a.FailedStatement, a.StartedAt, a.FinishedAt, a.ReconciledAt}
+}
+func apiAttempts(list []migration.Attempt) []apiAttempt {
+	out := make([]apiAttempt, 0, len(list))
+	for _, a := range list {
+		out = append(out, apiAttemptDTO(a))
+	}
+	return out
+}
+
+type apiHeadEntry struct {
+	MigrationID string `json:"migration_id"`
+	ExecutionID string `json:"execution_id"`
+}
+type apiHead struct {
+	Active  []apiHeadEntry `json:"active"`
+	Pending []apiHeadEntry `json:"pending"`
+}
+
+func apiHeadDTO(h migration.Head) apiHead {
+	v := apiHead{Active: []apiHeadEntry{}, Pending: []apiHeadEntry{}}
+	for _, e := range h.Active {
+		v.Active = append(v.Active, apiHeadEntry{e.MigrationID, e.ExecutionID})
+	}
+	for _, e := range h.Pending {
+		v.Pending = append(v.Pending, apiHeadEntry{e.MigrationID, e.ExecutionID})
+	}
+	return v
+}
+
+type apiApproval struct {
+	GroupID      string     `json:"group_id"`
+	GroupName    string     `json:"group_name"`
+	Permission   string     `json:"permission"`
+	LeaderName   string     `json:"leader_name"`
+	LeaderActive bool       `json:"leader_active"`
+	Decision     string     `json:"decision"`
+	DecidedBy    string     `json:"decided_by,omitempty"`
+	DecidedAt    *time.Time `json:"decided_at,omitempty"`
+	CanDecide    bool       `json:"can_decide"`
+}
+type apiRequest struct {
+	ID                 string        `json:"id"`
+	DatabaseID         string        `json:"database_id"`
+	MigrationID        string        `json:"migration_id"`
+	MigrationTitle     string        `json:"migration_title"`
+	Operation          string        `json:"operation"`
+	DefinitionRevision int64         `json:"definition_revision"`
+	DefinitionHash     string        `json:"definition_hash"`
+	ExpectedVersion    int64         `json:"expected_version"`
+	CancelsExecution   string        `json:"cancels_execution_id,omitempty"`
+	RequestedByName    string        `json:"requested_by_name"`
+	Status             string        `json:"status"`
+	ReviewRound        int           `json:"review_round"`
+	Stale              string        `json:"stale,omitempty"`
+	ExecutionID        string        `json:"execution_id,omitempty"`
+	Approvals          []apiApproval `json:"approvals"`
+	Execution          *apiAttempt   `json:"execution"`
+	CreatedAt          time.Time     `json:"created_at"`
+	UpdatedAt          time.Time     `json:"updated_at"`
+}
+
+func apiRequestDTO(r migration.Request) apiRequest {
+	v := apiRequest{ID: r.ID, DatabaseID: r.DatabaseID, MigrationID: r.MigrationID, MigrationTitle: r.MigrationTitle, Operation: string(r.Operation),
+		DefinitionRevision: r.DefinitionRevision, DefinitionHash: r.DefinitionHash, ExpectedVersion: r.ExpectedVersion, CancelsExecution: r.CancelsExecutionID,
+		RequestedByName: r.RequestedByName, Status: string(r.Status), ReviewRound: r.ReviewRound, Stale: r.Stale, ExecutionID: r.ExecutionID,
+		Approvals: []apiApproval{}, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+	for _, a := range r.Approvals {
+		v.Approvals = append(v.Approvals, apiApproval{a.GroupID, a.GroupName, a.Permission, a.LeaderName, a.LeaderActive, a.Decision, a.DecidedBy, a.DecidedAt, a.CanDecide})
+	}
+	if r.Execution != nil {
+		e := apiAttemptDTO(*r.Execution)
+		v.Execution = &e
+	}
+	return v
+}
+
+type apiJob struct {
+	ID          string `json:"job_id"`
+	RequestID   string `json:"request_id"`
+	ExecutionID string `json:"execution_id"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
 }
 
 func (h *Migrations) RegisterAPI(router *gin.Engine) {
@@ -69,6 +162,14 @@ func (h *Migrations) RegisterAPI(router *gin.Engine) {
 	view.GET("/migrations/:migrationID", h.apiDetail)
 	edit.PATCH("/migrations/:migrationID", h.apiUpdate)
 	edit.POST("/migrations/:migrationID/execute", h.apiExecute)
+	edit.POST("/migrations/:migrationID/requests", h.apiCreateRequest)
+	view.GET("/requests/:requestID", h.apiRequest)
+	edit.POST("/requests/:requestID/submit", h.apiSubmitRequest)
+	// Leaders with view access decide for their group; the service checks leadership.
+	view.POST("/requests/:requestID/approve", h.apiDecide(true))
+	view.POST("/requests/:requestID/reject", h.apiDecide(false))
+	// TODO(jason): GET /jobs/:jobID belongs to the jobs API; this serves the stand-in queue.
+	view.GET("/jobs/:jobID", h.apiJob)
 	view.GET("/migrations/:migrationID/attempts/:attemptID", h.apiAttempt)
 	edit.POST("/migrations/:migrationID/attempts/:attemptID/reconcile", h.apiReconcile)
 	view.POST("/schema-diff/preview", h.apiPreview)
@@ -84,9 +185,9 @@ func (h *Migrations) apiHistory(c *gin.Context) {
 	for _, d := range v.Drafts {
 		drafts = append(drafts, apiDraftDTO(d))
 	}
-	attempts := make([]apiAttempt, 0, len(v.Attempts))
-	for _, a := range v.Attempts {
-		attempts = append(attempts, apiAttemptDTO(a))
+	committed := v.Committed
+	if c.Query("hide_rollback") == "true" {
+		committed = migration.HideRollbacks(committed)
 	}
 	w := apiWorkspace{ID: v.Database.ID, Name: v.Database.Name, CanEdit: v.Database.CanEdit}
 	if h.header != nil {
@@ -96,17 +197,15 @@ func (h *Migrations) apiHistory(c *gin.Context) {
 		apiWorkspaceEngine(&w)
 	}
 	w.CurrentVersion = v.CurrentVersion
-	apiData(c, gin.H{"workspace": w, "current_version": v.CurrentVersion, "drafts": drafts, "attempts": attempts})
+	apiData(c, gin.H{"workspace": w, "current_version": v.CurrentVersion, "drafts": drafts, "attempts": apiAttempts(v.Attempts),
+		"committed": apiAttempts(committed), "head": apiHeadDTO(v.Head)})
 }
 func (h *Migrations) apiCreate(c *gin.Context) {
-	var in struct {
-		Title string `json:"title"`
-		SQL   string `json:"sql"`
-	}
+	var in apiDefinition
 	if !apiDecode(c, &in) {
 		return
 	}
-	d, e := h.migrations.Create(c.Request.Context(), c.Param("databaseID"), migration.DraftInput{Title: in.Title, SQL: in.SQL})
+	d, e := h.migrations.Create(c.Request.Context(), c.Param("databaseID"), in.input())
 	if e != nil {
 		apiMigrationFailure(c, e)
 		return
@@ -120,9 +219,9 @@ func (h *Migrations) apiDetail(c *gin.Context) {
 		apiMigrationFailure(c, e)
 		return
 	}
-	attempts := make([]apiAttempt, 0, len(d.Attempts))
-	for _, a := range d.Attempts {
-		attempts = append(attempts, apiAttemptDTO(a))
+	requests := make([]apiRequest, 0, len(d.Requests))
+	for _, r := range d.Requests {
+		requests = append(requests, apiRequestDTO(r))
 	}
 	blocked := ""
 	if d.Blocked != "" {
@@ -136,13 +235,14 @@ func (h *Migrations) apiDetail(c *gin.Context) {
 		apiWorkspaceEngine(&w)
 	}
 	w.CurrentVersion = d.CurrentVersion
-	apiData(c, gin.H{"workspace": w, "current_version": d.CurrentVersion, "draft": apiDraftDTO(d.Draft), "attempts": attempts, "blocked": blocked, "blocked_by": func() *apiAttempt {
-		if d.BlockedBy == nil {
-			return nil
-		}
-		v := apiAttemptDTO(*d.BlockedBy)
-		return &v
-	}()})
+	apiData(c, gin.H{"workspace": w, "current_version": d.CurrentVersion, "draft": apiDraftDTO(d.Draft), "attempts": apiAttempts(d.Attempts),
+		"requests": requests, "eligible": append([]migration.Operation{}, d.Eligible...), "head": apiHeadDTO(d.Head), "blocked": blocked, "blocked_by": func() *apiAttempt {
+			if d.BlockedBy == nil {
+				return nil
+			}
+			v := apiAttemptDTO(*d.BlockedBy)
+			return &v
+		}()})
 }
 
 func apiWorkspaceEngine(w *apiWorkspace) {
@@ -161,40 +261,134 @@ func apiWorkspaceEngine(w *apiWorkspace) {
 }
 func (h *Migrations) apiUpdate(c *gin.Context) {
 	var in struct {
-		Title            string `json:"title"`
-		SQL              string `json:"sql"`
-		ExpectedRevision int64  `json:"expected_revision"`
+		apiDefinition
+		ExpectedRevision int64 `json:"expected_revision"`
 	}
 	if !apiDecode(c, &in) {
 		return
 	}
-	d, e := h.migrations.Update(c.Request.Context(), c.Param("databaseID"), c.Param("migrationID"), migration.UpdateInput{ExpectedRevision: in.ExpectedRevision, DraftInput: migration.DraftInput{Title: in.Title, SQL: in.SQL}})
+	d, e := h.migrations.Update(c.Request.Context(), c.Param("databaseID"), c.Param("migrationID"), migration.UpdateInput{ExpectedRevision: in.ExpectedRevision, DraftInput: in.input()})
 	if e != nil {
 		apiMigrationFailure(c, e)
 		return
 	}
 	apiData(c, apiDraftDTO(d))
 }
+
+type apiDefinition struct {
+	Title              string `json:"title"`
+	SQL                string `json:"sql"`
+	SQLDown            string `json:"sql_down"`
+	Irreversible       bool   `json:"irreversible"`
+	IrreversibleReason string `json:"irreversible_reason"`
+}
+
+func (in apiDefinition) input() migration.DraftInput {
+	return migration.DraftInput{Title: in.Title, SQL: in.SQL, SQLDown: in.SQLDown, Irreversible: in.Irreversible, IrreversibleReason: in.IrreversibleReason}
+}
+
+// apiExecute enqueues an approved request of this migration and returns its
+// job at once; the SQL runs in the worker, never in the HTTP request.
 func (h *Migrations) apiExecute(c *gin.Context) {
 	var in struct {
-		ExpectedRevision int64  `json:"expected_revision"`
-		ExpectedVersion  int64  `json:"expected_version"`
-		ExpectedSQLHash  string `json:"expected_sql_hash"`
+		RequestID      string `json:"request_id"`
+		IdempotencyKey string `json:"idempotency_key"`
 	}
 	if !apiDecode(c, &in) {
 		return
 	}
-	a, e := h.migrations.Execute(c.Request.Context(), c.Param("databaseID"), c.Param("migrationID"), migration.ExecuteInput{ExpectedRevision: in.ExpectedRevision, ExpectedVersion: in.ExpectedVersion, ExpectedSQLHash: in.ExpectedSQLHash})
+	if in.IdempotencyKey == "" || len(in.IdempotencyKey) > 128 {
+		apiError(c, http.StatusUnprocessableEntity, "validation", "An idempotency key of at most 128 characters is required.")
+		return
+	}
+	databaseID := c.Param("databaseID")
+	r, e := h.migrations.Request(c.Request.Context(), databaseID, in.RequestID)
+	if e == nil && r.MigrationID != c.Param("migrationID") {
+		e = &migration.Error{Kind: migration.ErrNotFound, Message: "Request not found for this migration."}
+	}
 	if e != nil {
-		if a.ID != "" {
-			status, code, message := apiMigrationError(e)
-			c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": code, "message": message, "fields": gin.H{}, "attempt": apiAttemptDTO(a)}})
-			return
-		}
 		apiMigrationFailure(c, e)
 		return
 	}
-	apiData(c, apiAttemptDTO(a))
+	if h.jobs == nil {
+		apiError(c, http.StatusServiceUnavailable, "target_unavailable", "The execution queue is not configured on this server.")
+		return
+	}
+	job, e := h.jobs.Enqueue(c.Request.Context(), databaseID, r.ID, in.IdempotencyKey)
+	if e != nil {
+		apiMigrationFailure(c, e)
+		return
+	}
+	c.Header("Location", "/api/v1/databases/"+databaseID+"/jobs/"+job.ID)
+	c.JSON(http.StatusAccepted, gin.H{"data": apiJob{job.ID, job.RequestID, job.ExecutionID, job.Status, job.Error}})
+}
+
+func (h *Migrations) apiJob(c *gin.Context) {
+	if h.jobs == nil {
+		apiError(c, http.StatusNotFound, "not_found", "Job not found for this database.")
+		return
+	}
+	job, e := h.jobs.Job(c.Request.Context(), c.Param("databaseID"), c.Param("jobID"))
+	if e != nil {
+		apiMigrationFailure(c, e)
+		return
+	}
+	apiData(c, apiJob{job.ID, job.RequestID, job.ExecutionID, job.Status, job.Error})
+}
+
+func (h *Migrations) apiCreateRequest(c *gin.Context) {
+	var in struct {
+		Operation          string `json:"operation"`
+		ExpectedRevision   int64  `json:"expected_revision"`
+		ExpectedDefinition string `json:"expected_definition_hash"`
+		ExpectedVersion    int64  `json:"expected_version"`
+	}
+	if !apiDecode(c, &in) {
+		return
+	}
+	r, e := h.migrations.CreateRequest(c.Request.Context(), c.Param("databaseID"), c.Param("migrationID"), migration.RequestInput{
+		Operation: migration.Operation(in.Operation), ExpectedRevision: in.ExpectedRevision, ExpectedDefinition: in.ExpectedDefinition, ExpectedVersion: in.ExpectedVersion})
+	if e != nil {
+		apiMigrationFailure(c, e)
+		return
+	}
+	c.Header("Location", "/api/v1/databases/"+r.DatabaseID+"/requests/"+r.ID)
+	c.JSON(http.StatusCreated, gin.H{"data": apiRequestDTO(r)})
+}
+
+func (h *Migrations) apiRequest(c *gin.Context) {
+	r, e := h.migrations.Request(c.Request.Context(), c.Param("databaseID"), c.Param("requestID"))
+	if e != nil {
+		apiMigrationFailure(c, e)
+		return
+	}
+	apiData(c, apiRequestDTO(r))
+}
+
+func (h *Migrations) apiSubmitRequest(c *gin.Context) {
+	r, e := h.migrations.SubmitRequest(c.Request.Context(), c.Param("databaseID"), c.Param("requestID"))
+	if e != nil {
+		apiMigrationFailure(c, e)
+		return
+	}
+	apiData(c, apiRequestDTO(r))
+}
+
+func (h *Migrations) apiDecide(approve bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var in struct {
+			GroupID string `json:"group_id"`
+		}
+		if !apiDecode(c, &in) {
+			return
+		}
+		r, e := h.migrations.Decide(c.Request.Context(), c.Param("databaseID"), c.Param("requestID"), in.GroupID, approve)
+		if e != nil {
+			apiMigrationFailure(c, e)
+			return
+		}
+		apiData(c, apiRequestDTO(r))
+	}
 }
 func (h *Migrations) apiAttempt(c *gin.Context) {
 	_, a, e := h.migrations.Attempt(c.Request.Context(), c.Param("databaseID"), c.Param("migrationID"), c.Param("attemptID"))
@@ -279,6 +473,9 @@ func apiMigrationError(err error) (int, string, string) {
 	}
 	if errors.Is(err, migration.ErrNotFound) {
 		return http.StatusNotFound, "not_found", migration.Message(err)
+	}
+	if errors.Is(err, access.ErrNotFound) {
+		return http.StatusNotFound, "not_found", "Database not found."
 	}
 	if errors.Is(err, migration.ErrValidation) || errors.Is(err, migration.ErrUnsupportedDialect) || errors.Is(err, migration.ErrExecutionFailed) {
 		return http.StatusUnprocessableEntity, "validation", migration.Message(err)
