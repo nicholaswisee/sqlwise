@@ -493,3 +493,90 @@ func TestRecoveryRequestsNeedAPartialBatchExecution(t *testing.T) {
 		t.Fatalf("unsafe batch identifier = %v", err)
 	}
 }
+
+// dieAfterClaim records the state a worker leaves when its process dies: the
+// claim with a short lease and the running execution, but no recorded outcome.
+func (f *flow) dieAfterClaim(t *testing.T, jobID, requestID, mode string) {
+	t.Helper()
+	f.p.Exec(t, `UPDATE jobs SET status='running', claimed_by='dead', lease_until=now() + interval '1 second', attempts=1 WHERE id=$1`, jobID)
+	f.p.Exec(t, `INSERT INTO migration_attempts (id, database_id, migration_id, operation, request_id, draft_revision, candidate_version,
+		sql_text, sql_sha256, dialect, statement_count, executor_id, status, started_at, mode)
+		SELECT r.execution_id, r.database_id, r.migration_id, r.operation, r.id, d.revision, r.expected_version + 1, d.sql_text,
+			encode(sha256(convert_to(d.sql_text, 'UTF8')), 'hex'), d.dialect, 1, r.requested_by, 'running', now(), $2
+		FROM migration_requests r JOIN migration_drafts d ON d.id = r.migration_id WHERE r.id = $1`, requestID, mode)
+}
+
+func TestWorkerDeathBeforeTargetCommitIsFencedNotReplayed(t *testing.T) {
+	f := newFlow(t)
+	if _, err := f.target.Exec(t.Context(), `CREATE TABLE ledger (id serial PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	d := f.define(t, "Ledger entry", "INSERT INTO ledger DEFAULT VALUES", "DELETE FROM ledger")
+	req := f.approved(t, d, migration.OpUp)
+	job := f.enqueue(t, req)
+	// The worker recorded the running execution, then died before its target transaction committed.
+	f.dieAfterClaim(t, job.ID, req.ID, "transaction")
+	f.worker(t, f.runner())
+	done := f.settled(t, job.ID)
+	if done.Status != jobs.Failed || done.Effect != jobs.EffectNone || done.Attempts != 2 || !strings.Contains(done.Error, "nothing was applied") {
+		t.Fatalf("recovered job = %+v", done)
+	}
+	if n := f.count(t, `SELECT count(*) FROM ledger`); n != 0 {
+		t.Fatalf("ledger has %d rows; the uncommitted execution was replayed", n)
+	}
+	var outcome string
+	if err := f.target.QueryRow(t.Context(), `SELECT outcome FROM sqlwise_internal.migration_receipts WHERE attempt_id=$1`, job.ExecutionID).Scan(&outcome); err != nil || outcome != "fenced" {
+		t.Fatalf("receipt = %q, %v; a fence must stop the lost transaction from ever committing", outcome, err)
+	}
+	if a := f.attempt(t, job.ExecutionID); a.Status != migration.StatusFailed || a.ReconciledAt == nil {
+		t.Fatalf("execution = %+v", a)
+	}
+}
+
+func TestWorkerDeathDuringBatchRunLeavesItPartialForApprovedRecovery(t *testing.T) {
+	f := newFlow(t)
+	f.seedAccounts(t)
+	if _, err := f.target.Exec(t.Context(), `DELETE FROM fail_switch`); err != nil {
+		t.Fatal(err)
+	}
+	spec := migration.BatchSpec{Schema: "public", Table: "accounts", Key: "id", Column: "status", Value: "archived"}
+	d, err := f.service.Create(f.editor.Ctx, "db", migration.DraftInput{Title: "Archive accounts", SQLDown: "UPDATE accounts SET status = 'active'",
+		Batch: &spec, BatchSize: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := f.approved(t, d, migration.OpUp)
+	job := f.enqueue(t, req)
+	f.dieAfterClaim(t, job.ID, req.ID, "batch")
+	// The dead worker committed two batches before its process ended.
+	gate, err := f.gates.Gate(t.Context(), "db", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := gate.PrepareBatch(t.Context(), job.ExecutionID, database.BatchUpdate(spec), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	died := errors.New("process ended")
+	if _, err := gate.RunBatches(t.Context(), plan, database.BatchHooks{BeforeCommit: func(batch int) error {
+		if batch == 3 {
+			return died
+		}
+		return nil
+	}}); !errors.Is(err, died) {
+		t.Fatal(err)
+	}
+	gate.Close()
+	f.worker(t, f.runner())
+	done := f.settled(t, job.ID)
+	if done.Status != jobs.Blocked || done.Effect != jobs.EffectPartial || len(done.Recovery()) != 2 {
+		t.Fatalf("job after worker death = %+v", done)
+	}
+	if a := f.attempt(t, job.ExecutionID); a.Status != migration.StatusPartiallyApplied || !a.Batch {
+		t.Fatalf("execution = %+v", a)
+	}
+	// Nothing continues automatically: only the two committed batches are applied.
+	if n := f.count(t, `SELECT count(*) FROM accounts WHERE status='archived'`); n != 200 {
+		t.Fatalf("%d rows archived; the interrupted run continued without approval", n)
+	}
+}
