@@ -76,6 +76,15 @@ set +a
 go run ./cmd/server
 ```
 
+Approved migrations run only in the worker. In a third terminal, load the environment and start it:
+
+```sh
+set -a
+. ./.env
+set +a
+go run ./cmd/worker
+```
+
 Open the URL printed by the SPA development server and sign in with the administrator password you chose. Its `/api/v1` requests proxy to Go on port 8080, keeping cookie and CSRF handling same-origin. The Go process can run API-only during development without a frontend build. To serve the built SPA directly from Go on <http://localhost:8080/login>, run `pnpm run spa:build` first.
 
 ## SPA and retained legacy frontend
@@ -96,6 +105,10 @@ The Docker stack includes a seeded PostgreSQL target. Register it under **Admin 
 | MySQL      | `mysql:3306`            | `localhost:3307`            | `sqlwise_demo` |
 
 Both demo targets use username `sqlwise_target`, password `sqlwise_target_dev_only`, and TLS disabled. Grant a group access after registering a target.
+
+## Jobs and large-data benchmark
+
+Executions are queued durably and run by `cmd/worker`, one job at a time per target database. Measure a whole-table UPDATE against the same dataset in checkpointed batches with `go run ./cmd/batchbench -admin-url <disposable server URL>`.
 
 ## Tests
 
