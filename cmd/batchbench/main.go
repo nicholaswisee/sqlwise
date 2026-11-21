@@ -33,6 +33,10 @@ type report struct {
 	Batches         int64   `json:"batches"`
 	BatchRows       int64   `json:"batched_rows"`
 	PeakHeapMB      float64 `json:"peak_go_heap_mb"`
+	CompSeconds     float64 `json:"compensate_seconds"`
+	CompBatches     int64   `json:"compensated_batches"`
+	CompRows        int64   `json:"compensated_rows"`
+	Restored        bool    `json:"all_rows_restored"`
 	FailAtBatch     int     `json:"fail_at_batch"`
 	FailedCommitted int64   `json:"batches_committed_before_failure"`
 	FailedRows      int64   `json:"rows_committed_before_failure"`
@@ -134,6 +138,25 @@ func run() error {
 		return err
 	}
 	r.Batches, r.BatchRows = p.Batches, p.Rows
+
+	// Compensate the whole run in reverse batch order from the saved before-images.
+	gate, err = database.AcquireGate(ctx, target.Copy(), "bench", 5*time.Second)
+	if err != nil {
+		return err
+	}
+	started = time.Now()
+	p, err = gate.RevertBatches(ctx, "bench-full", database.BatchHooks{})
+	r.CompSeconds = time.Since(started).Seconds()
+	gate.Close()
+	if err != nil {
+		return err
+	}
+	r.CompBatches, r.CompRows = p.Compensated, p.CompensatedRows
+	var changed int64
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM bench.accounts WHERE status <> 'active'`).Scan(&changed); err != nil {
+		return err
+	}
+	r.Restored = changed == 0 && p.Reverted()
 
 	if *failAt > 0 {
 		if err := failAndResume(ctx, conn, target, spec, *size, *failAt, &r); err != nil {
