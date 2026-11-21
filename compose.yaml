@@ -30,6 +30,29 @@ services:
       retries: 5
       start_period: 10s
 
+  # Executes queued jobs; add replicas with distinct WORKER_ID values.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://sqlwise:sqlwise_dev_only@postgres:5432/sqlwise_platform?sslmode=disable
+      SQLWISE_CONNECTION_KEY: ${SQLWISE_CONNECTION_KEY:-I7fWIhEZr5Q+tMLSjrP1LXprBoDi1Iz65M5fQ4oPbr4=}
+      WORKER_ID: worker-1
+      WORKER_METRICS_ADDR: 0.0.0.0:9091
+    command: ["sqlwise-worker"]
+    stop_grace_period: 45s
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9091/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   frontend:
     profiles: ["legacy"]
     build:
