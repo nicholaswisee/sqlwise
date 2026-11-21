@@ -110,6 +110,6 @@ export type Job = {
   job_id: string;
   request_id: string;
   execution_id: string;
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: "queued" | "running" | "succeeded" | "failed" | "blocked";
   error?: string;
 };

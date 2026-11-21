@@ -33,6 +33,7 @@ test("stale plans are flagged and only finished jobs stop polling", () => {
   expect(jobFinished({ status: "queued" })).toBe(false);
   expect(jobFinished({ status: "running" })).toBe(false);
   expect(jobFinished({ status: "failed" })).toBe(true);
+  expect(jobFinished({ status: "blocked" })).toBe(true);
   expect(jobFinished(undefined)).toBe(false);
 });
 

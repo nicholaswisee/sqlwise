@@ -64,7 +64,8 @@ export function requestStatusLabel(status: Request["status"]): string {
   }[status];
 }
 export function jobFinished(job: Pick<Job, "status"> | undefined): boolean {
-  return job?.status === "succeeded" || job?.status === "failed";
+  // A blocked job needs recovery or reconciliation; polling it here never ends.
+  return job?.status === "succeeded" || job?.status === "failed" || job?.status === "blocked";
 }
 
 export function planIsStale(plannedSQL: string | undefined, currentSQL: string): boolean {
