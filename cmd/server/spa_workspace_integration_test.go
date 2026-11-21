@@ -44,6 +44,7 @@ func newSPAWorkspaceFixture(t *testing.T) *spaWorkspaceFixture {
 	}
 	pools := database.NewPools(store)
 	t.Cleanup(pools.Close)
+	startWorker(t, f.Pool, f.Access, pools)
 	router := newAPIRouter(f.Auth, f.Access)
 	adapter := migrationTargets{resolver: pools}
 	registerDatabaseAPIRoutes(router, f.Auth, f.Access, f.Pool, databaseTargets{targets: adapter, snapshot: adapter, store: store, pools: pools})

@@ -168,8 +168,7 @@ func (h *Migrations) RegisterAPI(router *gin.Engine) {
 	// Leaders with view access decide for their group; the service checks leadership.
 	view.POST("/requests/:requestID/approve", h.apiDecide(true))
 	view.POST("/requests/:requestID/reject", h.apiDecide(false))
-	// TODO(jason): GET /jobs/:jobID belongs to the jobs API; this serves the stand-in queue.
-	view.GET("/jobs/:jobID", h.apiJob)
+	// GET /jobs/:jobID is served by the jobs API (handlers.Jobs).
 	view.GET("/migrations/:migrationID/attempts/:attemptID", h.apiAttempt)
 	edit.POST("/migrations/:migrationID/attempts/:attemptID/reconcile", h.apiReconcile)
 	view.POST("/schema-diff/preview", h.apiPreview)
@@ -321,19 +320,6 @@ func (h *Migrations) apiExecute(c *gin.Context) {
 	}
 	c.Header("Location", "/api/v1/databases/"+databaseID+"/jobs/"+job.ID)
 	c.JSON(http.StatusAccepted, gin.H{"data": apiJob{job.ID, job.RequestID, job.ExecutionID, job.Status, job.Error}})
-}
-
-func (h *Migrations) apiJob(c *gin.Context) {
-	if h.jobs == nil {
-		apiError(c, http.StatusNotFound, "not_found", "Job not found for this database.")
-		return
-	}
-	job, e := h.jobs.Job(c.Request.Context(), c.Param("databaseID"), c.Param("jobID"))
-	if e != nil {
-		apiMigrationFailure(c, e)
-		return
-	}
-	apiData(c, apiJob{job.ID, job.RequestID, job.ExecutionID, job.Status, job.Error})
 }
 
 func (h *Migrations) apiCreateRequest(c *gin.Context) {

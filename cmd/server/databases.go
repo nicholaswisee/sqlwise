@@ -12,9 +12,11 @@ import (
 	"sqlwise/internal/auth"
 	"sqlwise/internal/database"
 	"sqlwise/internal/handlers"
+	"sqlwise/internal/jobs"
 	"sqlwise/internal/migration"
 	"sqlwise/internal/queryplan"
 	"sqlwise/internal/schemadiff"
+	"sqlwise/internal/telemetry"
 	"sqlwise/internal/web/views"
 )
 
@@ -35,7 +37,8 @@ func loadDatabaseTargets(pool *pgxpool.Pool) (databaseTargets, func(), error) {
 		return databaseTargets{}, nil, err
 	}
 	store := database.NewStore(pool, cipher)
-	pools := database.NewPools(store)
+	pools := database.NewPools(store).WithTracer(telemetry.PGXTracer{})
+	jobs.BindTargetPools(pools.Stat)
 	adapter := migrationTargets{resolver: pools}
 	return databaseTargets{targets: adapter, snapshot: adapter, store: store, pools: pools}, pools.Close, nil
 }
