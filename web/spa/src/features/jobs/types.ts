@@ -22,6 +22,7 @@ export type JobView = {
   blocked_by?: string;
   resolved_by?: string;
   recovery: RecoveryOperation[];
+  recovery_execution_id: string;
   next_run_at?: string;
   queued_at: string;
   started_at?: string;

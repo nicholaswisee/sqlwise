@@ -51,6 +51,7 @@ const job = (over: Record<string, unknown> = {}) => ({
   committed_rows: 0,
   total_rows: null,
   recovery: [],
+  recovery_execution_id: "execution-1",
   queued_at: "2026-11-20T10:00:00Z",
   updated_at: "2026-11-20T10:00:00Z",
   ...over,
@@ -248,4 +249,100 @@ test("polling a job without permission shows the denial", async ({ page }) => {
   );
   await page.goto("/databases/db-1/jobs/job-1");
   await expect(page.getByRole("alert")).toContainText("You do not have permission");
+});
+
+test("a batch migration is saved from the template, not from free SQL", async ({ page }) => {
+  await mock(page);
+  let body: Record<string, unknown> | undefined;
+  await page.route("**/api/v1/databases/db-1/migrations", (r) => {
+    if (r.request().method() === "POST") {
+      body = r.request().postDataJSON();
+      return r.fulfill(envelope({ ...draft, id: "migration-2" }, 201));
+    }
+    return r.fulfill(
+      envelope({
+        workspace: workspace(true),
+        current_version: 1,
+        drafts: [draft],
+        attempts: [],
+        committed: [],
+        head: { active: [], pending: [] },
+      }),
+    );
+  });
+  await page.route("**/api/v1/databases/db-1/migrations/migration-2", (r) =>
+    r.fulfill(failure(503, "unavailable", "stub")),
+  );
+  await page.goto("/databases/db-1/migrations");
+  await page.getByLabel("Title").fill("Archive accounts");
+  await page.getByLabel("Run as checkpointed batches").check();
+  await expect(page.getByLabel("SQL", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Table").fill("accounts");
+  await page.getByLabel("Column to update").fill("status");
+  await page.getByLabel("New value").fill("archived");
+  await page.getByLabel("Rows per batch").fill("500");
+  await page.getByLabel("SQL down").fill("UPDATE accounts SET status = 'active';");
+  expect(await noPageOverflow(page)).toBe(true);
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect
+    .poll(() => body)
+    .toMatchObject({
+      title: "Archive accounts",
+      sql: "",
+      batch: {
+        schema: "public",
+        table: "accounts",
+        key: "id",
+        column: "status",
+        value: "archived",
+        batch_size: 500,
+      },
+    });
+});
+
+test("an approved recovery can run while the database is blocked; other requests cannot", async ({
+  page,
+}) => {
+  await mock(page);
+  const base = {
+    migration_id: "migration-1",
+    migration_title: "Archive accounts",
+    definition_revision: 3,
+    definition_hash: "definition-1",
+    expected_version: 1,
+    requested_by_name: "editor",
+    status: "approved",
+    review_round: 1,
+    approvals: [],
+    execution: null,
+    created_at: "2026-11-20T09:30:00Z",
+    updated_at: "2026-11-20T10:00:00Z",
+  };
+  await page.route("**/api/v1/databases/db-1/migrations/migration-1", (r) =>
+    r.fulfill(
+      envelope({
+        workspace: workspace(true),
+        current_version: 1,
+        draft,
+        attempts: [],
+        requests: [
+          {
+            ...base,
+            id: "request-c",
+            operation: "compensate",
+            recovers_execution_id: "execution-1",
+          },
+          { ...base, id: "request-f", operation: "forward" },
+        ],
+        eligible: [],
+        head: { active: [], pending: [] },
+        blocked: "Version 2 was partially applied in batches.",
+        blocked_by: null,
+      }),
+    ),
+  );
+  await page.goto("/databases/db-1/migrations/migration-1");
+  await expect(page.getByText("Compensate revision 3 (restores saved values)")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Execute compensate" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Execute forward as v2" })).toBeDisabled();
 });

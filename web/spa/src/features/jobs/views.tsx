@@ -261,7 +261,7 @@ export function JobDetailPage({ db, jobID }: { db: string; jobID: string }) {
             expected_revision: draft.revision,
             expected_definition_hash: draft.definition_hash,
             expected_version: workspace.data!.current_version,
-            recovers_execution_id: job.execution_id,
+            recovers_execution_id: job.recovery_execution_id,
           }),
         },
       );

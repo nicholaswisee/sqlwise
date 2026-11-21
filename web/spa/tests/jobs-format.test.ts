@@ -25,6 +25,7 @@ const job = (over: Partial<JobView> = {}): JobView => ({
   committed_rows: 0,
   total_rows: null,
   recovery: [],
+  recovery_execution_id: "e-1",
   queued_at: "2026-11-20T10:00:00Z",
   updated_at: "2026-11-20T10:00:00Z",
   ...over,
