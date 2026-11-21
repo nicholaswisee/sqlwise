@@ -238,13 +238,16 @@ func (w *Worker) run(ctx context.Context, gate *database.Gate, c claimed, log *s
 	}()
 	var last database.BatchProgress
 	progress := func(direction string, p database.BatchProgress) {
-		RecordBatch(direction, p.Batches-last.Batches, p.Rows-last.Rows)
+		batches, rows, total := p.Batches, p.Rows, p.TotalRows
 		if direction == database.Compensate {
-			RecordBatch(direction, p.Compensated-last.Compensated, 0)
+			// A compensation job reports batches it reverted out of those committed.
+			RecordBatch(direction, p.Compensated-last.Compensated, p.CompensatedRows-last.CompensatedRows)
+			batches, rows, total = p.Compensated, p.CompensatedRows, p.Rows
+		} else {
+			RecordBatch(direction, p.Batches-last.Batches, p.Rows-last.Rows)
 		}
 		last = p
-		total := p.TotalRows
-		if err := w.store.progress(context.WithoutCancel(ctx), c.ID, w.cfg.ID, p.Batches, p.Rows, &total); err != nil {
+		if err := w.store.progress(context.WithoutCancel(ctx), c.ID, w.cfg.ID, batches, rows, &total); err != nil {
 			log.WarnContext(ctx, "job progress not recorded", "event", "job.progress.error")
 		}
 		log.InfoContext(ctx, "job batch committed", "event", "job.batch.committed", "direction", direction,
@@ -273,7 +276,8 @@ func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int,
 		log.WarnContext(ctx, "job claim lost before recording", "event", "job.claim_lost", "status", string(o.Status))
 		return
 	}
-	if c.RecoversExecutionID != "" {
+	// A recovery that changed nothing leaves the original block in place.
+	if c.RecoversExecutionID != "" && o.Status != Failed {
 		if err := w.store.resolve(ctx, c.DatabaseID, c.RecoversExecutionID, c.ID); err != nil {
 			log.ErrorContext(ctx, "recovered block not released", "event", "job.resolve.error")
 		}

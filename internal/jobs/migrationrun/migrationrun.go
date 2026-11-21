@@ -26,90 +26,95 @@ func (c Consumer) Consume(ctx context.Context, tx pgx.Tx, databaseID, requestID 
 	if err != nil {
 		return jobs.Consumed{}, err
 	}
-	// TODO(james): carry the interrupted execution ID for resume/compensate requests.
-	return jobs.Consumed{ExecutionID: e.ID, MigrationID: e.MigrationID, Operation: string(e.Operation), ActorID: e.ActorID}, nil
-}
-
-// BatchSource resolves the approved batch template of a job, if any.
-// TODO(james): batch-mode definitions implement this from the immutable revision.
-type BatchSource interface {
-	Batch(ctx context.Context, job jobs.Job) (spec database.BatchUpdate, size int, ok bool, err error)
+	return jobs.Consumed{ExecutionID: e.ID, MigrationID: e.MigrationID, Operation: string(e.Operation), ActorID: e.ActorID,
+		RecoversExecutionID: e.RecoversExecutionID}, nil
 }
 
 // Runner executes jobs on the gate the worker already holds.
 type Runner struct {
 	Service *migration.Service
-	Batches BatchSource
 }
 
 func (r Runner) Run(ctx context.Context, gate *database.Gate, job jobs.Job, progress jobs.Progress) jobs.Outcome {
-	if r.Batches != nil {
-		spec, size, ok, err := r.Batches.Batch(ctx, job)
-		if err != nil {
-			return classify(err)
-		}
-		if ok {
-			return RunBatch(ctx, gate, job, spec, size, progress)
-		}
-	}
-	switch job.Operation {
-	case jobs.OpResume, jobs.OpCompensate:
-		// TODO(james): dispatch compensation to the migration domain using database.Gate.CommitBatch.
-		return jobs.Failure("This recovery operation is not available yet. Nothing was executed.")
-	}
-	_, err := r.Service.Run(ctx, Target(gate), job.RequestID)
-	return classify(err)
+	a, err := r.Service.RunWith(ctx, Target(gate), Batches(gate, progress), job.RequestID)
+	return classify(job, a, err)
 }
 
-// RunBatch runs or resumes the forward batches of one execution. A resume
-// continues the ledger of the interrupted execution, never a new scope.
-func RunBatch(ctx context.Context, gate *database.Gate, job jobs.Job, spec database.BatchUpdate, size int, progress jobs.Progress) jobs.Outcome {
-	execution := job.ExecutionID
-	if job.Operation == jobs.OpResume {
-		execution = job.RecoversExecutionID
+// Batches runs batch templates and their compensation on the gate session.
+func Batches(gate *database.Gate, progress jobs.Progress) migration.BatchRunner {
+	if progress == nil {
+		progress = func(string, database.BatchProgress) {}
 	}
-	plan, err := gate.PrepareBatch(ctx, execution, spec, size)
+	return gateBatches{gate: gate, progress: progress}
+}
+
+type gateBatches struct {
+	gate     *database.Gate
+	progress jobs.Progress
+}
+
+func (b gateBatches) Forward(ctx context.Context, executionID string, spec migration.BatchSpec, size int) (migration.BatchResult, error) {
+	plan, err := b.gate.PrepareBatch(ctx, executionID, database.BatchUpdate(spec), size)
 	if err != nil {
-		return batchFailure(err, database.BatchProgress{})
+		return migration.BatchResult{}, batchError(err)
 	}
+	return b.track(database.Forward, func(hooks database.BatchHooks) (database.BatchProgress, error) {
+		return b.gate.RunBatches(ctx, plan, hooks)
+	})
+}
+
+func (b gateBatches) Compensate(ctx context.Context, executionID string) (migration.BatchResult, error) {
+	return b.track(database.Compensate, func(hooks database.BatchHooks) (database.BatchProgress, error) {
+		return b.gate.RevertBatches(ctx, executionID, hooks)
+	})
+}
+
+// track publishes durable progress after every batch; a lost gate keeps the last ledger read.
+func (b gateBatches) track(direction string, run func(database.BatchHooks) (database.BatchProgress, error)) (migration.BatchResult, error) {
 	var last database.BatchProgress
-	p, err := gate.RunBatches(ctx, plan, database.BatchHooks{Committed: func(p database.BatchProgress) {
+	p, err := run(database.BatchHooks{Committed: func(p database.BatchProgress) {
 		last = p
-		progress(database.Forward, p)
+		b.progress(direction, p)
 	}})
-	if err != nil {
-		// A lost gate cannot read the ledger; keep the last durable progress seen.
-		if p == (database.BatchProgress{}) {
-			p = last
-		}
-		return batchFailure(err, p)
+	if err != nil && p == (database.BatchProgress{}) {
+		p = last
+	} else if p != (database.BatchProgress{}) {
+		b.progress(direction, p)
 	}
-	progress(database.Forward, p)
-	// TODO(james): finalize committed history only after this confirmed completion.
-	return jobs.Success()
+	return migration.BatchResult{Batches: p.Batches, Rows: p.Rows, TotalRows: p.TotalRows, Compensated: p.Compensated}, batchError(err)
 }
 
-func batchFailure(err error, p database.BatchProgress) jobs.Outcome {
+// batchError keeps the safe target message under the migration error kinds.
+func batchError(err error) error {
+	if err == nil {
+		return nil
+	}
 	message := database.Message(err)
 	if message == "" {
-		message = "The batch stopped unexpectedly."
+		message = "The batch run stopped unexpectedly."
 	}
-	if p.Batches > 0 || errors.Is(err, database.ErrOutcomeUnknown) {
-		return jobs.Partial(fmt.Sprintf("%s %d batches (%d rows) stay committed; resume or compensate through an approved request.", message, p.Batches, p.Rows))
+	kind := migration.ErrExecutionFailed
+	switch {
+	case errors.Is(err, database.ErrOutcomeUnknown):
+		kind = migration.ErrOutcomeUnknown
+	case errors.Is(err, database.ErrConflict):
+		kind = migration.ErrConflict
+	case errors.Is(err, database.ErrValidation), errors.Is(err, database.ErrNotFound):
+		kind = migration.ErrValidation
 	}
-	if errors.Is(err, database.ErrConnectionUnavailable) || errors.Is(err, database.ErrTimeout) {
-		return jobs.Transient(message + " No batch was committed.")
-	}
-	return jobs.Failure(message + " No batch was committed.")
+	return &migration.Error{Kind: kind, Message: message}
 }
 
 // classify maps a migration result to a job outcome. Run never repeats a
 // recorded execution, so a retry after a transient error only reconciles.
-func classify(err error) jobs.Outcome {
+func classify(job jobs.Job, a migration.Attempt, err error) jobs.Outcome {
 	message := migration.Message(err)
+	ownPartial := a.Status == migration.StatusPartiallyApplied && (a.ID == job.ExecutionID || a.ID == job.RecoversExecutionID)
 	switch {
 	case err == nil:
 		return jobs.Success()
+	case errors.Is(err, migration.ErrRecoveryRequired) && ownPartial:
+		return jobs.Partial(or(a.Error, message))
 	case errors.Is(err, migration.ErrOutcomeUnknown):
 		return jobs.Unknown(message)
 	case errors.Is(err, migration.ErrTargetUnavailable):

@@ -76,7 +76,14 @@ func (f *flow) approved(t *testing.T, d migration.Draft, op migration.Operation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req, err = f.service.SubmitRequest(f.editor.Ctx, "db", req.ID); err != nil {
+	return f.review(t, req)
+}
+
+// review submits a request and approves it as both group leaders.
+func (f *flow) review(t *testing.T, req migration.Request) migration.Request {
+	t.Helper()
+	req, err := f.service.SubmitRequest(f.editor.Ctx, "db", req.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	for _, leader := range []struct {
@@ -280,25 +287,14 @@ func TestWorkerDeathAfterTargetCommitIsRecoveredOnce(t *testing.T) {
 	}
 }
 
-// batches serves one approved batch template per job ID.
-type batches map[string]database.BatchUpdate
-
-func (b batches) Batch(_ context.Context, job jobs.Job) (database.BatchUpdate, int, bool, error) {
-	id := job.ID
-	if job.RecoversExecutionID != "" {
-		id = job.RecoversExecutionID
-	}
-	spec, ok := b[id]
-	return spec, 100, ok, nil
-}
-
-func (f *flow) seedAccounts(t *testing.T, rows int) {
+func (f *flow) seedAccounts(t *testing.T) {
 	t.Helper()
 	for _, sql := range []string{
-		`CREATE TABLE accounts (id bigint PRIMARY KEY, status text NOT NULL, tier text NOT NULL DEFAULT 'basic')`,
+		`CREATE TABLE accounts (id bigint PRIMARY KEY, status text NOT NULL)`,
 		`INSERT INTO accounts SELECT g, 'active' FROM generate_series(1, 500) g`,
 		// A real SQL error in the middle of batch 3 while the switch row exists.
 		`CREATE TABLE fail_switch (on_row bigint)`,
+		`INSERT INTO fail_switch VALUES (250)`,
 		`CREATE FUNCTION fail_on_switch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
 			IF EXISTS (SELECT 1 FROM fail_switch WHERE on_row = NEW.id) THEN RAISE EXCEPTION 'injected failure on row %', NEW.id; END IF;
 			RETURN NEW; END $$`,
@@ -310,85 +306,190 @@ func (f *flow) seedAccounts(t *testing.T, rows int) {
 	}
 }
 
-func (f *flow) batchJob(t *testing.T, op, recovers string) jobs.Job {
+// partialBatch runs an approved batch migration that stops in batch 3.
+func (f *flow) partialBatch(t *testing.T) (migration.Draft, jobs.Job) {
 	t.Helper()
-	request, execution, migrationID := jobstest.Request(t, f.p, "db", f.editor.ID)
-	return jobstest.Insert(t, f.p, jobs.Job{DatabaseID: "db", MigrationID: migrationID, RequestID: request, ExecutionID: execution,
-		RecoversExecutionID: recovers, Operation: op, ActorID: f.editor.ID})
-}
-
-func TestBatchFailureStaysPartialBlocksTheTargetAndResumes(t *testing.T) {
-	f := newFlow(t)
-	f.seedAccounts(t, 500)
-	if _, err := f.target.Exec(t.Context(), `INSERT INTO fail_switch VALUES (250)`); err != nil {
+	f.seedAccounts(t)
+	d, err := f.service.Create(f.editor.Ctx, "db", migration.DraftInput{Title: "Archive accounts", SQLDown: "UPDATE accounts SET status = 'active'",
+		Batch: &migration.BatchSpec{Schema: "public", Table: "accounts", Key: "id", Column: "status", Value: "archived"}, BatchSize: 100})
+	if err != nil {
 		t.Fatal(err)
 	}
-	archive := database.BatchUpdate{Schema: "public", Table: "accounts", Key: "id", Column: "status", Value: "archived"}
-	src := batches{}
-	r := migrationrun.Runner{Service: f.service, Batches: src}
-	first := f.batchJob(t, "up", "")
-	src[first.ID] = archive
-	stop := f.worker(t, r)
-	partial := f.settled(t, first.ID)
-	if partial.Status != jobs.Blocked || partial.Effect != jobs.EffectPartial || partial.CommittedBatches != 2 || partial.CommittedRows != 200 {
-		t.Fatalf("failed batch job = %+v", partial)
+	if d.SQL != `UPDATE "public"."accounts" SET "status" = 'archived';` {
+		t.Fatalf("rendered SQL = %q", d.SQL)
 	}
-	if !strings.Contains(partial.Error, "2 batches (200 rows) stay committed") {
-		t.Fatalf("error %q must state the committed work", partial.Error)
+	job := f.enqueue(t, f.approved(t, d, migration.OpUp))
+	partial := f.settled(t, job.ID)
+	if partial.Status != jobs.Blocked || partial.Effect != jobs.EffectPartial || partial.CommittedBatches != 2 || partial.CommittedRows != 200 ||
+		partial.TotalRows == nil || *partial.TotalRows != 500 {
+		t.Fatalf("failed batch job = %+v", partial)
 	}
 	if n := f.count(t, `SELECT count(*) FROM accounts WHERE status='archived'`); n != 200 {
 		t.Fatalf("%d rows archived after failure, want the 200 committed", n)
 	}
+	return d, partial
+}
+
+func (f *flow) recovery(t *testing.T, d migration.Draft, op migration.Operation, execution string) migration.Request {
+	t.Helper()
+	detail, err := f.service.Detail(f.editor.Ctx, "db", d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := f.service.CreateRequest(f.editor.Ctx, "db", d.ID, migration.RequestInput{Operation: op, ExpectedRevision: detail.Draft.Revision,
+		ExpectedDefinition: detail.Draft.DefinitionHash(), ExpectedVersion: detail.CurrentVersion, RecoversExecutionID: execution})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f.review(t, req)
+}
+
+func (f *flow) attempt(t *testing.T, id string) migration.Attempt {
+	t.Helper()
+	h, err := f.service.History(f.auditor.Ctx, "db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range h.Attempts {
+		if a.ID == id {
+			return a
+		}
+	}
+	t.Fatalf("execution %s not found", id)
+	return migration.Attempt{}
+}
+
+func TestPartialBatchBlocksTheTargetAndAnApprovedResumeCommitsHistory(t *testing.T) {
+	f := newFlow(t)
+	stop := f.worker(t, f.runner())
+	d, first := f.partialBatch(t)
+	if a := f.attempt(t, first.ExecutionID); a.Status != migration.StatusPartiallyApplied || !a.Batch {
+		t.Fatalf("execution = %+v", a)
+	}
+	detail, err := f.service.Detail(f.editor.Ctx, "db", d.ID)
+	if err != nil || detail.CurrentVersion != 0 || !strings.Contains(detail.Blocked, "partially applied in batches") {
+		t.Fatalf("detail after partial = version %d, blocked %q, %v", detail.CurrentVersion, detail.Blocked, err)
+	}
 	// A later migration on the same target waits for recovery.
-	later := f.batchJob(t, "up", "")
-	src[later.ID] = database.BatchUpdate{Schema: "public", Table: "accounts", Key: "id", Column: "tier", Value: "gold"}
+	later := f.enqueue(t, f.approved(t, f.define(t, "Later", "CREATE TABLE later (id int)", "DROP TABLE later"), migration.OpUp))
 	time.Sleep(600 * time.Millisecond)
-	if j, _ := f.store.Get(t.Context(), "db", later.ID); j.Status != jobs.Queued || j.BlockedBy != first.ID {
+	if j, _ := f.store.Get(t.Context(), "db", later.ID); j.Status != jobs.Queued || j.BlockedBy != first.ID || f.has(t, "later") {
 		t.Fatalf("later job = %+v, want queued behind %s", j, first.ID)
 	}
 	stop()
 	if _, err := f.target.Exec(t.Context(), `DELETE FROM fail_switch`); err != nil {
 		t.Fatal(err)
 	}
-	resume := f.batchJob(t, jobs.OpResume, first.ExecutionID)
-	src[first.ExecutionID] = archive
-	f.worker(t, r)
+	resumeReq := f.recovery(t, d, migration.OpResume, first.ExecutionID)
+	resume := f.enqueue(t, resumeReq)
+	f.worker(t, f.runner())
 	done := f.settled(t, resume.ID)
-	if done.Status != jobs.Succeeded || done.CommittedBatches != 5 || done.CommittedRows != 500 {
+	if done.Status != jobs.Succeeded || done.CommittedBatches != 5 || done.CommittedRows != 500 || done.RecoversExecutionID != first.ExecutionID {
 		t.Fatalf("resume job = %+v", done)
 	}
 	if n := f.count(t, `SELECT count(*) FROM accounts WHERE status='archived'`); n != 500 {
 		t.Fatalf("%d rows archived after resume", n)
 	}
-	if n := f.count(t, `SELECT count(*) FROM sqlwise_internal.batch_rows WHERE execution_id='`+first.ExecutionID+`'`); n != 500 {
-		t.Fatalf("%d before-images; a batch was redone or lost", n)
-	}
 	if n := f.count(t, `SELECT count(*) FROM sqlwise_internal.batch_checkpoints WHERE execution_id='`+first.ExecutionID+`'`); n != 5 {
-		t.Fatalf("%d checkpoints, want 5", n)
+		t.Fatalf("%d checkpoints; a batch was redone", n)
 	}
-	if j := f.settled(t, later.ID); j.Status != jobs.Succeeded {
-		t.Fatalf("later job after recovery = %+v", j)
+	// History records the original execution only once the whole action completed.
+	h, err := f.service.History(f.auditor.Ctx, "db")
+	if err != nil || len(h.Committed) == 0 || h.Committed[0].ID != first.ExecutionID || h.Committed[0].AppliedVersion != 1 {
+		t.Fatalf("committed history = %+v, %v", h.Committed, err)
+	}
+	if j, _ := f.store.Get(t.Context(), "db", first.ID); j.ResolvedBy != resume.ID {
+		t.Fatalf("blocked job after resume = %+v", j)
+	}
+	// The waiting request was approved at version 0; the resumed migration became version 1.
+	if j := f.settled(t, later.ID); j.Status != jobs.Failed || !strings.Contains(j.Error, "moved from version 0 to 1") || f.has(t, "later") {
+		t.Fatalf("stale later job after recovery = %+v", j)
+	}
+	// Redelivering the finished resume reports its recorded outcome and changes nothing.
+	gate, err := f.gates.Gate(t.Context(), "db", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Close()
+	if _, err := f.service.RunWith(t.Context(), migrationrun.Target(gate), migrationrun.Batches(gate, nil), resumeReq.ID); err != nil {
+		t.Fatalf("redelivered resume = %v", err)
 	}
 }
 
-func TestSameTargetBatchJobsNeverInterleaveCommits(t *testing.T) {
+func TestCompensationRevertsCommittedBatchesAndReleasesTheTarget(t *testing.T) {
 	f := newFlow(t)
-	f.seedAccounts(t, 500)
-	src := batches{}
-	r := migrationrun.Runner{Service: f.service, Batches: src}
-	a, b := f.batchJob(t, "up", ""), f.batchJob(t, "up", "")
-	src[a.ID] = database.BatchUpdate{Schema: "public", Table: "accounts", Key: "id", Column: "status", Value: "archived"}
-	src[b.ID] = database.BatchUpdate{Schema: "public", Table: "accounts", Key: "id", Column: "tier", Value: "gold"}
-	f.worker(t, r)
-	f.worker(t, r)
-	for _, j := range []jobs.Job{a, b} {
-		if done := f.settled(t, j.ID); done.Status != jobs.Succeeded {
-			t.Fatalf("job = %+v", done)
+	f.worker(t, f.runner())
+	d, first := f.partialBatch(t)
+	job := f.enqueue(t, f.recovery(t, d, migration.OpCompensate, first.ExecutionID))
+	done := f.settled(t, job.ID)
+	if done.Status != jobs.Succeeded || done.CommittedBatches != 2 || done.CommittedRows != 200 {
+		t.Fatalf("compensation job = %+v", done)
+	}
+	if n := f.count(t, `SELECT count(*) FROM accounts WHERE status <> 'active'`); n != 0 {
+		t.Fatalf("%d rows still changed after compensation", n)
+	}
+	a := f.attempt(t, first.ExecutionID)
+	if a.Status != migration.StatusReverted || a.AppliedVersion != 0 {
+		t.Fatalf("execution after compensation = %+v", a)
+	}
+	h, err := f.service.History(f.auditor.Ctx, "db")
+	if err != nil || len(h.Committed) != 0 || h.CurrentVersion != 0 {
+		t.Fatalf("a compensated execution entered history: %+v, %v", h.Committed, err)
+	}
+	later := f.enqueue(t, f.approved(t, f.define(t, "Later", "CREATE TABLE later (id int)", "DROP TABLE later"), migration.OpUp))
+	if j := f.settled(t, later.ID); j.Status != jobs.Succeeded {
+		t.Fatalf("job after compensation = %+v", j)
+	}
+}
+
+func TestCompensationStopsOnExternalChangesAndKeepsTheTargetBlocked(t *testing.T) {
+	f := newFlow(t)
+	f.worker(t, f.runner())
+	d, first := f.partialBatch(t)
+	// An application changes a row of the newest committed batch.
+	if _, err := f.target.Exec(t.Context(), `UPDATE accounts SET status='closed' WHERE id=150`); err != nil {
+		t.Fatal(err)
+	}
+	job := f.enqueue(t, f.recovery(t, d, migration.OpCompensate, first.ExecutionID))
+	stopped := f.settled(t, job.ID)
+	if stopped.Status != jobs.Blocked || stopped.Effect != jobs.EffectPartial || !strings.Contains(stopped.Error, "changed after it committed") {
+		t.Fatalf("compensation job = %+v", stopped)
+	}
+	if got := stopped.RecoveryTarget(); got != first.ExecutionID || len(stopped.Recovery()) != 2 {
+		t.Fatalf("recovery offered for %q %v, want the original execution", got, stopped.Recovery())
+	}
+	if n := f.count(t, `SELECT count(*) FROM accounts WHERE id=150 AND status='closed'`); n != 1 {
+		t.Fatal("compensation overwrote the external change")
+	}
+	if a := f.attempt(t, first.ExecutionID); a.Status != migration.StatusPartiallyApplied || !strings.Contains(a.Error, "Compensation stopped") {
+		t.Fatalf("execution after stopped compensation = %+v", a)
+	}
+	later := f.enqueue(t, f.approved(t, f.define(t, "Later", "CREATE TABLE later (id int)", "DROP TABLE later"), migration.OpUp))
+	time.Sleep(600 * time.Millisecond)
+	if j, _ := f.store.Get(t.Context(), "db", later.ID); j.Status != jobs.Queued || j.BlockedBy != job.ID {
+		t.Fatalf("later job = %+v, want it blocked by the stopped compensation", j)
+	}
+}
+
+func TestRecoveryRequestsNeedAPartialBatchExecution(t *testing.T) {
+	f := newFlow(t)
+	f.worker(t, f.runner())
+	d := f.define(t, "Widgets", "CREATE TABLE widgets (id int)", "DROP TABLE widgets")
+	job := f.enqueue(t, f.approved(t, d, migration.OpUp))
+	f.settled(t, job.ID)
+	detail, _ := f.service.Detail(f.editor.Ctx, "db", d.ID)
+	for _, in := range []migration.RequestInput{
+		{Operation: migration.OpResume, RecoversExecutionID: job.ExecutionID},
+		{Operation: migration.OpCompensate, RecoversExecutionID: "0123456789abcdef0123456789abcdef"},
+		{Operation: migration.OpResume},
+	} {
+		in.ExpectedRevision, in.ExpectedDefinition, in.ExpectedVersion = detail.Draft.Revision, detail.Draft.DefinitionHash(), detail.CurrentVersion
+		if _, err := f.service.CreateRequest(f.editor.Ctx, "db", d.ID, in); err == nil {
+			t.Fatalf("recovery request %+v accepted for a non-batch execution", in)
 		}
 	}
-	// Every batch of one execution committed before the other's first batch.
-	if n := f.count(t, `WITH s AS (SELECT execution_id, min(committed_at) lo, max(committed_at) hi FROM sqlwise_internal.batch_checkpoints GROUP BY execution_id)
-		SELECT count(*) FROM s x JOIN s y ON x.execution_id < y.execution_id WHERE x.lo <= y.hi AND y.lo <= x.hi`); n != 0 {
-		t.Fatal("batch commits of two jobs on one target interleaved")
+	if _, err := f.service.Create(f.editor.Ctx, "db", migration.DraftInput{Title: "Bad", SQLDown: "SELECT 1",
+		Batch: &migration.BatchSpec{Schema: "public", Table: "a; DROP TABLE a", Key: "id", Column: "c"}, BatchSize: 10}); !errors.Is(err, migration.ErrValidation) {
+		t.Fatalf("unsafe batch identifier = %v", err)
 	}
 }

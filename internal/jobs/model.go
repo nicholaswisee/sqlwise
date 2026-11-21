@@ -70,6 +70,14 @@ func (j Job) Terminal() bool {
 	return j.Status == Succeeded || j.Status == Failed || (j.Status == Blocked && j.Effect == EffectPartial)
 }
 
+// RecoveryTarget is the execution a resume or compensation must reference.
+func (j Job) RecoveryTarget() string {
+	if j.RecoversExecutionID != "" {
+		return j.RecoversExecutionID
+	}
+	return j.ExecutionID
+}
+
 // Recovery lists the operations a reviewer may request for this job.
 func (j Job) Recovery() []string {
 	if j.Status == Blocked && j.Effect == EffectPartial && j.ResolvedBy == "" {

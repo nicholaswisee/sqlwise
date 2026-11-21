@@ -51,6 +51,7 @@ type apiJobStatus struct {
 	BlockedBy           string     `json:"blocked_by,omitempty"`
 	ResolvedBy          string     `json:"resolved_by,omitempty"`
 	Recovery            []string   `json:"recovery"`
+	RecoveryExecutionID string     `json:"recovery_execution_id"`
 	NextRunAt           *time.Time `json:"next_run_at,omitempty"`
 	QueuedAt            time.Time  `json:"queued_at"`
 	StartedAt           *time.Time `json:"started_at,omitempty"`
@@ -63,7 +64,7 @@ func apiJobStatusDTO(j jobs.Job) apiJobStatus {
 		RecoversExecutionID: j.RecoversExecutionID, Operation: j.Operation, Status: string(j.Status), Effect: string(j.Effect),
 		Terminal: j.Terminal(), Attempts: j.Attempts, MaxAttempts: j.MaxAttempts, CommittedBatches: j.CommittedBatches,
 		CommittedRows: j.CommittedRows, TotalRows: j.TotalRows, Error: j.Error, BlockedBy: j.BlockedBy, ResolvedBy: j.ResolvedBy,
-		Recovery: j.Recovery(), QueuedAt: j.CreatedAt, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt, UpdatedAt: j.UpdatedAt}
+		Recovery: j.Recovery(), RecoveryExecutionID: j.RecoveryTarget(), QueuedAt: j.CreatedAt, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt, UpdatedAt: j.UpdatedAt}
 	if j.Status == jobs.Queued || (j.Status == jobs.Blocked && j.Effect == jobs.EffectUnknown) {
 		next := j.NextRunAt
 		v.NextRunAt = &next
