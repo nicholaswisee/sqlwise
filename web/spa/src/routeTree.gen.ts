@@ -24,6 +24,8 @@ import { Route as AuthenticatedDatabasesDatabaseIDIndexRouteImport } from './rou
 import { Route as AuthenticatedDatabasesDatabaseIDSchemaDiffRouteImport } from './routes/_authenticated/databases/$databaseID/schema-diff'
 import { Route as AuthenticatedAdminGroupsIdDatabasesRouteImport } from './routes/_authenticated/admin/groups/$id/databases'
 import { Route as AuthenticatedAdminGroupsIdMembersRouteImport } from './routes/_authenticated/admin/groups/$id/members'
+import { Route as AuthenticatedDatabasesDatabaseIDJobsIndexRouteImport } from './routes/_authenticated/databases/$databaseID/jobs/index'
+import { Route as AuthenticatedDatabasesDatabaseIDJobsJobIDRouteImport } from './routes/_authenticated/databases/$databaseID/jobs/$jobID'
 import { Route as AuthenticatedDatabasesDatabaseIDMigrationsIndexRouteImport } from './routes/_authenticated/databases/$databaseID/migrations/index'
 import { Route as AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteImport } from './routes/_authenticated/databases/$databaseID/migrations/$migrationID'
 import { Route as AuthenticatedDatabasesDatabaseIDTablesTableIDRouteImport } from './routes/_authenticated/databases/$databaseID/tables/$tableID'
@@ -112,6 +114,18 @@ const AuthenticatedAdminGroupsIdMembersRoute =
     path: '/groups/$id/members',
     getParentRoute: () => AuthenticatedAdminRouteRoute,
   } as any)
+const AuthenticatedDatabasesDatabaseIDJobsIndexRoute =
+  AuthenticatedDatabasesDatabaseIDJobsIndexRouteImport.update({
+    id: '/databases/$databaseID/jobs/',
+    path: '/databases/$databaseID/jobs/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedDatabasesDatabaseIDJobsJobIDRoute =
+  AuthenticatedDatabasesDatabaseIDJobsJobIDRouteImport.update({
+    id: '/databases/$databaseID/jobs/$jobID',
+    path: '/databases/$databaseID/jobs/$jobID',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute =
   AuthenticatedDatabasesDatabaseIDMigrationsIndexRouteImport.update({
     id: '/databases/$databaseID/migrations/',
@@ -162,8 +176,10 @@ export interface FileRoutesByFullPath {
   '/databases/$databaseID/': typeof AuthenticatedDatabasesDatabaseIDIndexRoute
   '/admin/groups/$id/databases': typeof AuthenticatedAdminGroupsIdDatabasesRoute
   '/admin/groups/$id/members': typeof AuthenticatedAdminGroupsIdMembersRoute
+  '/databases/$databaseID/jobs/$jobID': typeof AuthenticatedDatabasesDatabaseIDJobsJobIDRoute
   '/databases/$databaseID/migrations/$migrationID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren
   '/databases/$databaseID/tables/$tableID': typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRoute
+  '/databases/$databaseID/jobs/': typeof AuthenticatedDatabasesDatabaseIDJobsIndexRoute
   '/databases/$databaseID/migrations/': typeof AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute
   '/databases/$databaseID/migrations/$migrationID/': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute
   '/databases/$databaseID/migrations/$migrationID/attempts/$attemptID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute
@@ -182,7 +198,9 @@ export interface FileRoutesByTo {
   '/databases/$databaseID': typeof AuthenticatedDatabasesDatabaseIDIndexRoute
   '/admin/groups/$id/databases': typeof AuthenticatedAdminGroupsIdDatabasesRoute
   '/admin/groups/$id/members': typeof AuthenticatedAdminGroupsIdMembersRoute
+  '/databases/$databaseID/jobs/$jobID': typeof AuthenticatedDatabasesDatabaseIDJobsJobIDRoute
   '/databases/$databaseID/tables/$tableID': typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRoute
+  '/databases/$databaseID/jobs': typeof AuthenticatedDatabasesDatabaseIDJobsIndexRoute
   '/databases/$databaseID/migrations': typeof AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute
   '/databases/$databaseID/migrations/$migrationID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute
   '/databases/$databaseID/migrations/$migrationID/attempts/$attemptID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute
@@ -204,8 +222,10 @@ export interface FileRoutesById {
   '/_authenticated/databases/$databaseID/': typeof AuthenticatedDatabasesDatabaseIDIndexRoute
   '/_authenticated/admin/groups/$id/databases': typeof AuthenticatedAdminGroupsIdDatabasesRoute
   '/_authenticated/admin/groups/$id/members': typeof AuthenticatedAdminGroupsIdMembersRoute
+  '/_authenticated/databases/$databaseID/jobs/$jobID': typeof AuthenticatedDatabasesDatabaseIDJobsJobIDRoute
   '/_authenticated/databases/$databaseID/migrations/$migrationID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren
   '/_authenticated/databases/$databaseID/tables/$tableID': typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRoute
+  '/_authenticated/databases/$databaseID/jobs/': typeof AuthenticatedDatabasesDatabaseIDJobsIndexRoute
   '/_authenticated/databases/$databaseID/migrations/': typeof AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute
   '/_authenticated/databases/$databaseID/migrations/$migrationID/': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDIndexRoute
   '/_authenticated/databases/$databaseID/migrations/$migrationID/attempts/$attemptID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDAttemptsAttemptIDRoute
@@ -227,8 +247,10 @@ export interface FileRouteTypes {
     | '/databases/$databaseID/'
     | '/admin/groups/$id/databases'
     | '/admin/groups/$id/members'
+    | '/databases/$databaseID/jobs/$jobID'
     | '/databases/$databaseID/migrations/$migrationID'
     | '/databases/$databaseID/tables/$tableID'
+    | '/databases/$databaseID/jobs/'
     | '/databases/$databaseID/migrations/'
     | '/databases/$databaseID/migrations/$migrationID/'
     | '/databases/$databaseID/migrations/$migrationID/attempts/$attemptID'
@@ -247,7 +269,9 @@ export interface FileRouteTypes {
     | '/databases/$databaseID'
     | '/admin/groups/$id/databases'
     | '/admin/groups/$id/members'
+    | '/databases/$databaseID/jobs/$jobID'
     | '/databases/$databaseID/tables/$tableID'
+    | '/databases/$databaseID/jobs'
     | '/databases/$databaseID/migrations'
     | '/databases/$databaseID/migrations/$migrationID'
     | '/databases/$databaseID/migrations/$migrationID/attempts/$attemptID'
@@ -268,8 +292,10 @@ export interface FileRouteTypes {
     | '/_authenticated/databases/$databaseID/'
     | '/_authenticated/admin/groups/$id/databases'
     | '/_authenticated/admin/groups/$id/members'
+    | '/_authenticated/databases/$databaseID/jobs/$jobID'
     | '/_authenticated/databases/$databaseID/migrations/$migrationID'
     | '/_authenticated/databases/$databaseID/tables/$tableID'
+    | '/_authenticated/databases/$databaseID/jobs/'
     | '/_authenticated/databases/$databaseID/migrations/'
     | '/_authenticated/databases/$databaseID/migrations/$migrationID/'
     | '/_authenticated/databases/$databaseID/migrations/$migrationID/attempts/$attemptID'
@@ -388,6 +414,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminGroupsIdMembersRouteImport
       parentRoute: typeof AuthenticatedAdminRouteRoute
     }
+    '/_authenticated/databases/$databaseID/jobs/': {
+      id: '/_authenticated/databases/$databaseID/jobs/'
+      path: '/databases/$databaseID/jobs'
+      fullPath: '/databases/$databaseID/jobs/'
+      preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDJobsIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/databases/$databaseID/jobs/$jobID': {
+      id: '/_authenticated/databases/$databaseID/jobs/$jobID'
+      path: '/databases/$databaseID/jobs/$jobID'
+      fullPath: '/databases/$databaseID/jobs/$jobID'
+      preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDJobsJobIDRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/databases/$databaseID/migrations/': {
       id: '/_authenticated/databases/$databaseID/migrations/'
       path: '/databases/$databaseID/migrations'
@@ -479,8 +519,10 @@ interface AuthenticatedRouteChildren {
   AuthenticatedDatabasesIndexRoute: typeof AuthenticatedDatabasesIndexRoute
   AuthenticatedDatabasesDatabaseIDSchemaDiffRoute: typeof AuthenticatedDatabasesDatabaseIDSchemaDiffRoute
   AuthenticatedDatabasesDatabaseIDIndexRoute: typeof AuthenticatedDatabasesDatabaseIDIndexRoute
+  AuthenticatedDatabasesDatabaseIDJobsJobIDRoute: typeof AuthenticatedDatabasesDatabaseIDJobsJobIDRoute
   AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren
   AuthenticatedDatabasesDatabaseIDTablesTableIDRoute: typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRoute
+  AuthenticatedDatabasesDatabaseIDJobsIndexRoute: typeof AuthenticatedDatabasesDatabaseIDJobsIndexRoute
   AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute: typeof AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute
 }
 
@@ -492,10 +534,14 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
     AuthenticatedDatabasesDatabaseIDSchemaDiffRoute,
   AuthenticatedDatabasesDatabaseIDIndexRoute:
     AuthenticatedDatabasesDatabaseIDIndexRoute,
+  AuthenticatedDatabasesDatabaseIDJobsJobIDRoute:
+    AuthenticatedDatabasesDatabaseIDJobsJobIDRoute,
   AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRoute:
     AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren,
   AuthenticatedDatabasesDatabaseIDTablesTableIDRoute:
     AuthenticatedDatabasesDatabaseIDTablesTableIDRoute,
+  AuthenticatedDatabasesDatabaseIDJobsIndexRoute:
+    AuthenticatedDatabasesDatabaseIDJobsIndexRoute,
   AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute:
     AuthenticatedDatabasesDatabaseIDMigrationsIndexRoute,
 }

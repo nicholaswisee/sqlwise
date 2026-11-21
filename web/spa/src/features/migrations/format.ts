@@ -20,6 +20,7 @@ export function statusLabel(status: string): string {
         failed: "Failed, rolled back",
         partially_applied: "Partially applied",
         unknown: "Outcome unknown",
+        reverted: "Compensated",
       } as Record<string, string>
     )[status] ?? "Not executed"
   );
@@ -33,6 +34,7 @@ export function statusClass(status: string): string {
         running: "bg-sky-50 text-sky-800 ring-sky-200",
         partially_applied: "bg-amber-50 text-amber-900 ring-amber-300",
         unknown: "bg-amber-50 text-amber-900 ring-amber-300",
+        reverted: "bg-slate-100 text-slate-700 ring-slate-300",
       } as Record<string, string>
     )[status] ?? "bg-slate-100 text-slate-700 ring-slate-200"
   );
@@ -48,10 +50,33 @@ export function requestPreconditions(draft: Draft, currentVersion: number, opera
 }
 
 export function operationLabel(operation: Operation): string {
-  return { up: "Apply", rollback: "Roll back", forward: "Forward" }[operation];
+  return {
+    up: "Apply",
+    rollback: "Roll back",
+    forward: "Forward",
+    resume: "Resume",
+    compensate: "Compensate",
+  }[operation];
+}
+// Resume and compensate settle an interrupted batch execution instead of moving the head.
+export function isRecovery(operation: Operation): boolean {
+  return operation === "resume" || operation === "compensate";
+}
+export function requestTitle(
+  r: Pick<Request, "operation" | "definition_revision" | "expected_version">,
+) {
+  if (r.operation === "compensate")
+    return `Compensate revision ${r.definition_revision} (restores saved values)`;
+  return `${operationLabel(r.operation)} revision ${r.definition_revision} as ${versionLabel(r.expected_version + 1)}`;
 }
 export function outcomeLabel(attempt: Pick<Attempt, "operation" | "applied_version">): string {
-  const verb = { up: "Applied", rollback: "Rolled back", forward: "Forwarded" }[attempt.operation];
+  const verb = {
+    up: "Applied",
+    rollback: "Rolled back",
+    forward: "Forwarded",
+    resume: "Resumed",
+    compensate: "Compensated",
+  }[attempt.operation];
   return `${verb} as ${versionLabel(attempt.applied_version)}`;
 }
 export function requestStatusLabel(status: Request["status"]): string {
@@ -64,7 +89,8 @@ export function requestStatusLabel(status: Request["status"]): string {
   }[status];
 }
 export function jobFinished(job: Pick<Job, "status"> | undefined): boolean {
-  return job?.status === "succeeded" || job?.status === "failed";
+  // A blocked job needs recovery or reconciliation; polling it here never ends.
+  return job?.status === "succeeded" || job?.status === "failed" || job?.status === "blocked";
 }
 
 export function planIsStale(plannedSQL: string | undefined, currentSQL: string): boolean {

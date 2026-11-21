@@ -76,6 +76,15 @@ set +a
 go run ./cmd/server
 ```
 
+Approved migrations run only in the worker. In a third terminal, load the environment and start it:
+
+```sh
+set -a
+. ./.env
+set +a
+go run ./cmd/worker
+```
+
 Open the URL printed by the SPA development server and sign in with the administrator password you chose. Its `/api/v1` requests proxy to Go on port 8080, keeping cookie and CSRF handling same-origin. The Go process can run API-only during development without a frontend build. To serve the built SPA directly from Go on <http://localhost:8080/login>, run `pnpm run spa:build` first.
 
 ## SPA and retained legacy frontend
@@ -96,6 +105,56 @@ The Docker stack includes a seeded PostgreSQL target. Register it under **Admin 
 | MySQL      | `mysql:3306`            | `localhost:3307`            | `sqlwise_demo` |
 
 Both demo targets use username `sqlwise_target`, password `sqlwise_target_dev_only`, and TLS disabled. Grant a group access after registering a target.
+
+## Jobs and large-data benchmark
+
+Approved executions are queued durably and run by `cmd/worker`, never inside an HTTP request. `202 Accepted` means the job was stored, not that the migration succeeded; poll `GET /api/v1/databases/:id/jobs/:jobID` (or open **Jobs** in the workspace) for `status` (`queued`, `running`, `succeeded`, `failed`, `blocked`) and `effect` on the target (`none`, `committed`, `partial`, `unknown`), plus `attempts`, `queued_at`, `started_at`, `finished_at` and committed batches/rows.
+
+- One worker at a time holds a target's execution gate (a session advisory lock on a dedicated target connection) for the whole job, so the same database is serialized, including between batch commits, while different databases run in parallel.
+- Confirmed transient failures before any target write are retried at most 3 times in total, after 1 s and 2 s. SQL, access and stale-request failures are final.
+- A batch migration ("Run as checkpointed batches") commits each batch with its checkpoint and saved row values in one target transaction. If it stops, the committed batches stay, the execution is partially applied, and later jobs on that database wait. An approved **resume** finishes it (only then does it enter history); an approved **compensate** restores saved values newest batch first and stops rather than overwrite rows changed since.
+- Worker settings use `WORKER_*` variables (`WORKER_ID`, `WORKER_CONCURRENCY`, `WORKER_LEASE`, `WORKER_LOCK_WAIT`, `WORKER_JOB_TIMEOUT`, `WORKER_SHUTDOWN_GRACE`, `WORKER_RECHECK`, `WORKER_METRICS_ADDR`); the worker serves `/metrics` and `/health` on port 9091.
+
+Recovery runbook:
+
+| Situation                | What happens                                                                                                                                                                  | Action                                                                |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Worker died              | Its target session ends, releasing the gate. After the lease expires another worker reclaims the job and checks the target receipt or batch ledger instead of re-running SQL. | None; a restart with the same `WORKER_ID` reclaims at once.           |
+| Worker stalled but alive | Another worker claims the expired job but waits for the gate, without spending attempts.                                                                                      | Stop the stalled process if it is hung.                               |
+| Target unreachable       | Retried after 1 s and 2 s, then failed with no target effect.                                                                                                                 | Restore connectivity and create a new request.                        |
+| Outcome unknown          | `blocked/unknown`; the worker re-checks the receipt every `WORKER_RECHECK`.                                                                                                   | None unless the target stays unreachable.                             |
+| Batch stopped            | `blocked/partial`; later jobs on that database wait.                                                                                                                          | Request resume or compensation from the job page and get it approved. |
+
+Large-data benchmark (`cmd/batchbench`, disposable database only):
+
+```sh
+docker compose up -d --wait postgres-test
+go run ./cmd/batchbench -admin-url 'postgres://sqlwise_test:sqlwise_test_only@localhost:5435/sqlwise_test?sslmode=disable' \
+  -rows 1000000 -batch 50000 -fail-at 8
+```
+
+Recorded on 21 November 2026: Docker Desktop on WSL2, host with 28 CPUs and 31 GiB RAM, no container limits, `postgres:17-alpine` (PostgreSQL 17.11, default settings, `fsync` and `synchronous_commit` on). Table `bench.accounts (id bigint PRIMARY KEY, status text, balance numeric(12,2), email text)`, 1,000,000 rows (189 MB), only the primary-key index.
+
+| Measurement                                                 | Result                                                        |
+| ----------------------------------------------------------- | ------------------------------------------------------------- |
+| Whole-table `UPDATE bench.accounts SET status = 'archived'` | 2.11 s (500,000 rows: 1.11 s)                                 |
+| Same dataset, 50,000-row batches                            | 20.70 s, 20 batches, 1,000,000 rows                           |
+| Peak Go heap during the batched run                         | 1.2 MB                                                        |
+| Compensation of all 20 batches (reverse order)              | 3.59 s, every row restored                                    |
+| Failure injected before batch 8                             | 7 batches / 350,000 rows stayed committed, the rest untouched |
+| Resume on a new gate                                        | started at batch 8, 13.30 s, each row updated exactly once    |
+
+Batching is about 10× slower than one statement because every batch also stores before/after values and a checkpoint and pays its own commit. In exchange each transaction is bounded, progress survives failures, and committed work can be resumed or compensated. Memory stays flat because rows never leave the server. One run per size on a shared developer machine; timings vary with disk and WAL.
+
+Load-test fixtures for k6 go through real login, review and approval:
+
+```sh
+K6_EDITOR=editor:password K6_LEADERS=lead1:password,lead2:password \
+  go run ./cmd/k6fixture prepare -url http://localhost:8080 -databases <id1>,<id2> -per-database 1 -run r1 > fixtures.json
+go run ./cmd/k6fixture reset -target-url <disposable target URL> -run r1
+```
+
+Each fixture gives `execute_path`, `request_id` and a unique `idempotency_key`. Requests prepared together for one database share a head, so only the first can succeed; the others are the expected stale-head conflicts. `reset` drops the run's `k6_` tables on the target; platform history is append-only and is not deleted.
 
 ## Tests
 

@@ -7,12 +7,24 @@ import { styles } from "../../components/styles";
 import { WorkspaceShell } from "../../components/workspace";
 import { PlanPanel } from "../queryplan/views";
 import type { ExplainRequest, QueryPlan } from "../queryplan/types";
-import type { Attempt, Detail, Draft, History, Job, Operation, Proposal, Request } from "./types";
+import type {
+  Attempt,
+  BatchTemplate,
+  Detail,
+  Draft,
+  History,
+  Job,
+  Operation,
+  Proposal,
+  Request,
+} from "./types";
 import {
   formatDate,
   jobFinished,
+  isRecovery,
   operationLabel,
   outcomeLabel,
+  requestTitle,
   planIsStale,
   requestPreconditions,
   requestStatusLabel,
@@ -100,6 +112,78 @@ function useHistory(db: string, hideRollbacks = false) {
       ),
     placeholderData: (previous) => previous,
   });
+}
+const emptyBatch: BatchTemplate = {
+  schema: "public",
+  table: "",
+  key: "id",
+  column: "",
+  value: "",
+  batch_size: 1000,
+};
+// Large-data mode: one reversible UPDATE run as checkpointed batches.
+function BatchFields({
+  value,
+  onChange,
+}: {
+  value: BatchTemplate | null;
+  onChange: (value: BatchTemplate | null) => void;
+}) {
+  const field = (name: keyof BatchTemplate, label: string, help?: string) => (
+    <div className="min-w-0 space-y-1.5">
+      <label className={styles.label} htmlFor={`batch-${name}`}>
+        {label}
+      </label>
+      <input
+        id={`batch-${name}`}
+        required={name !== "value"}
+        type={name === "batch_size" ? "number" : "text"}
+        min={name === "batch_size" ? 1 : undefined}
+        max={name === "batch_size" ? 100000 : undefined}
+        spellCheck={false}
+        autoCapitalize="none"
+        value={value?.[name] ?? ""}
+        onChange={(e) =>
+          value &&
+          onChange({
+            ...value,
+            [name]: name === "batch_size" ? Number(e.target.value) : e.target.value,
+          })
+        }
+        aria-describedby={help ? `batch-${name}-help` : undefined}
+        className={styles.input}
+      />
+      {help && (
+        <p id={`batch-${name}-help`} className="text-xs leading-5 text-slate-600">
+          {help}
+        </p>
+      )}
+    </div>
+  );
+  return (
+    <fieldset className="space-y-3">
+      <legend className={styles.label}>Large data</legend>
+      <label className="flex min-h-11 items-center gap-2 text-sm text-slate-800">
+        <input
+          type="checkbox"
+          className="size-4 accent-cyan-700"
+          checked={value !== null}
+          onChange={(e) => onChange(e.target.checked ? emptyBatch : null)}
+        />
+        Run as checkpointed batches (UPDATE one column)
+      </label>
+      {value && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {field("schema", "Schema")}
+          {field("table", "Table")}
+          {field("key", "Batch key", "A NOT NULL, uniquely indexed integer column.")}
+          {field("column", "Column to update")}
+          {field("value", "New value", "Cast to the column type on the target.")}
+          {field("batch_size", "Rows per batch")}
+        </div>
+      )}
+    </fieldset>
+  );
 }
 type Rollback = Pick<Draft, "sql_down" | "irreversible" | "irreversible_reason">;
 const noRollback: Rollback = { sql_down: "", irreversible: false, irreversible_reason: "" };
@@ -276,11 +360,12 @@ export function MigrationHistoryPage({ db }: { db: string }) {
   const [title, setTitle] = useState("");
   const [sql, setSQL] = useState("");
   const [rollback, setRollback] = useState(noRollback);
+  const [batch, setBatch] = useState<BatchTemplate | null>(null);
   const [error, setError] = useState<unknown>();
   const navigate = useNavigate();
   const client = useQueryClient();
   const create = useMutation({
-    mutationFn: (input: { title: string; sql: string } & Rollback) =>
+    mutationFn: (input: { title: string; sql: string; batch: BatchTemplate | null } & Rollback) =>
       api.request<Draft>(`/databases/${encodeURIComponent(db)}/migrations`, {
         method: "POST",
         body: JSON.stringify(input),
@@ -290,6 +375,7 @@ export function MigrationHistoryPage({ db }: { db: string }) {
       setTitle("");
       setSQL("");
       setRollback(noRollback);
+      setBatch(null);
       await client.invalidateQueries({ queryKey: keys.history(db) });
       await navigate({ to: path(db, `migrations/${encodeURIComponent(draft.id)}`) as never });
     },
@@ -340,7 +426,7 @@ export function MigrationHistoryPage({ db }: { db: string }) {
               onSubmit={(e: FormEvent) => {
                 e.preventDefault();
                 setError(undefined);
-                create.mutate({ title, sql, ...rollback });
+                create.mutate({ title, sql: batch ? "" : sql, batch, ...rollback });
               }}
             >
               <div className="space-y-1.5">
@@ -356,22 +442,25 @@ export function MigrationHistoryPage({ db }: { db: string }) {
                   className={styles.input}
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className={styles.label} htmlFor="new-sql">
-                  SQL
-                </label>
-                <textarea
-                  id="new-sql"
-                  required
-                  rows={14}
-                  maxLength={262144}
-                  spellCheck={false}
-                  autoCapitalize="none"
-                  value={sql}
-                  onChange={(e) => setSQL(e.target.value)}
-                  className={codeArea}
-                />
-              </div>
+              <BatchFields value={batch} onChange={setBatch} />
+              {!batch && (
+                <div className="space-y-1.5">
+                  <label className={styles.label} htmlFor="new-sql">
+                    SQL
+                  </label>
+                  <textarea
+                    id="new-sql"
+                    required
+                    rows={14}
+                    maxLength={262144}
+                    spellCheck={false}
+                    autoCapitalize="none"
+                    value={sql}
+                    onChange={(e) => setSQL(e.target.value)}
+                    className={codeArea}
+                  />
+                </div>
+              )}
               <RollbackFields id="new" value={rollback} onChange={setRollback} />
               <ErrorBox error={error} />
               <button className={styles.primary} disabled={create.isPending}>
@@ -631,10 +720,7 @@ function ReviewPanel({
           {data.requests.map((r) => (
             <li key={r.id} className="rounded-lg border border-slate-200 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-medium text-slate-900">
-                  {operationLabel(r.operation)} revision {r.definition_revision} as{" "}
-                  {versionLabel(r.expected_version + 1)}
-                </p>
+                <p className="font-medium text-slate-900">{requestTitle(r)}</p>
                 <span className={`${statusChip} ${statusClass(requestTone[r.status] ?? "")}`}>
                   {requestStatusLabel(r.status)}
                 </span>
@@ -712,13 +798,15 @@ function ReviewPanel({
               {canEdit && r.status === "approved" && !r.stale && (
                 <button
                   type="button"
-                  disabled={busy || !!data.blocked}
+                  disabled={busy || (!!data.blocked && !isRecovery(r.operation))}
                   onClick={() => onExecute(r)}
                   className={`${styles.primary} mt-3`}
                 >
                   {executing
                     ? "Running in the background…"
-                    : `Execute ${operationLabel(r.operation).toLowerCase()} as ${versionLabel(r.expected_version + 1)}`}
+                    : isRecovery(r.operation)
+                      ? `Execute ${operationLabel(r.operation).toLowerCase()}`
+                      : `Execute ${operationLabel(r.operation).toLowerCase()} as ${versionLabel(r.expected_version + 1)}`}
                 </button>
               )}
               {r.status === "queued" && (

@@ -7,12 +7,20 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type targetPool interface {
 	handle() Handle
 	close()
+}
+
+// PoolStat aggregates the target pools of one process for metrics.
+type PoolStat struct {
+	Pools, Active, Idle int64
+	AcquireWait         float64
+	Gates               int64
 }
 
 type postgresPool struct {
@@ -24,10 +32,36 @@ func (p postgresPool) handle() Handle { return &postgresHandle{pool: p.pool, san
 
 func (p postgresPool) close() { p.pool.Close() }
 
+func (p postgresPool) stat() (active, idle int64, wait float64) {
+	s := p.pool.Stat()
+	return int64(s.AcquiredConns()), int64(s.IdleConns()), s.AcquireDuration().Seconds()
+}
+
 type Pools struct {
-	store *Store
-	mu    sync.Mutex
-	pools map[string]targetPool
+	store  *Store
+	tracer pgx.QueryTracer
+	mu     sync.Mutex
+	pools  map[string]targetPool
+}
+
+// WithTracer logs and traces SQL of target pools and gate sessions opened later.
+func (p *Pools) WithTracer(tracer pgx.QueryTracer) *Pools {
+	p.tracer = tracer
+	return p
+}
+
+// Stat sums target pool usage; per-target values stay out of metric labels.
+func (p *Pools) Stat() PoolStat {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := PoolStat{Pools: int64(len(p.pools)), Gates: openGates.Load()}
+	for _, pool := range p.pools {
+		if pg, ok := pool.(postgresPool); ok {
+			active, idle, wait := pg.stat()
+			out.Active, out.Idle, out.AcquireWait = out.Active+active, out.Idle+idle, out.AcquireWait+wait
+		}
+	}
+	return out
 }
 
 func NewPools(store *Store) *Pools {
@@ -59,7 +93,7 @@ func (p *Pools) Open(ctx context.Context, databaseID string) (Handle, error) {
 	defer p.mu.Unlock()
 	pool, ok := p.pools[databaseID]
 	if !ok {
-		if pool, err = openPool(ctx, c); err != nil {
+		if pool, err = openPool(ctx, c, p.tracer); err != nil {
 			return nil, err
 		}
 		p.pools[databaseID] = pool
@@ -67,12 +101,15 @@ func (p *Pools) Open(ctx context.Context, databaseID string) (Handle, error) {
 	return pool.handle(), nil
 }
 
-func openPool(ctx context.Context, c Connection) (targetPool, error) {
+func openPool(ctx context.Context, c Connection, tracer pgx.QueryTracer) (targetPool, error) {
 	switch c.DBMS {
 	case PostgreSQL:
 		config, err := postgresConfig(c)
 		if err != nil {
 			return nil, err
+		}
+		if tracer != nil {
+			config.ConnConfig.Tracer = tracer
 		}
 		pool, err := pgxpool.NewWithConfig(ctx, config)
 		if err != nil {

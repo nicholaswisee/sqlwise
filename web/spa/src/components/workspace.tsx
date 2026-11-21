@@ -92,7 +92,7 @@ export function WorkspaceShell({
 }: {
   workspace: WorkspaceMetadata;
   username: string;
-  active: "schema" | "migrations" | "schema-diff";
+  active: "schema" | "migrations" | "schema-diff" | "jobs";
   children: ReactNode;
 }) {
   const base = `/databases/${encodeURIComponent(workspace.id)}`;
@@ -134,6 +134,7 @@ export function WorkspaceShell({
               ["schema", "Schema", base],
               ["migrations", "Migrations", `${base}/migrations`],
               ["schema-diff", "Schema diff", `${base}/schema-diff`],
+              ["jobs", "Jobs", `${base}/jobs`],
             ] as const
           ).map(([key, label, href]) => (
             <Link

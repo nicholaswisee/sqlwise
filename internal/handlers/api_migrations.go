@@ -35,7 +35,26 @@ type apiDraft struct {
 	UpdatedBy          string            `json:"updated_by"`
 	UpdatedByName      string            `json:"updated_by_name"`
 	UpdatedAt          time.Time         `json:"updated_at"`
+	Batch              *apiBatch         `json:"batch"`
 }
+
+// apiBatch is a batch-mode template; its rendered statement is the draft SQL.
+type apiBatch struct {
+	Schema string `json:"schema"`
+	Table  string `json:"table"`
+	Key    string `json:"key"`
+	Column string `json:"column"`
+	Value  string `json:"value"`
+	Size   int    `json:"batch_size"`
+}
+
+func apiBatchDTO(spec *migration.BatchSpec, size int) *apiBatch {
+	if spec == nil {
+		return nil
+	}
+	return &apiBatch{spec.Schema, spec.Table, spec.Key, spec.Column, spec.Value, size}
+}
+
 type apiAttempt struct {
 	ID               string            `json:"id"`
 	Seq              int64             `json:"sequence"`
@@ -59,16 +78,19 @@ type apiAttempt struct {
 	StartedAt        time.Time         `json:"started_at"`
 	FinishedAt       *time.Time        `json:"finished_at,omitempty"`
 	ReconciledAt     *time.Time        `json:"reconciled_at,omitempty"`
+	Batch            bool              `json:"batch"`
+	RecoveredBy      string            `json:"recovered_by_request_id,omitempty"`
 }
 
 func apiDraftDTO(d migration.Draft) apiDraft {
 	return apiDraft{d.ID, d.DatabaseID, d.Title, d.SQL, d.SQLDown, d.Irreversible(), d.IrreversibleReason, d.DefinitionHash(), d.Executed(),
-		d.SQLHash(), d.Dialect, d.Revision, d.AppliedVersion, d.LastStatus, d.CreatedBy, d.CreatedByName, d.CreatedAt, d.UpdatedBy, d.UpdatedByName, d.UpdatedAt}
+		d.SQLHash(), d.Dialect, d.Revision, d.AppliedVersion, d.LastStatus, d.CreatedBy, d.CreatedByName, d.CreatedAt, d.UpdatedBy, d.UpdatedByName, d.UpdatedAt,
+		apiBatchDTO(d.Batch, d.BatchSize)}
 }
 func apiAttemptDTO(a migration.Attempt) apiAttempt {
 	return apiAttempt{a.ID, a.Seq, a.DatabaseID, a.MigrationID, a.MigrationTitle, string(a.Operation), a.RequestID, a.CancelsExecutionID,
 		a.DraftRevision, a.CandidateVersion, a.AppliedVersion, a.SQL, a.SQLHash, a.Dialect, a.StatementCount, a.ExecutorName, a.Status, a.Error,
-		a.FailedStatement, a.StartedAt, a.FinishedAt, a.ReconciledAt}
+		a.FailedStatement, a.StartedAt, a.FinishedAt, a.ReconciledAt, a.Batch, a.RecoveredBy}
 }
 func apiAttempts(list []migration.Attempt) []apiAttempt {
 	out := make([]apiAttempt, 0, len(list))
@@ -119,6 +141,7 @@ type apiRequest struct {
 	DefinitionHash     string        `json:"definition_hash"`
 	ExpectedVersion    int64         `json:"expected_version"`
 	CancelsExecution   string        `json:"cancels_execution_id,omitempty"`
+	RecoversExecution  string        `json:"recovers_execution_id,omitempty"`
 	RequestedByName    string        `json:"requested_by_name"`
 	Status             string        `json:"status"`
 	ReviewRound        int           `json:"review_round"`
@@ -133,7 +156,8 @@ type apiRequest struct {
 func apiRequestDTO(r migration.Request) apiRequest {
 	v := apiRequest{ID: r.ID, DatabaseID: r.DatabaseID, MigrationID: r.MigrationID, MigrationTitle: r.MigrationTitle, Operation: string(r.Operation),
 		DefinitionRevision: r.DefinitionRevision, DefinitionHash: r.DefinitionHash, ExpectedVersion: r.ExpectedVersion, CancelsExecution: r.CancelsExecutionID,
-		RequestedByName: r.RequestedByName, Status: string(r.Status), ReviewRound: r.ReviewRound, Stale: r.Stale, ExecutionID: r.ExecutionID,
+		RecoversExecution: r.RecoversExecutionID,
+		RequestedByName:   r.RequestedByName, Status: string(r.Status), ReviewRound: r.ReviewRound, Stale: r.Stale, ExecutionID: r.ExecutionID,
 		Approvals: []apiApproval{}, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 	for _, a := range r.Approvals {
 		v.Approvals = append(v.Approvals, apiApproval{a.GroupID, a.GroupName, a.Permission, a.LeaderName, a.LeaderActive, a.Decision, a.DecidedBy, a.DecidedAt, a.CanDecide})
@@ -168,8 +192,7 @@ func (h *Migrations) RegisterAPI(router *gin.Engine) {
 	// Leaders with view access decide for their group; the service checks leadership.
 	view.POST("/requests/:requestID/approve", h.apiDecide(true))
 	view.POST("/requests/:requestID/reject", h.apiDecide(false))
-	// TODO(jason): GET /jobs/:jobID belongs to the jobs API; this serves the stand-in queue.
-	view.GET("/jobs/:jobID", h.apiJob)
+	// GET /jobs/:jobID is served by the jobs API (handlers.Jobs).
 	view.GET("/migrations/:migrationID/attempts/:attemptID", h.apiAttempt)
 	edit.POST("/migrations/:migrationID/attempts/:attemptID/reconcile", h.apiReconcile)
 	view.POST("/schema-diff/preview", h.apiPreview)
@@ -276,15 +299,21 @@ func (h *Migrations) apiUpdate(c *gin.Context) {
 }
 
 type apiDefinition struct {
-	Title              string `json:"title"`
-	SQL                string `json:"sql"`
-	SQLDown            string `json:"sql_down"`
-	Irreversible       bool   `json:"irreversible"`
-	IrreversibleReason string `json:"irreversible_reason"`
+	Title              string    `json:"title"`
+	SQL                string    `json:"sql"`
+	SQLDown            string    `json:"sql_down"`
+	Irreversible       bool      `json:"irreversible"`
+	IrreversibleReason string    `json:"irreversible_reason"`
+	Batch              *apiBatch `json:"batch"`
 }
 
 func (in apiDefinition) input() migration.DraftInput {
-	return migration.DraftInput{Title: in.Title, SQL: in.SQL, SQLDown: in.SQLDown, Irreversible: in.Irreversible, IrreversibleReason: in.IrreversibleReason}
+	out := migration.DraftInput{Title: in.Title, SQL: in.SQL, SQLDown: in.SQLDown, Irreversible: in.Irreversible, IrreversibleReason: in.IrreversibleReason}
+	if b := in.Batch; b != nil {
+		out.Batch = &migration.BatchSpec{Schema: b.Schema, Table: b.Table, Key: b.Key, Column: b.Column, Value: b.Value}
+		out.BatchSize = b.Size
+	}
+	return out
 }
 
 // apiExecute enqueues an approved request of this migration and returns its
@@ -323,31 +352,20 @@ func (h *Migrations) apiExecute(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"data": apiJob{job.ID, job.RequestID, job.ExecutionID, job.Status, job.Error}})
 }
 
-func (h *Migrations) apiJob(c *gin.Context) {
-	if h.jobs == nil {
-		apiError(c, http.StatusNotFound, "not_found", "Job not found for this database.")
-		return
-	}
-	job, e := h.jobs.Job(c.Request.Context(), c.Param("databaseID"), c.Param("jobID"))
-	if e != nil {
-		apiMigrationFailure(c, e)
-		return
-	}
-	apiData(c, apiJob{job.ID, job.RequestID, job.ExecutionID, job.Status, job.Error})
-}
-
 func (h *Migrations) apiCreateRequest(c *gin.Context) {
 	var in struct {
 		Operation          string `json:"operation"`
 		ExpectedRevision   int64  `json:"expected_revision"`
 		ExpectedDefinition string `json:"expected_definition_hash"`
 		ExpectedVersion    int64  `json:"expected_version"`
+		RecoversExecution  string `json:"recovers_execution_id"`
 	}
 	if !apiDecode(c, &in) {
 		return
 	}
 	r, e := h.migrations.CreateRequest(c.Request.Context(), c.Param("databaseID"), c.Param("migrationID"), migration.RequestInput{
-		Operation: migration.Operation(in.Operation), ExpectedRevision: in.ExpectedRevision, ExpectedDefinition: in.ExpectedDefinition, ExpectedVersion: in.ExpectedVersion})
+		Operation: migration.Operation(in.Operation), ExpectedRevision: in.ExpectedRevision, ExpectedDefinition: in.ExpectedDefinition, ExpectedVersion: in.ExpectedVersion,
+		RecoversExecutionID: in.RecoversExecution})
 	if e != nil {
 		apiMigrationFailure(c, e)
 		return

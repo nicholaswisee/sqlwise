@@ -19,6 +19,16 @@ export type Draft = {
   created_at: string;
   updated_by_name: string;
   updated_at: string;
+  batch?: BatchTemplate | null;
+};
+// Batch-mode template; the server renders the reviewed SQL from it.
+export type BatchTemplate = {
+  schema: string;
+  table: string;
+  key: string;
+  column: string;
+  value: string;
+  batch_size: number;
 };
 export type Attempt = {
   id: string;
@@ -43,6 +53,8 @@ export type Attempt = {
   started_at: string;
   finished_at?: string | null;
   reconciled_at?: string | null;
+  batch?: boolean;
+  recovered_by_request_id?: string;
 };
 export type History = {
   workspace: WorkspaceDTO;
@@ -71,7 +83,7 @@ export type Proposal = {
   requires_review: boolean;
   changes: { text: string; destructive: boolean }[];
 };
-export type Operation = "up" | "rollback" | "forward";
+export type Operation = "up" | "rollback" | "forward" | "resume" | "compensate";
 export type Head = {
   active: { migration_id: string; execution_id: string }[];
   pending: { migration_id: string; execution_id: string }[];
@@ -92,6 +104,7 @@ export type Request = {
   migration_id: string;
   migration_title: string;
   operation: Operation;
+  recovers_execution_id?: string;
   definition_revision: number;
   definition_hash: string;
   expected_version: number;
@@ -110,6 +123,6 @@ export type Job = {
   job_id: string;
   request_id: string;
   execution_id: string;
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: "queued" | "running" | "succeeded" | "failed" | "blocked";
   error?: string;
 };

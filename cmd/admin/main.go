@@ -15,6 +15,7 @@ import (
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
 	"sqlwise/internal/database"
+	"sqlwise/internal/jobs"
 	"sqlwise/internal/migration"
 )
 
@@ -29,7 +30,7 @@ func run() error {
 	username := flag.String("username", "", "Username for the first platform administrator (3-64 letters, digits, _, . or -)")
 	stdin := flag.Bool("password-stdin", false, "Read the password from standard input instead of a hidden terminal prompt")
 	ifNotExists := flag.Bool("if-not-exists", false, "Succeed without changing credentials if a platform administrator already exists")
-	schemaOnly := flag.Bool("schema-only", false, "Initialize authentication, access, migration, and connection schemas without creating an administrator")
+	schemaOnly := flag.Bool("schema-only", false, "Initialize authentication, access, migration, connection, and jobs schemas without creating an administrator")
 	flag.Parse()
 	var usernameSet, stdinSet, ifNotExistsSet bool
 	flag.Visit(func(f *flag.Flag) {
@@ -94,8 +95,11 @@ func run() error {
 	if err := database.NewStore(pool, nil).ApplySchema(ctx); err != nil {
 		return errors.New("could not initialize connection schema; check database connectivity and permissions")
 	}
+	if err := jobs.NewStore(pool).ApplySchema(ctx); err != nil {
+		return errors.New("could not initialize jobs schema; check database connectivity and permissions")
+	}
 	if *schemaOnly {
-		fmt.Fprintln(os.Stdout, "Authentication, access, migration, and connection schemas initialized.")
+		fmt.Fprintln(os.Stdout, "Authentication, access, migration, connection, and jobs schemas initialized.")
 		return nil
 	}
 	if err := store.BootstrapAdmin(ctx, credentials); err != nil {
