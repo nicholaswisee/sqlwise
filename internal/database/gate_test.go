@@ -401,3 +401,110 @@ func TestLostGateDuringBatchCommitIsReconciledFromTheLedger(t *testing.T) {
 		t.Fatalf("%d rows archived, want exactly the committed batch", n)
 	}
 }
+
+func TestRevertBatchesRestoresNewestFirstExactlyOnce(t *testing.T) {
+	target := migrationtest.TargetDatabase(t)
+	seed(t, target, 250)
+	g := mustGate(t, target)
+	plan, err := g.PrepareBatch(t.Context(), "exec-r", archive, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunBatches(t.Context(), plan, database.BatchHooks{BeforeCommit: func(batch int) error {
+		if batch == 3 {
+			return errors.New("stop after two batches")
+		}
+		return nil
+	}}); err == nil {
+		t.Fatal("expected the injected stop")
+	}
+	var order []int
+	p, err := g.RevertBatches(t.Context(), "exec-r", database.BatchHooks{BeforeCommit: func(batch int) error {
+		order = append(order, batch)
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(order) != "[2 1]" || p.Compensated != 2 || p.CompensatedRows != 200 || !p.Reverted() {
+		t.Fatalf("compensated %v, progress %+v", order, p)
+	}
+	if n := count(t, target, `SELECT count(*) FROM accounts WHERE status <> 'active'`); n != 0 {
+		t.Fatalf("%d rows not restored", n)
+	}
+	// A redelivered compensation finds nothing left to do.
+	order = nil
+	if p, err := g.RevertBatches(t.Context(), "exec-r", database.BatchHooks{BeforeCommit: func(batch int) error {
+		order = append(order, batch)
+		return nil
+	}}); err != nil || len(order) != 0 || p.Compensated != 2 {
+		t.Fatalf("second compensation ran %v, %+v, %v", order, p, err)
+	}
+}
+
+func TestRevertBatchesNeverOverwritesExternalChanges(t *testing.T) {
+	target := migrationtest.TargetDatabase(t)
+	seed(t, target, 300)
+	g := mustGate(t, target)
+	plan, err := g.PrepareBatch(t.Context(), "exec-c", archive, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunBatches(t.Context(), plan, database.BatchHooks{}); err != nil {
+		t.Fatal(err)
+	}
+	// An application changes one row of batch 2 after the migration committed.
+	if _, err := target.Exec(t.Context(), `UPDATE accounts SET status='closed' WHERE id=150`); err != nil {
+		t.Fatal(err)
+	}
+	p, err := g.RevertBatches(t.Context(), "exec-c", database.BatchHooks{})
+	if !errors.Is(err, database.ErrConflict) || !strings.Contains(database.Message(err), "batch 2") {
+		t.Fatalf("err = %v, want a conflict on batch 2", err)
+	}
+	if p.Compensated != 1 || p.Reverted() {
+		t.Fatalf("progress = %+v, want only batch 3 compensated", p)
+	}
+	if n := count(t, target, `SELECT count(*) FROM accounts WHERE id > 200 AND status='active'`); n != 100 {
+		t.Fatalf("batch 3 restored %d rows, want 100", n)
+	}
+	if n := count(t, target, `SELECT count(*) FROM accounts WHERE id BETWEEN 101 AND 200 AND status='archived'`); n != 99 {
+		t.Fatal("the conflicting batch was partly restored")
+	}
+	if n := count(t, target, `SELECT count(*) FROM accounts WHERE id=150 AND status='closed'`); n != 1 {
+		t.Fatal("compensation overwrote the external change")
+	}
+}
+
+func TestBatchRunsOnOneTargetNeverInterleaveCommits(t *testing.T) {
+	target := migrationtest.TargetDatabase(t)
+	seed(t, target, 600)
+	var wg sync.WaitGroup
+	for i, column := range []string{"status", "note"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			g, err := database.AcquireGate(context.Background(), target.Config().ConnConfig.Copy(), "db", 10*time.Second)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer g.Close()
+			spec := database.BatchUpdate{Schema: "public", Table: "accounts", Key: "id", Column: column, Value: "x"}
+			plan, err := g.PrepareBatch(context.Background(), fmt.Sprintf("exec-i%d", i), spec, 100)
+			if err == nil {
+				_, err = g.RunBatches(context.Background(), plan, database.BatchHooks{})
+			}
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := count(t, target, `WITH s AS (SELECT execution_id, min(committed_at) lo, max(committed_at) hi FROM sqlwise_internal.batch_checkpoints GROUP BY execution_id)
+		SELECT count(*) FROM s x JOIN s y ON x.execution_id < y.execution_id WHERE x.lo <= y.hi AND y.lo <= x.hi`); n != 0 {
+		t.Fatal("batch commits of two runs on one target interleaved")
+	}
+	if n := count(t, target, `SELECT count(*) FROM sqlwise_internal.batch_checkpoints`); n != 12 {
+		t.Fatalf("%d checkpoints, want 6 per run", n)
+	}
+}

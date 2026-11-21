@@ -104,12 +104,16 @@ type BatchPlan struct {
 
 // BatchProgress is read from target checkpoints, never from process memory.
 type BatchProgress struct {
-	Batches     int64
-	Rows        int64
-	TotalRows   int64
-	Compensated int64
-	Complete    bool
+	Batches         int64
+	Rows            int64
+	TotalRows       int64
+	Compensated     int64
+	CompensatedRows int64
+	Complete        bool
 }
+
+// Reverted reports that every committed forward batch was compensated.
+func (p BatchProgress) Reverted() bool { return p.Compensated == p.Batches }
 
 type Checkpoint struct {
 	Direction   string
@@ -392,9 +396,10 @@ func (g *Gate) BatchProgress(ctx context.Context, executionID string) (BatchProg
 	err := g.conn.QueryRow(ctx, `SELECT e.total_rows, e.completed_at IS NOT NULL,
 			count(c.batch_no) FILTER (WHERE c.direction='forward'),
 			COALESCE(sum(c.row_count) FILTER (WHERE c.direction='forward'), 0),
-			count(c.batch_no) FILTER (WHERE c.direction='compensate')
+			count(c.batch_no) FILTER (WHERE c.direction='compensate'),
+			COALESCE(sum(c.row_count) FILTER (WHERE c.direction='compensate'), 0)
 		FROM `+batchExecutions+` e LEFT JOIN `+batchCheckpoints+` c ON c.execution_id=e.execution_id
-		WHERE e.execution_id=$1 GROUP BY e.execution_id`, executionID).Scan(&p.TotalRows, &p.Complete, &p.Batches, &p.Rows, &p.Compensated)
+		WHERE e.execution_id=$1 GROUP BY e.execution_id`, executionID).Scan(&p.TotalRows, &p.Complete, &p.Batches, &p.Rows, &p.Compensated, &p.CompensatedRows)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, fail(ErrNotFound, "No batch execution was prepared for this execution.")
 	}
@@ -417,4 +422,70 @@ func (g *Gate) Checkpoints(ctx context.Context, executionID, direction string) (
 		return c, row.Scan(&c.Direction, &c.Batch, &c.FirstKey, &c.LastKey, &c.Rows, &c.CommittedAt)
 	})
 	return out, targetError(ctx, err)
+}
+
+// RevertBatches compensates the committed forward batches of an execution,
+// newest first, each in one checkpointed transaction on the gate session.
+// A batch whose rows changed after it committed (by any writer the gate does
+// not exclude) is not touched: compensation stops there with ErrConflict and
+// every earlier compensation stays committed. Running it again skips batches
+// already compensated.
+func (g *Gate) RevertBatches(ctx context.Context, executionID string, hooks BatchHooks) (BatchProgress, error) {
+	var body []byte
+	var columnType string
+	err := g.conn.QueryRow(ctx, `SELECT spec, column_type FROM `+batchExecutions+` WHERE execution_id=$1`, executionID).Scan(&body, &columnType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BatchProgress{}, fail(ErrNotFound, "No batch execution was prepared for this execution.")
+	}
+	if err != nil {
+		return BatchProgress{}, targetError(ctx, err)
+	}
+	var spec BatchUpdate
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return BatchProgress{}, fail(ErrValidation, "The stored batch template is unreadable.")
+	}
+	if err := spec.validate(); err != nil {
+		return BatchProgress{}, err
+	}
+	forward, err := g.Checkpoints(ctx, executionID, Forward)
+	if err != nil {
+		return BatchProgress{}, err
+	}
+	done, err := g.Checkpoints(ctx, executionID, Compensate)
+	if err != nil {
+		return BatchProgress{}, err
+	}
+	compensated := map[int]bool{}
+	for _, c := range done {
+		compensated[c.Batch] = true
+	}
+	key, column := dialect.Postgres.Quote(spec.Key), dialect.Postgres.Quote(spec.Column)
+	// Only rows still holding the value this execution wrote are restored.
+	restore := `UPDATE ` + spec.table() + ` t SET ` + column + ` = r.before_value::` + columnType + ` FROM ` + BatchRows + ` r
+		WHERE r.execution_id=$1 AND r.batch_no=$2 AND t.` + key + ` = r.row_key AND t.` + column + `::text IS NOT DISTINCT FROM r.after_value`
+	for _, batch := range forward {
+		if compensated[batch.Batch] {
+			continue
+		}
+		_, err := g.CommitBatch(ctx, executionID, Compensate, func(ctx context.Context, tx BatchTx) (Checkpoint, error) {
+			restored, err := tx.Exec(ctx, restore, executionID, batch.Batch)
+			if err != nil {
+				return Checkpoint{}, err
+			}
+			if restored != batch.Rows {
+				return Checkpoint{}, fail(ErrConflict, fmt.Sprintf("%d rows of batch %d changed after it committed; compensation stopped without overwriting them.",
+					batch.Rows-restored, batch.Batch))
+			}
+			return Checkpoint{Batch: batch.Batch, FirstKey: batch.FirstKey, LastKey: batch.LastKey, Rows: restored}, nil
+		}, hooks.BeforeCommit)
+		if err != nil {
+			return g.progressAfter(ctx, executionID, err)
+		}
+		if hooks.Committed != nil {
+			if p, err := g.BatchProgress(ctx, executionID); err == nil {
+				hooks.Committed(p)
+			}
+		}
+	}
+	return g.BatchProgress(ctx, executionID)
 }
