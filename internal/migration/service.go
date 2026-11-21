@@ -207,7 +207,7 @@ func (s *Service) Create(ctx context.Context, databaseID string, in DraftInput) 
 	}
 	now := s.now().UTC()
 	d := Draft{ID: id, DatabaseID: databaseID, Title: in.Title, SQL: in.SQL, SQLDown: in.SQLDown, IrreversibleReason: in.IrreversibleReason,
-		Dialect: dialect, CreatedBy: userID, CreatedAt: now}
+		Dialect: dialect, CreatedBy: userID, CreatedAt: now, Batch: in.Batch, BatchSize: in.BatchSize}
 	if err := s.store.createDraft(ctx, d); err != nil {
 		return Draft{}, err
 	}
@@ -231,6 +231,9 @@ func (s *Service) Update(ctx context.Context, databaseID, migrationID string, in
 func blockedMessage(a Attempt) string {
 	switch a.Status {
 	case StatusPartiallyApplied:
+		if a.Batch {
+			return fmt.Sprintf("Version %d was partially applied in batches. Executions are blocked until an approved resume or compensation settles it.", a.CandidateVersion)
+		}
 		return fmt.Sprintf("Version %d was partially applied. Executions are blocked until an editor checks the target and marks the attempt as reconciled.", a.CandidateVersion)
 	case StatusRunning:
 		return fmt.Sprintf("Version %d is executing or was interrupted. Its outcome is checked before the next execution.", a.CandidateVersion)

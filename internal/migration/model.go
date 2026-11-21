@@ -3,6 +3,7 @@ package migration
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,6 +28,8 @@ const (
 	StatusFailed           Status = "failed"
 	StatusPartiallyApplied Status = "partially_applied"
 	StatusUnknown          Status = "unknown"
+	// StatusReverted is a partial batch execution fully compensated; never history.
+	StatusReverted Status = "reverted"
 )
 
 // Operation is what an execution does with a migration: up applies it the
@@ -37,7 +40,12 @@ const (
 	OpUp       Operation = "up"
 	OpRollback Operation = "rollback"
 	OpForward  Operation = "forward"
+	// OpResume and OpCompensate recover a partially applied batch execution.
+	OpResume     Operation = "resume"
+	OpCompensate Operation = "compensate"
 )
+
+func (op Operation) Recovery() bool { return op == OpResume || op == OpCompensate }
 
 // RequestStatus is the review state of an action request.
 type RequestStatus string
@@ -111,6 +119,9 @@ type Draft struct {
 	UpdatedAt          time.Time
 	AppliedVersion     int64
 	LastStatus         Status
+	// Batch, when set, runs SQL up as checkpointed batches of BatchSize rows.
+	Batch     *BatchSpec
+	BatchSize int
 }
 
 func (d Draft) Applied() bool { return d.AppliedVersion > 0 }
@@ -127,7 +138,13 @@ func (d Draft) Complete() bool { return d.SQLDown != "" || d.Irreversible() }
 
 // DefinitionHash binds reviews to the exact up, down and reversibility.
 func (d Draft) DefinitionHash() string {
-	return HashSQL(fmt.Sprintf("up:%d:%s\ndown:%d:%s\nirreversible:%d:%s", len(d.SQL), d.SQL, len(d.SQLDown), d.SQLDown, len(d.IrreversibleReason), d.IrreversibleReason))
+	body := fmt.Sprintf("up:%d:%s\ndown:%d:%s\nirreversible:%d:%s", len(d.SQL), d.SQL, len(d.SQLDown), d.SQLDown, len(d.IrreversibleReason), d.IrreversibleReason)
+	if d.Batch != nil {
+		// Non-batch hashes stay unchanged, so existing approvals remain valid.
+		spec, _ := json.Marshal(d.Batch)
+		body += fmt.Sprintf("\nbatch:%s:%d", spec, d.BatchSize)
+	}
+	return HashSQL(body)
 }
 
 // SQLHash is the hex SHA-256 of the exact SQL text shown and executed.
@@ -158,6 +175,10 @@ type Attempt struct {
 	StartedAt          time.Time
 	FinishedAt         *time.Time
 	ReconciledAt       *time.Time
+	// Batch marks an execution run as checkpointed target batches.
+	Batch bool
+	// RecoveredBy is the recovery request that settled a partial execution.
+	RecoveredBy string
 }
 
 type DraftInput struct {
@@ -167,6 +188,9 @@ type DraftInput struct {
 	SQLDown            string
 	Irreversible       bool
 	IrreversibleReason string
+	// Batch replaces SQL up with the rendered template when set.
+	Batch     *BatchSpec
+	BatchSize int
 }
 
 type UpdateInput struct {
@@ -222,14 +246,16 @@ type Request struct {
 	DefinitionHash     string
 	ExpectedVersion    int64
 	CancelsExecutionID string
-	RequestedBy        string
-	RequestedByName    string
-	Status             RequestStatus
-	ReviewRound        int
-	PolicyHash         string
-	ExecutionID        string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// RecoversExecutionID is the partial execution a resume/compensate settles.
+	RecoversExecutionID string
+	RequestedBy         string
+	RequestedByName     string
+	Status              RequestStatus
+	ReviewRound         int
+	PolicyHash          string
+	ExecutionID         string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 	// Filled on reads: why the request can no longer be approved or queued,
 	// the groups that must approve, and the execution once it exists.
 	Stale     string
@@ -257,6 +283,8 @@ type RequestInput struct {
 	ExpectedRevision   int64
 	ExpectedDefinition string
 	ExpectedVersion    int64
+	// RecoversExecutionID is required for resume and compensate.
+	RecoversExecutionID string
 }
 
 // Execution identifies a consumed request for the job that will run it.
@@ -267,6 +295,8 @@ type Execution struct {
 	MigrationID string
 	Operation   Operation
 	ActorID     string
+	// RecoversExecutionID is set for resume and compensate executions.
+	RecoversExecutionID string
 }
 
 func HashSQL(sql string) string {
@@ -275,6 +305,14 @@ func HashSQL(sql string) string {
 }
 
 func (in DraftInput) normalize() (DraftInput, error) {
+	if in.Batch != nil {
+		if err := in.Batch.validate(in.BatchSize); err != nil {
+			return in, err
+		}
+		in.SQL = in.Batch.render()
+	} else {
+		in.BatchSize = 0
+	}
 	in.Title = strings.TrimSpace(in.Title)
 	if !utf8.ValidString(in.Title) || strings.ContainsRune(in.Title, 0) || utf8.RuneCountInString(in.Title) < 1 || utf8.RuneCountInString(in.Title) > 200 {
 		return in, fail(ErrValidation, "Title must be 1 to 200 characters.")

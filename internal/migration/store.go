@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -57,16 +58,22 @@ func (s *Store) databaseName(ctx context.Context, databaseID string) (string, er
 const draftColumns = `d.id, d.database_id, d.title, d.sql_text, COALESCE(d.sql_down, ''), COALESCE(d.irreversible_reason, ''), d.dialect, d.revision,
 	d.created_by, cu.username, d.updated_by, uu.username, d.created_at, d.updated_at,
 	COALESCE((SELECT a.applied_version FROM migration_attempts a WHERE a.migration_id=d.id AND a.status='succeeded' AND a.operation='up'), 0),
-	COALESCE((SELECT a.status FROM migration_attempts a WHERE a.migration_id=d.id ORDER BY a.seq DESC LIMIT 1), '')`
+	COALESCE((SELECT a.status FROM migration_attempts a WHERE a.migration_id=d.id ORDER BY a.seq DESC LIMIT 1), ''),
+	d.batch_spec, COALESCE(d.batch_size, 0)`
 
 const draftFrom = ` FROM migration_drafts d JOIN users cu ON cu.id=d.created_by JOIN users uu ON uu.id=d.updated_by`
 
 func scanDraft(row pgx.Row) (Draft, error) {
 	var d Draft
 	var dialect, status string
+	var batch []byte
 	err := row.Scan(&d.ID, &d.DatabaseID, &d.Title, &d.SQL, &d.SQLDown, &d.IrreversibleReason, &dialect, &d.Revision, &d.CreatedBy, &d.CreatedByName,
-		&d.UpdatedBy, &d.UpdatedByName, &d.CreatedAt, &d.UpdatedAt, &d.AppliedVersion, &status)
+		&d.UpdatedBy, &d.UpdatedByName, &d.CreatedAt, &d.UpdatedAt, &d.AppliedVersion, &status, &batch, &d.BatchSize)
 	d.Dialect, d.LastStatus = Dialect(dialect), Status(status)
+	if err == nil && batch != nil {
+		d.Batch = &BatchSpec{}
+		err = json.Unmarshal(batch, d.Batch)
+	}
 	return d, err
 }
 
@@ -89,9 +96,9 @@ func (s *Store) drafts(ctx context.Context, databaseID string) ([]Draft, error) 
 
 func (s *Store) createDraft(ctx context.Context, d Draft) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO migration_drafts
-		(id, database_id, title, sql_text, sql_down, irreversible_reason, dialect, revision, created_by, updated_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $8, $9, $9)`, d.ID, d.DatabaseID, d.Title, d.SQL, nullable(d.SQLDown), nullable(d.IrreversibleReason),
-		string(d.Dialect), d.CreatedBy, d.CreatedAt)
+		(id, database_id, title, sql_text, sql_down, irreversible_reason, dialect, revision, created_by, updated_by, created_at, updated_at, batch_spec, batch_size)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $8, $9, $9, $10, $11)`, d.ID, d.DatabaseID, d.Title, d.SQL, nullable(d.SQLDown), nullable(d.IrreversibleReason),
+		string(d.Dialect), d.CreatedBy, d.CreatedAt, batchJSON(d.Batch), batchSize(d.Batch, d.BatchSize))
 	return err
 }
 
@@ -120,8 +127,9 @@ func (s *Store) updateDraft(ctx context.Context, databaseID, migrationID string,
 			return fail(ErrConflict, "This migration has executed and is read-only. Create a new migration for corrections.")
 		}
 		if _, err := tx.Exec(ctx, `UPDATE migration_drafts SET title=$2, sql_text=$3, sql_down=$4, irreversible_reason=$5,
-			revision=revision+1, updated_by=$6, updated_at=$7 WHERE id=$1`,
-			migrationID, in.Title, in.SQL, nullable(in.SQLDown), nullable(in.IrreversibleReason), userID, now); err != nil {
+			revision=revision+1, updated_by=$6, updated_at=$7, batch_spec=$8, batch_size=$9 WHERE id=$1`,
+			migrationID, in.Title, in.SQL, nullable(in.SQLDown), nullable(in.IrreversibleReason), userID, now,
+			batchJSON(in.Batch), batchSize(in.Batch, in.BatchSize)); err != nil {
 			return lockError(err, "")
 		}
 		updated, err = s.draft(ctx, tx, databaseID, migrationID)
@@ -133,7 +141,8 @@ func (s *Store) updateDraft(ctx context.Context, databaseID, migrationID string,
 const attemptColumns = `a.id, a.seq, a.database_id, a.migration_id, d.title, a.operation, COALESCE(a.request_id, ''),
 	COALESCE(a.cancels_execution_id, ''), a.draft_revision, a.candidate_version,
 	COALESCE(a.applied_version, 0), a.sql_text, a.sql_sha256, a.dialect, a.statement_count, a.executor_id, u.username,
-	a.status, COALESCE(a.error_message, ''), COALESCE(a.failed_statement, 0), a.started_at, a.finished_at, a.reconciled_at`
+	a.status, COALESCE(a.error_message, ''), COALESCE(a.failed_statement, 0), a.started_at, a.finished_at, a.reconciled_at,
+	a.mode = 'batch', COALESCE(a.recovered_by_request_id, '')`
 
 const attemptFrom = ` FROM migration_attempts a JOIN migration_drafts d ON d.id=a.migration_id JOIN users u ON u.id=a.executor_id`
 
@@ -143,7 +152,7 @@ func scanAttempt(row pgx.Row) (Attempt, error) {
 	err := row.Scan(&a.ID, &a.Seq, &a.DatabaseID, &a.MigrationID, &a.MigrationTitle, &operation, &a.RequestID,
 		&a.CancelsExecutionID, &a.DraftRevision, &a.CandidateVersion,
 		&a.AppliedVersion, &a.SQL, &a.SQLHash, &dialect, &a.StatementCount, &a.ExecutorID, &a.ExecutorName,
-		&status, &a.Error, &a.FailedStatement, &a.StartedAt, &a.FinishedAt, &a.ReconciledAt)
+		&status, &a.Error, &a.FailedStatement, &a.StartedAt, &a.FinishedAt, &a.ReconciledAt, &a.Batch, &a.RecoveredBy)
 	a.Dialect, a.Status, a.Operation = Dialect(dialect), Status(status), Operation(operation)
 	return a, err
 }
@@ -211,10 +220,10 @@ func (s *Store) acknowledge(ctx context.Context, attemptID string, at time.Time)
 func (s *Store) insertAttempt(ctx context.Context, q execer, a Attempt) error {
 	_, err := q.Exec(ctx, `INSERT INTO migration_attempts
 		(id, database_id, migration_id, operation, request_id, cancels_execution_id, draft_revision, candidate_version,
-		sql_text, sql_sha256, dialect, statement_count, executor_id, status, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'running', $14)`,
+		sql_text, sql_sha256, dialect, statement_count, executor_id, status, started_at, mode)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'running', $14, $15)`,
 		a.ID, a.DatabaseID, a.MigrationID, string(a.Operation), nullable(a.RequestID), nullable(a.CancelsExecutionID), a.DraftRevision, a.CandidateVersion,
-		a.SQL, a.SQLHash, string(a.Dialect), a.StatementCount, a.ExecutorID, a.StartedAt)
+		a.SQL, a.SQLHash, string(a.Dialect), a.StatementCount, a.ExecutorID, a.StartedAt, attemptMode(a.Batch))
 	return err
 }
 
@@ -237,6 +246,41 @@ func (s *Store) finish(ctx context.Context, a Attempt) (bool, error) {
 		failed_statement=$5, finished_at=COALESCE(finished_at, $6), reconciled_at=$7 WHERE id=$1 AND status IN ('running', 'unknown')`,
 		a.ID, string(a.Status), applied, message, failed, a.FinishedAt, a.ReconciledAt)
 	return tag.RowsAffected() == 1, err
+}
+
+// settleBatch records a recovery of a partial batch execution. settledBy is
+// set once it succeeded or was fully compensated; otherwise only the message moves.
+func (s *Store) settleBatch(ctx context.Context, a Attempt, settledBy string, at time.Time) (bool, error) {
+	var applied *int64
+	if a.Status == StatusSucceeded {
+		applied = &a.CandidateVersion
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE migration_attempts SET status=$2, applied_version=$3, error_message=$4,
+		recovered_by_request_id=$5, finished_at=$6 WHERE id=$1 AND status='partially_applied' AND mode='batch'
+		AND recovered_by_request_id IS NULL`, a.ID, string(a.Status), applied, nullable(a.Error), nullable(settledBy), at)
+	return tag.RowsAffected() == 1, err
+}
+
+func batchJSON(b *BatchSpec) []byte {
+	if b == nil {
+		return nil
+	}
+	body, _ := json.Marshal(b)
+	return body
+}
+
+func batchSize(b *BatchSpec, size int) *int {
+	if b == nil {
+		return nil
+	}
+	return &size
+}
+
+func attemptMode(batch bool) string {
+	if batch {
+		return "batch"
+	}
+	return "transaction"
 }
 
 type querier interface {

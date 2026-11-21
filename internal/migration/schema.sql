@@ -98,6 +98,33 @@ ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS operation text NOT NULL 
 ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS request_id text UNIQUE REFERENCES migration_requests(id);
 ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS cancels_execution_id text REFERENCES migration_attempts(id);
 
+-- Batch-mode executions and their recovery (resume or compensate).
+ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'transaction'
+    CHECK (mode IN ('transaction', 'batch'));
+ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS recovered_by_request_id text REFERENCES migration_requests(id);
+ALTER TABLE migration_attempts DROP CONSTRAINT IF EXISTS migration_attempts_status_check;
+ALTER TABLE migration_attempts ADD CONSTRAINT migration_attempts_status_check
+    CHECK (status IN ('running', 'succeeded', 'failed', 'partially_applied', 'unknown', 'reverted'));
+
+ALTER TABLE migration_drafts ADD COLUMN IF NOT EXISTS batch_spec jsonb;
+ALTER TABLE migration_drafts ADD COLUMN IF NOT EXISTS batch_size integer
+    CHECK (batch_size IS NULL OR batch_size BETWEEN 1 AND 100000);
+DO $$ BEGIN
+    ALTER TABLE migration_drafts ADD CONSTRAINT migration_drafts_batch_mode
+        CHECK ((batch_spec IS NULL) = (batch_size IS NULL));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+ALTER TABLE migration_requests ADD COLUMN IF NOT EXISTS recovers_execution_id text REFERENCES migration_attempts(id);
+ALTER TABLE migration_requests DROP CONSTRAINT IF EXISTS migration_requests_operation_check;
+ALTER TABLE migration_requests ADD CONSTRAINT migration_requests_operation_check
+    CHECK (operation IN ('up', 'rollback', 'forward', 'resume', 'compensate'));
+DO $$ BEGIN
+    ALTER TABLE migration_requests ADD CONSTRAINT migration_requests_recovery
+        CHECK ((operation IN ('resume', 'compensate')) = (recovers_execution_id IS NOT NULL));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS migration_attempts_applied_version_idx
     ON migration_attempts (database_id, applied_version) WHERE applied_version IS NOT NULL;
 -- Rollback and forward re-run a migration; only its first application is an up.
@@ -118,16 +145,21 @@ BEGIN
     END IF;
     IF (NEW.id, NEW.seq, NEW.database_id, NEW.migration_id, NEW.draft_revision, NEW.candidate_version,
         NEW.sql_text, NEW.sql_sha256, NEW.dialect, NEW.statement_count, NEW.executor_id, NEW.started_at,
-        NEW.operation, NEW.request_id, NEW.cancels_execution_id)
+        NEW.operation, NEW.request_id, NEW.cancels_execution_id, NEW.mode)
         IS DISTINCT FROM
        (OLD.id, OLD.seq, OLD.database_id, OLD.migration_id, OLD.draft_revision, OLD.candidate_version,
         OLD.sql_text, OLD.sql_sha256, OLD.dialect, OLD.statement_count, OLD.executor_id, OLD.started_at,
-        OLD.operation, OLD.request_id, OLD.cancels_execution_id) THEN
+        OLD.operation, OLD.request_id, OLD.cancels_execution_id, OLD.mode) THEN
         RAISE EXCEPTION 'migration attempt snapshot is immutable' USING ERRCODE = '55000';
     END IF;
     IF OLD.status IN ('partially_applied', 'unknown') AND OLD.dialect = 'mysql' AND OLD.reconciled_at IS NULL AND NEW.reconciled_at IS NOT NULL
         AND (NEW.status, NEW.applied_version, NEW.error_message, NEW.failed_statement, NEW.finished_at)
         IS NOT DISTINCT FROM (OLD.status, OLD.applied_version, OLD.error_message, OLD.failed_statement, OLD.finished_at) THEN
+        RETURN NEW;
+    END IF;
+    -- A partial batch execution is settled by an approved resume or compensation.
+    IF OLD.status = 'partially_applied' AND OLD.mode = 'batch' AND OLD.recovered_by_request_id IS NULL
+        AND NEW.status IN ('partially_applied', 'succeeded', 'reverted') THEN
         RETURN NEW;
     END IF;
     IF OLD.status NOT IN ('running', 'unknown')

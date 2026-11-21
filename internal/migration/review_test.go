@@ -1,6 +1,7 @@
 package migration_test
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -10,6 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"sqlwise/internal/access"
+	"sqlwise/internal/jobs"
+	"sqlwise/internal/jobs/jobstest"
+	"sqlwise/internal/jobs/migrationrun"
 	"sqlwise/internal/migration"
 	"sqlwise/internal/migration/migrationtest"
 )
@@ -22,7 +26,7 @@ type review struct {
 	targets                    *migrationtest.Targets
 	target                     *pgxpool.Pool
 	service                    *migration.Service
-	queue                      *migration.LocalQueue
+	queue                      *durableQueue
 	editor, auditor, outsider  migrationtest.User
 	editors, auditors, another string
 }
@@ -40,8 +44,53 @@ func newReview(t *testing.T) *review {
 	r.another = p.Group(t, "Elsewhere", map[string]string{"other": "edit"}, outsider.ID, outsider.ID)
 	r.login(t)
 	r.service = migration.NewService(migration.NewStore(p.Pool), p.Access, r.targets, time.Now)
-	r.queue = migration.NewLocalQueue(r.service)
+	r.queue = newDurableQueue(t, p, r.service, r.target)
 	return r
+}
+
+// durableQueue runs reviewed requests through the jobs queue and a real worker.
+type durableQueue struct {
+	t     *testing.T
+	queue migrationrun.Queue
+	pool  *pgxpool.Pool
+}
+
+func newDurableQueue(t *testing.T, p *migrationtest.Platform, service *migration.Service, target *pgxpool.Pool) *durableQueue {
+	t.Helper()
+	store := jobstest.Store(t, p)
+	gates := jobstest.NewGates()
+	gates.Add("db", target)
+	w, err := jobs.NewWorker(store, gates, migrationrun.Runner{Service: service}, jobstest.Config("review-worker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobstest.Start(t, w)
+	return &durableQueue{t: t, queue: migrationrun.Queue{Jobs: jobs.NewQueue(store, migrationrun.Consumer{Service: service})}, pool: p.Pool}
+}
+
+// Enqueue scopes the key to the request; key reuse across requests is a conflict.
+func (q *durableQueue) Enqueue(ctx context.Context, databaseID, requestID, key string) (migration.Job, error) {
+	return q.queue.Enqueue(ctx, databaseID, requestID, key+"-"+requestID)
+}
+
+// Wait blocks until the worker has settled every published job.
+func (q *durableQueue) Wait() {
+	q.t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		var pending int
+		if err := q.pool.QueryRow(context.Background(), `SELECT count(*) FROM jobs WHERE status IN ('queued', 'running')
+			OR (status = 'blocked' AND effect = 'unknown' AND resolved_by_job_id IS NULL)`).Scan(&pending); err != nil {
+			q.t.Fatal(err)
+		}
+		if pending == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			q.t.Fatalf("%d jobs still pending", pending)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // login refreshes every session after a policy change.

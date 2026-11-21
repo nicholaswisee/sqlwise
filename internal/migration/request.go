@@ -14,7 +14,7 @@ import (
 )
 
 const requestColumns = `r.id, r.database_id, r.migration_id, d.title, r.operation, r.definition_revision, r.definition_sha256,
-	r.expected_version, COALESCE(r.cancels_execution_id, ''), r.requested_by, u.username, r.status, r.review_round,
+	r.expected_version, COALESCE(r.cancels_execution_id, ''), COALESCE(r.recovers_execution_id, ''), r.requested_by, u.username, r.status, r.review_round,
 	COALESCE(r.policy_sha256, ''), COALESCE(r.execution_id, ''), r.created_at, r.updated_at
 	FROM migration_requests r JOIN migration_drafts d ON d.id=r.migration_id JOIN users u ON u.id=r.requested_by`
 
@@ -22,7 +22,7 @@ func scanRequest(row pgx.Row) (Request, error) {
 	var r Request
 	var operation, status string
 	err := row.Scan(&r.ID, &r.DatabaseID, &r.MigrationID, &r.MigrationTitle, &operation, &r.DefinitionRevision, &r.DefinitionHash,
-		&r.ExpectedVersion, &r.CancelsExecutionID, &r.RequestedBy, &r.RequestedByName, &status, &r.ReviewRound,
+		&r.ExpectedVersion, &r.CancelsExecutionID, &r.RecoversExecutionID, &r.RequestedBy, &r.RequestedByName, &status, &r.ReviewRound,
 		&r.PolicyHash, &r.ExecutionID, &r.CreatedAt, &r.UpdatedAt)
 	r.Operation, r.Status = Operation(operation), RequestStatus(status)
 	return r, err
@@ -103,6 +103,9 @@ func (s *Service) fresh(ctx context.Context, q querier, r Request) (Draft, error
 	if version != r.ExpectedVersion {
 		return Draft{}, fail(ErrConflict, fmt.Sprintf("The database moved from version %d to %d after this request was made. Create a new request.", r.ExpectedVersion, version))
 	}
+	if r.Operation.Recovery() {
+		return d, s.recoverable(ctx, d, r)
+	}
 	head, err := s.store.head(ctx, q, r.DatabaseID)
 	if err != nil {
 		return Draft{}, err
@@ -168,20 +171,24 @@ func (s *Service) CreateRequest(ctx context.Context, databaseID, migrationID str
 	now := s.now().UTC()
 	r := Request{ID: id, DatabaseID: databaseID, MigrationID: migrationID, Operation: in.Operation, DefinitionRevision: in.ExpectedRevision,
 		DefinitionHash: in.ExpectedDefinition, ExpectedVersion: in.ExpectedVersion, RequestedBy: userID}
-	head, err := s.store.head(ctx, s.store.pool, databaseID)
-	if err != nil {
-		return Request{}, err
-	}
-	if r.CancelsExecutionID, err = eligible(head, d, in.Operation); err != nil {
-		return Request{}, err
+	if in.Operation.Recovery() {
+		r.RecoversExecutionID = in.RecoversExecutionID
+	} else {
+		head, err := s.store.head(ctx, s.store.pool, databaseID)
+		if err != nil {
+			return Request{}, err
+		}
+		if r.CancelsExecutionID, err = eligible(head, d, in.Operation); err != nil {
+			return Request{}, err
+		}
 	}
 	if _, err := s.fresh(ctx, s.store.pool, r); err != nil {
 		return Request{}, err
 	}
 	if _, err := s.store.pool.Exec(ctx, `INSERT INTO migration_requests (id, database_id, migration_id, operation, definition_revision,
-		definition_sha256, expected_version, cancels_execution_id, requested_by, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', $10, $10)`, r.ID, r.DatabaseID, r.MigrationID, string(r.Operation),
-		r.DefinitionRevision, r.DefinitionHash, r.ExpectedVersion, nullable(r.CancelsExecutionID), r.RequestedBy, now); err != nil {
+		definition_sha256, expected_version, cancels_execution_id, requested_by, status, created_at, updated_at, recovers_execution_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', $10, $10, $11)`, r.ID, r.DatabaseID, r.MigrationID, string(r.Operation),
+		r.DefinitionRevision, r.DefinitionHash, r.ExpectedVersion, nullable(r.CancelsExecutionID), r.RequestedBy, now, nullable(r.RecoversExecutionID)); err != nil {
 		return Request{}, err
 	}
 	return s.Request(ctx, databaseID, id)
@@ -322,7 +329,8 @@ func (s *Service) Consume(ctx context.Context, tx pgx.Tx, databaseID, requestID 
 	if err != nil {
 		return Execution{}, err
 	}
-	execution := Execution{ID: r.ExecutionID, RequestID: r.ID, DatabaseID: r.DatabaseID, MigrationID: r.MigrationID, Operation: r.Operation, ActorID: r.RequestedBy}
+	execution := Execution{ID: r.ExecutionID, RequestID: r.ID, DatabaseID: r.DatabaseID, MigrationID: r.MigrationID, Operation: r.Operation,
+		ActorID: r.RequestedBy, RecoversExecutionID: r.RecoversExecutionID}
 	if r.Status == RequestQueued {
 		return execution, nil
 	}
