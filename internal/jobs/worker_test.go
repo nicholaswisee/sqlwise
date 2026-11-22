@@ -3,6 +3,7 @@ package jobs_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -197,6 +198,23 @@ func TestTransientFailureThenSuccessKeepsTheAttemptCount(t *testing.T) {
 	})))
 	if done := f.wait(t, j); done.Status != jobs.Succeeded || done.Attempts != 2 {
 		t.Fatalf("job = %+v", done)
+	}
+	// The retry is a new delivery of the same job and logical execution.
+	rows, err := f.p.Pool.Query(t.Context(), `SELECT id, worker_id, outcome FROM job_deliveries WHERE job_id=$1 ORDER BY claimed_at`, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids, outcomes []string
+	for rows.Next() {
+		var id, worker, outcome string
+		if err := rows.Scan(&id, &worker, &outcome); err != nil {
+			t.Fatal(err)
+		}
+		ids, outcomes = append(ids, id), append(outcomes, worker+":"+outcome)
+	}
+	if rows.Err() != nil || len(ids) != 2 || ids[0] == ids[1] || ids[0] == j.ID || ids[0] == j.ExecutionID ||
+		strings.Join(outcomes, ",") != "w:requeued,w:succeeded" {
+		t.Fatalf("deliveries %v %v, want two distinct IDs", ids, outcomes)
 	}
 }
 

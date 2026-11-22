@@ -37,7 +37,8 @@ func (s *Store) ApplySchema(ctx context.Context) error {
 
 // CheckSchema fails when the queue schema was not initialized.
 func (s *Store) CheckSchema(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `SELECT id, status, effect, lease_until, resolved_by_job_id FROM jobs LIMIT 0`)
+	_, err := s.pool.Exec(ctx, `SELECT j.id, j.status, j.effect, j.lease_until, j.resolved_by_job_id, d.outcome
+		FROM jobs j LEFT JOIN job_deliveries d ON d.job_id=j.id LIMIT 0`)
 	if err != nil {
 		return errors.New("jobs schema unavailable; run go run ./cmd/admin -schema-only")
 	}
@@ -124,6 +125,8 @@ type claimed struct {
 	previous Status
 	// first is true when this delivery started the job.
 	first bool
+	// delivery identifies this claim; a retry or reclaim gets a new one.
+	delivery string
 }
 
 // claim takes the next deliverable job: queued and due, running with an
@@ -134,7 +137,10 @@ type claimed struct {
 func (s *Store) claim(ctx context.Context, worker string, lease time.Duration) (claimed, bool, error) {
 	var c claimed
 	var previous string
-	var err error
+	delivery, err := newID()
+	if err != nil {
+		return claimed{}, false, err
+	}
 	c.Job, err = scanJob(s.pool.QueryRow(ctx, `WITH next AS (
 			SELECT j.id, j.status AS previous, j.started_at IS NULL AS first FROM jobs j
 			WHERE ((j.status='queued' AND j.next_run_at <= now())
@@ -146,15 +152,22 @@ func (s *Store) claim(ctx context.Context, worker string, lease time.Duration) (
 				AND r.status='running' AND r.lease_until >= now())
 			ORDER BY j.next_run_at, j.created_at
 			LIMIT 1 FOR UPDATE OF j SKIP LOCKED
+		), abandoned AS (
+			-- A delivery still open here lost its lease: its worker died or stalled.
+			-- It cannot see the row inserted below, which shares this statement's snapshot.
+			UPDATE job_deliveries SET finished_at=now(), outcome='abandoned' WHERE job_id IN (SELECT id FROM next) AND finished_at IS NULL
+		), delivered AS (
+			INSERT INTO job_deliveries (id, job_id, worker_id, claimed_at)
+			SELECT $3, id, $1, now() FROM next
 		)
 		UPDATE jobs j SET status='running', claimed_by=$1, lease_until=now() + make_interval(secs => $2),
 			started_at=COALESCE(j.started_at, now()), finished_at=NULL, updated_at=now()
 		FROM next WHERE j.id=next.id
-		RETURNING `+jobColumns+`, next.previous, next.first`, worker, lease.Seconds()), &previous, &c.first)
+		RETURNING `+jobColumns+`, next.previous, next.first`, worker, lease.Seconds(), delivery), &previous, &c.first)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return claimed{}, false, nil
 	}
-	c.previous = Status(previous)
+	c.previous, c.delivery = Status(previous), delivery
 	return c, err == nil, err
 }
 
@@ -174,11 +187,18 @@ func (s *Store) heartbeat(ctx context.Context, jobID, worker string, lease time.
 
 // finish records a delivery's outcome while the claim is still ours.
 func (s *Store) finish(ctx context.Context, jobID, worker string, o Outcome, attempts int, recheck time.Duration) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `UPDATE jobs SET status=$3, effect=$4, error_message=$5, attempts=$6, finished_at=now(),
+	tag, err := s.pool.Exec(ctx, `WITH delivery AS (`+closeDelivery("$3")+`)
+		UPDATE jobs SET status=$3, effect=$4, error_message=$5, attempts=$6, finished_at=now(),
 		next_run_at=now() + make_interval(secs => $7), claimed_by=NULL, lease_until=NULL, updated_at=now()
 		WHERE id=$1 AND claimed_by=$2 AND status='running'`, jobID, worker, string(o.Status), string(o.Effect), nullable(clip(o.Message)),
 		attempts, recheck.Seconds())
 	return tag.RowsAffected() == 1, err
+}
+
+// closeDelivery ends the open delivery of job $1 claimed by worker $2; a
+// delivery another claim already abandoned stays as recorded.
+func closeDelivery(outcome string) string {
+	return `UPDATE job_deliveries SET finished_at=now(), outcome=` + outcome + ` WHERE job_id=$1 AND worker_id=$2 AND finished_at IS NULL`
 }
 
 // requeue returns a claimed job for a later delivery. A blocked job being
@@ -188,7 +208,8 @@ func (s *Store) requeue(ctx context.Context, jobID, worker string, previous Stat
 	if previous == Blocked {
 		status, finished = "blocked", "now()"
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE jobs SET status=$3, attempts=$4, next_run_at=now() + make_interval(secs => $5),
+	tag, err := s.pool.Exec(ctx, `WITH delivery AS (`+closeDelivery("'requeued'")+`)
+		UPDATE jobs SET status=$3, attempts=$4, next_run_at=now() + make_interval(secs => $5),
 		error_message=COALESCE($6, error_message), finished_at=`+finished+`, claimed_by=NULL, lease_until=NULL, updated_at=now()
 		WHERE id=$1 AND claimed_by=$2 AND status='running'`, jobID, worker, status, attempts, delay.Seconds(), nullable(clip(message)))
 	return tag.RowsAffected() == 1, err

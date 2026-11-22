@@ -41,6 +41,19 @@ CREATE INDEX IF NOT EXISTS jobs_claim_idx ON jobs (next_run_at, created_at) WHER
 CREATE INDEX IF NOT EXISTS jobs_database_idx ON jobs (database_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS jobs_blocking_idx ON jobs (database_id) WHERE status = 'blocked' AND resolved_by_job_id IS NULL;
 
+-- Every claim of a job is one delivery with its own ID; retries are new deliveries
+-- of the same job and logical execution.
+CREATE TABLE IF NOT EXISTS job_deliveries (
+    id text PRIMARY KEY,
+    job_id text NOT NULL REFERENCES jobs(id),
+    worker_id text NOT NULL,
+    claimed_at timestamptz NOT NULL,
+    finished_at timestamptz,
+    outcome text CHECK (outcome IN ('succeeded', 'failed', 'blocked', 'requeued', 'abandoned')),
+    CHECK ((finished_at IS NULL) = (outcome IS NULL))
+);
+CREATE INDEX IF NOT EXISTS job_deliveries_job_idx ON job_deliveries (job_id, claimed_at);
+
 -- Finished jobs are final; a blocked job may only settle or be resolved by recovery.
 CREATE OR REPLACE FUNCTION jobs_terminal() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
