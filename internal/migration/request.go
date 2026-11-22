@@ -58,9 +58,9 @@ func policyHash(groups []access.ApprovalGroup) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// actorPermission is the requester's access derived from the same policy
-// snapshot, so the worker needs no browser session.
-// TODO(wise): replace with the durable-actor authorization contract.
+// actorPermission is the requester's fresh access by durable user ID, read
+// from Wise's locked policy snapshot (active groups, grants and members), so
+// the worker needs no browser session; EffectivePermission requires one.
 func actorPermission(groups []access.ApprovalGroup, userID string) access.Permission {
 	best := access.None
 	for _, g := range groups {
