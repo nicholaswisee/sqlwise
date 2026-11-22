@@ -1,7 +1,7 @@
 name: CodeQL
 on:
+  # Every branch, like CI, so a feature branch is scanned before it reaches main.
   push:
-    branches: [main]
   pull_request:
     branches: [main]
   schedule:
