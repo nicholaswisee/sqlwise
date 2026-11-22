@@ -112,7 +112,7 @@ func outcome(a Attempt) error {
 		return nil
 	case StatusFailed:
 		return fail(ErrExecutionFailed, a.Error)
-	case StatusPartiallyApplied:
+	case StatusPartiallyApplied, StatusPartiallyReverted:
 		return fail(ErrRecoveryRequired, blockedMessage(a))
 	case StatusReverted:
 		if a.RecoveredBy != "" {

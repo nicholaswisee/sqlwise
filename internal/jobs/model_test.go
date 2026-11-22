@@ -40,6 +40,10 @@ func TestTerminalAndRecoveryEligibility(t *testing.T) {
 		{Job{Status: Blocked, Effect: EffectUnknown}, false, 0},
 		{Job{Status: Blocked, Effect: EffectPartial}, true, 2},
 		{Job{Status: Blocked, Effect: EffectPartial, ResolvedBy: "r"}, true, 0},
+		// A stopped compensation that reverted nothing may still be resumed.
+		{Job{Status: Blocked, Effect: EffectPartial, Operation: OpCompensate}, true, 2},
+		// Once a batch is reverted, only compensation may continue.
+		{Job{Status: Blocked, Effect: EffectPartial, Operation: OpCompensate, CommittedBatches: 1}, true, 1},
 	}
 	for _, c := range cases {
 		if c.job.Terminal() != c.terminal || len(c.job.Recovery()) != c.recovery {

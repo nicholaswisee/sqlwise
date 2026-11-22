@@ -163,6 +163,8 @@ func statusLabel(status string) string {
 		return "Failed, rolled back"
 	case "partially_applied":
 		return "Partially applied"
+	case "partially_reverted":
+		return "Partially reverted"
 	case "unknown":
 		return "Outcome unknown"
 	}
@@ -177,7 +179,7 @@ func statusClass(status string) string {
 		return wsChipRed
 	case "running":
 		return wsChipBlue
-	case "partially_applied", "unknown":
+	case "partially_applied", "partially_reverted", "unknown":
 		return wsChipAmber
 	}
 	return wsChip

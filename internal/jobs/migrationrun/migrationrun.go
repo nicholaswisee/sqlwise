@@ -109,7 +109,8 @@ func batchError(err error) error {
 // recorded execution, so a retry after a transient error only reconciles.
 func classify(job jobs.Job, a migration.Attempt, err error) jobs.Outcome {
 	message := migration.Message(err)
-	ownPartial := a.Status == migration.StatusPartiallyApplied && (a.ID == job.ExecutionID || a.ID == job.RecoversExecutionID)
+	partial := a.Status == migration.StatusPartiallyApplied || a.Status == migration.StatusPartiallyReverted
+	ownPartial := partial && (a.ID == job.ExecutionID || a.ID == job.RecoversExecutionID)
 	switch {
 	case err == nil:
 		return jobs.Success()

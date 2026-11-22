@@ -85,8 +85,12 @@ func (s *Service) recoverable(ctx context.Context, d Draft, r Request) error {
 	if !found || a.MigrationID != d.ID || a.DatabaseID != r.DatabaseID {
 		return fail(ErrNotFound, "The interrupted execution was not found for this migration.")
 	}
-	if !a.Batch || a.Status != StatusPartiallyApplied {
+	if !a.Batch || (a.Status != StatusPartiallyApplied && a.Status != StatusPartiallyReverted) {
 		return fail(ErrConflict, "Only a partially applied batch execution can be resumed or compensated.")
+	}
+	// A resume would skip reverted batches yet record the migration as complete.
+	if a.Status == StatusPartiallyReverted && r.Operation == OpResume {
+		return fail(ErrConflict, "This execution was partly compensated, so it can only be compensated further, not resumed.")
 	}
 	return nil
 }
@@ -168,6 +172,9 @@ func (s *Service) recover(ctx context.Context, batches BatchRunner, r Request) (
 	case r.Operation == OpResume:
 		a.Error = fmt.Sprintf("Resume stopped: %s %d batches (%d of %d rows) are committed.", batchMessage(err), res.Batches, res.Rows, res.TotalRows)
 	default:
+		if res.Compensated > 0 {
+			a.Status = StatusPartiallyReverted
+		}
 		a.Error = fmt.Sprintf("Compensation stopped: %s %d of %d batches are reverted.", batchMessage(err), res.Compensated, res.Batches)
 	}
 	if ok, serr := s.store.settleBatch(context.WithoutCancel(ctx), a, settled, s.now().UTC()); serr != nil || !ok {

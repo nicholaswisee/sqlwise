@@ -81,6 +81,10 @@ func (j Job) RecoveryTarget() string {
 // Recovery lists the operations a reviewer may request for this job.
 func (j Job) Recovery() []string {
 	if j.Status == Blocked && j.Effect == EffectPartial && j.ResolvedBy == "" {
+		// A compensation job counts reverted batches; once any is reverted only compensation may continue.
+		if j.Operation == OpCompensate && j.CommittedBatches > 0 {
+			return []string{OpCompensate}
+		}
 		return []string{OpResume, OpCompensate}
 	}
 	return []string{}

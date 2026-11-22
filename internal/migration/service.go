@@ -235,6 +235,8 @@ func blockedMessage(a Attempt) string {
 			return fmt.Sprintf("Version %d was partially applied in batches. Executions are blocked until an approved resume or compensation settles it.", a.CandidateVersion)
 		}
 		return fmt.Sprintf("Version %d was partially applied. Executions are blocked until an editor checks the target and marks the attempt as reconciled.", a.CandidateVersion)
+	case StatusPartiallyReverted:
+		return fmt.Sprintf("Version %d was partly compensated. Executions are blocked until an approved compensation finishes it.", a.CandidateVersion)
 	case StatusRunning:
 		return fmt.Sprintf("Version %d is executing or was interrupted. Its outcome is checked before the next execution.", a.CandidateVersion)
 	}

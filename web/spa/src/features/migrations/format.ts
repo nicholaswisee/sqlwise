@@ -19,6 +19,7 @@ export function statusLabel(status: string): string {
         succeeded: "Succeeded",
         failed: "Failed, rolled back",
         partially_applied: "Partially applied",
+        partially_reverted: "Partially reverted",
         unknown: "Outcome unknown",
         reverted: "Compensated",
       } as Record<string, string>
@@ -33,6 +34,7 @@ export function statusClass(status: string): string {
         failed: "bg-rose-50 text-rose-800 ring-rose-200",
         running: "bg-sky-50 text-sky-800 ring-sky-200",
         partially_applied: "bg-amber-50 text-amber-900 ring-amber-300",
+        partially_reverted: "bg-amber-50 text-amber-900 ring-amber-300",
         unknown: "bg-amber-50 text-amber-900 ring-amber-300",
         reverted: "bg-slate-100 text-slate-700 ring-slate-300",
       } as Record<string, string>

@@ -30,6 +30,9 @@ const (
 	StatusUnknown          Status = "unknown"
 	// StatusReverted is a partial batch execution fully compensated; never history.
 	StatusReverted Status = "reverted"
+	// StatusPartiallyReverted is an interrupted compensation: only a further
+	// compensation may settle it, never a resume over reverted batches.
+	StatusPartiallyReverted Status = "partially_reverted"
 )
 
 // Operation is what an execution does with a migration: up applies it the

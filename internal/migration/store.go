@@ -206,7 +206,7 @@ func (s *Store) currentVersion(ctx context.Context, q querier, databaseID string
 
 // blocking returns the oldest unresolved attempt that prevents new executions.
 func (s *Store) blocking(ctx context.Context, databaseID string) ([]Attempt, error) {
-	return s.attempts(ctx, `a.database_id=$1 AND (a.status='running' OR (a.status IN ('unknown', 'partially_applied') AND a.reconciled_at IS NULL))`, databaseID)
+	return s.attempts(ctx, `a.database_id=$1 AND (a.status='running' OR (a.status IN ('unknown', 'partially_applied', 'partially_reverted') AND a.reconciled_at IS NULL))`, databaseID)
 }
 
 // acknowledge records that an editor checked the target after a partially
@@ -256,7 +256,7 @@ func (s *Store) settleBatch(ctx context.Context, a Attempt, settledBy string, at
 		applied = &a.CandidateVersion
 	}
 	tag, err := s.pool.Exec(ctx, `UPDATE migration_attempts SET status=$2, applied_version=$3, error_message=$4,
-		recovered_by_request_id=$5, finished_at=$6 WHERE id=$1 AND status='partially_applied' AND mode='batch'
+		recovered_by_request_id=$5, finished_at=$6 WHERE id=$1 AND status IN ('partially_applied', 'partially_reverted') AND mode='batch'
 		AND recovered_by_request_id IS NULL`, a.ID, string(a.Status), applied, nullable(a.Error), nullable(settledBy), at)
 	return tag.RowsAffected() == 1, err
 }

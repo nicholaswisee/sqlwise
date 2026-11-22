@@ -471,6 +471,57 @@ func TestCompensationStopsOnExternalChangesAndKeepsTheTargetBlocked(t *testing.T
 	}
 }
 
+func TestInterruptedCompensationIsPartiallyRevertedAndCannotBeResumed(t *testing.T) {
+	f := newFlow(t)
+	f.worker(t, f.runner())
+	d, first := f.partialBatch(t)
+	// An application changes a row of the older batch: batch 2 is reverted, batch 1 stops.
+	if _, err := f.target.Exec(t.Context(), `UPDATE accounts SET status='closed' WHERE id=50`); err != nil {
+		t.Fatal(err)
+	}
+	stopped := f.settled(t, f.enqueue(t, f.recovery(t, d, migration.OpCompensate, first.ExecutionID)).ID)
+	if stopped.Status != jobs.Blocked || stopped.Effect != jobs.EffectPartial || stopped.CommittedBatches != 1 {
+		t.Fatalf("compensation job = %+v", stopped)
+	}
+	if got := stopped.Recovery(); len(got) != 1 || got[0] != jobs.OpCompensate {
+		t.Fatalf("recovery offered %v, want compensation only", got)
+	}
+	if a := f.attempt(t, first.ExecutionID); a.Status != migration.StatusPartiallyReverted || a.AppliedVersion != 0 {
+		t.Fatalf("execution after interrupted compensation = %+v", a)
+	}
+	// A resume would skip the reverted batch yet record the migration as complete.
+	detail, err := f.service.Detail(f.editor.Ctx, "db", d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.CreateRequest(f.editor.Ctx, "db", d.ID, migration.RequestInput{Operation: migration.OpResume,
+		ExpectedRevision: detail.Draft.Revision, ExpectedDefinition: detail.Draft.DefinitionHash(), ExpectedVersion: detail.CurrentVersion,
+		RecoversExecutionID: first.ExecutionID}); !errors.Is(err, migration.ErrConflict) {
+		t.Fatalf("resume after partial compensation = %v, want a conflict", err)
+	}
+	if detail.Blocked == "" {
+		t.Fatal("a partially reverted execution does not block the database")
+	}
+	// Once the outside change is undone, compensation finishes without reverting batch 2 again.
+	if _, err := f.target.Exec(t.Context(), `UPDATE accounts SET status='archived' WHERE id=50`); err != nil {
+		t.Fatal(err)
+	}
+	done := f.settled(t, f.enqueue(t, f.recovery(t, d, migration.OpCompensate, first.ExecutionID)).ID)
+	if done.Status != jobs.Succeeded || done.CommittedBatches != 2 || done.CommittedRows != 200 {
+		t.Fatalf("second compensation job = %+v", done)
+	}
+	if n := f.count(t, `SELECT count(*) FROM accounts WHERE status <> 'active'`); n != 0 {
+		t.Fatalf("%d rows still changed after compensation", n)
+	}
+	if a := f.attempt(t, first.ExecutionID); a.Status != migration.StatusReverted {
+		t.Fatalf("execution after finished compensation = %+v", a)
+	}
+	h, err := f.service.History(f.auditor.Ctx, "db")
+	if err != nil || len(h.Committed) != 0 {
+		t.Fatalf("a compensated execution entered history: %+v, %v", h.Committed, err)
+	}
+}
+
 func TestRecoveryRequestsNeedAPartialBatchExecution(t *testing.T) {
 	f := newFlow(t)
 	f.worker(t, f.runner())
