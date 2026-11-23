@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"sqlwise/internal/database"
 	"sqlwise/internal/jobs"
@@ -519,6 +520,88 @@ func TestInterruptedCompensationIsPartiallyRevertedAndCannotBeResumed(t *testing
 	h, err := f.service.History(f.auditor.Ctx, "db")
 	if err != nil || len(h.Committed) != 0 {
 		t.Fatalf("a compensated execution entered history: %+v, %v", h.Committed, err)
+	}
+}
+
+type faultRow struct{ err error }
+
+func (r faultRow) Scan(...any) error { return r.err }
+
+type startupFault struct {
+	migration.Target
+	stage string
+}
+
+func (s startupFault) QueryRow(ctx context.Context, sql string, args ...any) migration.Row {
+	if s.stage == "provision" && strings.Contains(sql, "to_regclass") {
+		return faultRow{&pgconn.PgError{Code: "08006"}}
+	}
+	return s.Target.QueryRow(ctx, sql, args...)
+}
+
+func (s startupFault) Begin(ctx context.Context) (migration.TargetTx, error) {
+	if s.stage == "begin" {
+		return nil, &pgconn.PgError{Code: "08006"}
+	}
+	return s.Target.Begin(ctx)
+}
+
+type runnerFunc func(context.Context, *database.Gate, jobs.Job, jobs.Progress) jobs.Outcome
+
+func (r runnerFunc) Run(ctx context.Context, gate *database.Gate, job jobs.Job, progress jobs.Progress) jobs.Outcome {
+	return r(ctx, gate, job, progress)
+}
+
+func TestConfirmedStartupFailureCanRetryWithTheSameExecution(t *testing.T) {
+	for _, tc := range []struct {
+		name, stage string
+		revoke      bool
+	}{
+		{"provision", "provision", false}, {"begin", "begin", false}, {"revoked", "begin", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			d := f.define(t, "Widgets", "CREATE TABLE widgets (id int)", "DROP TABLE widgets")
+			req := f.approved(t, d, migration.OpUp)
+			job := f.enqueue(t, req)
+			f.worker(t, runnerFunc(func(ctx context.Context, gate *database.Gate, job jobs.Job, progress jobs.Progress) jobs.Outcome {
+				if job.Attempts != 0 {
+					return f.runner().Run(ctx, gate, job, progress)
+				}
+				target := startupFault{migrationrun.Target(gate), tc.stage}
+				if _, err := f.service.Run(ctx, target, req.ID); !errors.Is(err, migration.ErrTargetUnavailable) {
+					t.Errorf("first attempt = %v", err)
+					return jobs.Failure("unexpected startup outcome")
+				}
+				var applied bool
+				if err := gate.QueryRow(ctx, `SELECT to_regclass('widgets') IS NOT NULL`).Scan(&applied); err != nil || applied {
+					t.Errorf("migration ran before retry: %v, %v", applied, err)
+				}
+				if tc.revoke {
+					if _, err := f.p.Pool.Exec(ctx, `DELETE FROM group_memberships WHERE user_id=$1`, f.editor.ID); err != nil {
+						t.Errorf("revoke: %v", err)
+					}
+				}
+				return jobs.Transient("startup interrupted")
+			}))
+			done := f.settled(t, job.ID)
+			if done.Attempts != 2 || done.ExecutionID != job.ExecutionID {
+				t.Fatalf("retry did not reuse execution: %+v", done)
+			}
+			if tc.revoke {
+				if done.Status != jobs.Failed || !strings.Contains(done.Error, "changed after review") || f.has(t, "widgets") {
+					t.Fatalf("revoked retry = %+v", done)
+				}
+				return
+			}
+			if done.Status != jobs.Succeeded || !f.has(t, "widgets") || f.attempt(t, job.ExecutionID).Status != migration.StatusSucceeded {
+				t.Fatalf("retried job = %+v", done)
+			}
+			var receipt string
+			if err := f.target.QueryRow(t.Context(), `SELECT outcome FROM sqlwise_internal.migration_receipts WHERE attempt_id=$1`, job.ExecutionID).Scan(&receipt); err != nil || receipt != "applied" {
+				t.Fatalf("receipt = %q, %v", receipt, err)
+			}
+		})
 	}
 }
 

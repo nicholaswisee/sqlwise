@@ -156,7 +156,7 @@ func (g *Gate) QueryRow(ctx context.Context, sql string, args ...any) Row {
 func (g *Gate) Begin(ctx context.Context) (Tx, error) {
 	tx, err := g.conn.Begin(ctx)
 	if err != nil {
-		return nil, targetError(ctx, err)
+		return nil, err
 	}
 	return &gateTx{tx: tx}, nil
 }

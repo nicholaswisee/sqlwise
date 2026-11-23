@@ -2,9 +2,13 @@ package migration
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
+	"net"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"sqlwise/internal/access"
 )
 
@@ -57,6 +61,16 @@ func (s *Service) RunWith(ctx context.Context, target Target, batches BatchRunne
 	var attempt Attempt
 	var statements []Statement
 	var d Draft
+	var targetTx TargetTx
+	execCtx, cancel := context.WithTimeout(ctx, s.executeTimeout)
+	defer cancel()
+	defer func() {
+		if targetTx != nil {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cleanupTimeout)
+			defer cancel()
+			_ = targetTx.Rollback(cleanup)
+		}
+	}()
 	err = pgx.BeginFunc(ctx, s.store.pool, func(tx pgx.Tx) error {
 		groups, err := s.approved(ctx, tx, r)
 		if err != nil {
@@ -81,6 +95,14 @@ func (s *Service) RunWith(ctx context.Context, target Target, batches BatchRunne
 			CandidateVersion: r.ExpectedVersion + 1, SQL: sql, SQLHash: HashSQL(sql), Dialect: d.Dialect,
 			StatementCount: len(statements), ExecutorID: r.RequestedBy, Status: StatusRunning, StartedAt: s.now().UTC(),
 			Batch: d.Batch != nil && r.Operation != OpRollback}
+		if !attempt.Batch {
+			// Startup can be retried until a running attempt has been recorded;
+			// receipt insertion and migration SQL are both after that record commits.
+			targetTx, err = startTarget(execCtx, target)
+			if err != nil {
+				return err
+			}
+		}
 		// The running execution is recorded in the same transaction as the checks.
 		return s.store.insertAttempt(ctx, tx, attempt)
 	})
@@ -96,13 +118,38 @@ func (s *Service) RunWith(ctx context.Context, target Target, batches BatchRunne
 	if attempt.Batch {
 		attempt, kind = s.runBatch(ctx, batches, attempt, d)
 	} else {
-		attempt, kind = s.run(ctx, target, attempt, statements)
+		attempt, kind = s.runTransaction(execCtx, target, targetTx, attempt, statements)
 	}
 	attempt, err = s.record(ctx, attempt, kind)
 	slog.InfoContext(ctx, "migration execution finished", "event", "migration.execution.result", "database", r.DatabaseID,
 		"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", attempt.ID, "operation", string(r.Operation),
 		"actor", r.RequestedBy, "status", string(attempt.Status), "failed_statement", attempt.FailedStatement)
 	return attempt, err
+}
+
+func startTarget(ctx context.Context, target Target) (TargetTx, error) {
+	err := ProvisionReceipts(ctx, target)
+	message := "Could not prepare the execution receipt on the target: "
+	if err == nil {
+		var tx TargetTx
+		tx, err = target.Begin(ctx)
+		if err == nil {
+			return tx, nil
+		}
+		message = "Could not start a target transaction: "
+	}
+	kind := ErrExecutionFailed
+	var pgErr *pgconn.PgError
+	var netErr net.Error
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "08000", "08003", "08006", "57P01", "57P02", "57P03", "55P03", "40001", "40P01":
+			kind = ErrTargetUnavailable
+		}
+	} else if pgconn.SafeToRetry(err) || errors.As(err, &netErr) || errors.Is(err, io.EOF) || errors.Is(err, context.DeadlineExceeded) {
+		kind = ErrTargetUnavailable
+	}
+	return nil, fail(kind, message+targetMessage(ctx, err)+" Nothing was executed.")
 }
 
 // outcome maps a recorded execution to the error Run reports for it.

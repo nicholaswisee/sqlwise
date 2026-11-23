@@ -284,7 +284,7 @@ func (g *Gate) CommitBatch(ctx context.Context, executionID, direction string,
 	}
 	tx, err := g.Begin(ctx)
 	if err != nil {
-		return Checkpoint{}, err
+		return Checkpoint{}, targetError(ctx, err)
 	}
 	rollback := func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }
 	cp, err := work(ctx, tx.(*gateTx))
