@@ -76,3 +76,20 @@ END $$;
 CREATE OR REPLACE TRIGGER jobs_terminal
     BEFORE UPDATE OR DELETE ON jobs
     FOR EACH ROW EXECUTE FUNCTION jobs_terminal();
+
+-- Older workers could leave intermediate blockers after a recovery succeeded.
+UPDATE jobs AS blocked
+SET resolved_by_job_id = recovery.id, updated_at = now()
+FROM migration_attempts AS attempt
+JOIN migration_requests AS request ON request.id = attempt.recovered_by_request_id
+    AND request.database_id = attempt.database_id AND request.migration_id = attempt.migration_id
+    AND request.recovers_execution_id = attempt.id
+JOIN jobs AS recovery ON recovery.request_id = request.id AND recovery.execution_id = request.execution_id
+    AND recovery.database_id = request.database_id AND recovery.migration_id = request.migration_id
+    AND recovery.operation = request.operation AND recovery.recovers_execution_id = attempt.id
+WHERE recovery.status = 'succeeded' AND attempt.mode = 'batch'
+    AND ((recovery.operation = 'compensate' AND attempt.status = 'reverted')
+      OR (recovery.operation = 'resume' AND attempt.status = 'succeeded'))
+    AND blocked.status = 'blocked' AND blocked.resolved_by_job_id IS NULL
+    AND blocked.database_id = attempt.database_id AND blocked.migration_id = attempt.migration_id
+    AND COALESCE(blocked.recovers_execution_id, blocked.execution_id) = attempt.id;
