@@ -58,11 +58,12 @@ type Job struct {
 	Trace               telemetry.TraceContext
 	ResolvedBy          string
 	// BlockedBy is the unresolved job holding this database, when waiting.
-	BlockedBy  string
-	CreatedAt  time.Time
-	StartedAt  *time.Time
-	FinishedAt *time.Time
-	UpdatedAt  time.Time
+	BlockedBy     string
+	CreatedAt     time.Time
+	StartedAt     *time.Time
+	FinishedAt    *time.Time
+	UpdatedAt     time.Time
+	recoveryState string
 }
 
 // Terminal reports whether the worker will not deliver the job again.
@@ -81,6 +82,13 @@ func (j Job) RecoveryTarget() string {
 // Recovery lists the operations a reviewer may request for this job.
 func (j Job) Recovery() []string {
 	if j.Status == Blocked && j.Effect == EffectPartial && j.ResolvedBy == "" {
+		switch j.recoveryState {
+		case "partially_reverted":
+			return []string{OpCompensate}
+		case "partially_applied", "":
+		default:
+			return []string{}
+		}
 		// A compensation job counts reverted batches; once any is reverted only compensation may continue.
 		if j.Operation == OpCompensate && j.CommittedBatches > 0 {
 			return []string{OpCompensate}

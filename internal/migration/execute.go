@@ -280,14 +280,8 @@ func (s *Service) reconcile(ctx context.Context, target Target, databaseID strin
 			return fail(ErrRecoveryRequired, blockedMessage(a))
 		}
 		if a.Batch {
-			// Batches commit on their own; the ledger, not a receipt, holds what stays applied.
-			finished := s.now().UTC()
-			a.Status, a.FinishedAt = StatusPartiallyApplied, &finished
-			a.Error = "The worker stopped during the batch run; committed batches stay. Resume or compensate it through an approved request."
-			if _, err := s.store.finish(ctx, a); err != nil {
-				return err
-			}
-			return fail(ErrRecoveryRequired, blockedMessage(a))
+			// Only its own queued delivery may settle this batch from the pinned ledger.
+			return fail(ErrOutcomeUnknown, blockedMessage(a))
 		}
 		if a.Dialect != MySQL {
 			a = s.resolve(ctx, target, a)

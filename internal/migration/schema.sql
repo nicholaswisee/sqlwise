@@ -102,6 +102,7 @@ ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS cancels_execution_id tex
 ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'transaction'
     CHECK (mode IN ('transaction', 'batch'));
 ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS recovered_by_request_id text REFERENCES migration_requests(id);
+ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS last_recovery_request_id text REFERENCES migration_requests(id);
 ALTER TABLE migration_attempts DROP CONSTRAINT IF EXISTS migration_attempts_status_check;
 ALTER TABLE migration_attempts ADD CONSTRAINT migration_attempts_status_check
     CHECK (status IN ('running', 'succeeded', 'failed', 'partially_applied', 'unknown', 'reverted', 'partially_reverted'));
@@ -160,8 +161,8 @@ BEGIN
     -- A partial batch execution is settled by an approved resume or compensation.
     -- Once compensation reverted a batch, only compensation may continue.
     IF OLD.mode = 'batch' AND OLD.recovered_by_request_id IS NULL AND (
-        (OLD.status = 'partially_applied' AND NEW.status IN ('partially_applied', 'partially_reverted', 'succeeded', 'reverted'))
-        OR (OLD.status = 'partially_reverted' AND NEW.status IN ('partially_reverted', 'reverted'))) THEN
+        (OLD.status IN ('partially_applied', 'partially_reverted') AND NEW.status = 'unknown' AND NEW.last_recovery_request_id IS NOT NULL)
+        OR (OLD.status = 'unknown' AND NEW.status IN ('partially_applied', 'partially_reverted', 'reverted'))) THEN
         RETURN NEW;
     END IF;
     IF OLD.status NOT IN ('running', 'unknown')

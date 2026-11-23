@@ -32,6 +32,7 @@ type BatchResult struct {
 	Rows        int64
 	TotalRows   int64
 	Compensated int64
+	Complete    bool
 }
 
 // BatchRunner runs batch templates on the execution gate the worker holds;
@@ -39,6 +40,7 @@ type BatchResult struct {
 type BatchRunner interface {
 	Forward(ctx context.Context, executionID string, spec BatchSpec, size int) (BatchResult, error)
 	Compensate(ctx context.Context, executionID string) (BatchResult, error)
+	Inspect(ctx context.Context, executionID string, operation Operation) (BatchResult, error)
 }
 
 var batchIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`)
@@ -108,7 +110,23 @@ func (s *Service) runBatch(ctx context.Context, batches BatchRunner, a Attempt, 
 		return a, nil
 	}
 	message := batchMessage(err)
-	if res.Batches > 0 || errors.Is(err, ErrOutcomeUnknown) {
+	if errors.Is(err, ErrOutcomeUnknown) {
+		a.Status, a.Error = StatusUnknown, message
+		return a, ErrOutcomeUnknown
+	}
+	if !errors.Is(err, ErrValidation) {
+		var inspectErr error
+		res, inspectErr = batches.Inspect(ctx, a.ID, a.Operation)
+		if inspectErr != nil {
+			a.Status, a.Error = StatusUnknown, "The batch ledger could not be checked."
+			return a, ErrOutcomeUnknown
+		}
+	}
+	if res.Complete {
+		a.Status = StatusSucceeded
+		return a, nil
+	}
+	if res.Batches > 0 {
 		a.Status = StatusPartiallyApplied
 		a.Error = fmt.Sprintf("%s %d batches (%d rows) stay committed; an approved resume or compensation must settle this execution.", message, res.Batches, res.Rows)
 		return a, ErrRecoveryRequired
@@ -120,9 +138,33 @@ func (s *Service) runBatch(ctx context.Context, batches BatchRunner, a Attempt, 
 	return a, ErrExecutionFailed
 }
 
-// recover resumes or compensates a partial batch execution under a fresh
-// approval. Both are idempotent against the target ledger, so a redelivery
-// continues where the last delivery stopped.
+func (s *Service) reconcileBatch(ctx context.Context, batches BatchRunner, a Attempt) (Attempt, error) {
+	if batches == nil || a.lastRecovery != "" {
+		return a, fail(ErrOutcomeUnknown, blockedMessage(a))
+	}
+	p, err := batches.Inspect(ctx, a.ID, a.Operation)
+	if err != nil {
+		a.Status, a.Error = StatusUnknown, "The interrupted batch could not be verified against its target ledger."
+		return s.record(ctx, a, ErrOutcomeUnknown)
+	}
+	switch {
+	case p.Compensated > 0:
+		a.Status, a.Error = StatusPartiallyReverted, "The ledger shows committed compensation; only compensation can continue."
+		return s.record(ctx, a, ErrRecoveryRequired)
+	case p.Complete:
+		a.Status, a.Error = StatusSucceeded, ""
+		return s.record(ctx, a, nil)
+	case p.Batches == 0:
+		a.Status, a.Error = StatusFailed, "The target ledger confirmed no batch was committed."
+		return s.record(ctx, a, ErrExecutionFailed)
+	default:
+		a.Status, a.Error = StatusPartiallyApplied, "The ledger shows committed batches. Resume or compensate through an approved request."
+		return s.record(ctx, a, ErrRecoveryRequired)
+	}
+}
+
+// recover only writes after fresh checks. Redelivery of an interrupted recovery
+// reads the ledger without continuing the operation.
 func (s *Service) recover(ctx context.Context, batches BatchRunner, r Request) (Attempt, error) {
 	if batches == nil {
 		return Attempt{}, fail(ErrUnsupportedDialect, "This executor cannot recover batch migrations. Nothing was executed.")
@@ -137,6 +179,15 @@ func (s *Service) recover(ctx context.Context, batches BatchRunner, r Request) (
 	if a.RecoveredBy == r.ID {
 		return a, outcome(a)
 	}
+	if a.lastRecovery == r.ID && a.Status != StatusUnknown {
+		return a, outcome(a)
+	}
+	if a.Status == StatusUnknown {
+		if a.lastRecovery != r.ID {
+			return Attempt{}, fail(ErrConflict, "This batch execution is still being reconciled.")
+		}
+		return s.finishRecovery(ctx, batches, a, r, nil)
+	}
 	var d Draft
 	err = pgx.BeginFunc(ctx, s.store.pool, func(tx pgx.Tx) error {
 		groups, err := s.approved(ctx, tx, r)
@@ -147,7 +198,10 @@ func (s *Service) recover(ctx context.Context, batches BatchRunner, r Request) (
 			return fail(access.ErrPermissionDenied, "The requester no longer has edit access to this database. Nothing was executed.")
 		}
 		d, err = s.fresh(ctx, tx, r)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.store.beginRecovery(ctx, tx, a, r.ID)
 	})
 	if err != nil {
 		slog.WarnContext(ctx, "migration recovery refused", "event", "migration.recovery.refused", "database", r.DatabaseID,
@@ -156,40 +210,59 @@ func (s *Service) recover(ctx context.Context, batches BatchRunner, r Request) (
 	}
 	slog.InfoContext(ctx, "migration recovery started", "event", "migration.recovery.start", "database", r.DatabaseID,
 		"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", a.ID, "operation", string(r.Operation), "actor", r.RequestedBy)
-	var res BatchResult
+	a.Status = StatusUnknown
 	if r.Operation == OpResume {
-		res, err = batches.Forward(ctx, a.ID, *d.Batch, d.BatchSize)
-	} else {
-		res, err = batches.Compensate(ctx, a.ID)
-	}
-	settled := ""
-	switch {
-	case err == nil && r.Operation == OpResume:
-		a.Status, a.Error, settled = StatusSucceeded, "", r.ID
-	case err == nil:
-		a.Status, settled = StatusReverted, r.ID
-		a.Error = fmt.Sprintf("Compensated: %d batches (%d rows) were restored in reverse order.", res.Compensated, res.Rows)
-	case r.Operation == OpResume:
-		a.Error = fmt.Sprintf("Resume stopped: %s %d batches (%d of %d rows) are committed.", batchMessage(err), res.Batches, res.Rows, res.TotalRows)
-	default:
-		if res.Compensated > 0 {
-			a.Status = StatusPartiallyReverted
+		// Also check older attempts whose compensation predates the durable recovery marker.
+		p, readErr := batches.Inspect(ctx, a.ID, r.Operation)
+		if readErr != nil || p.Batches == 0 {
+			return pendingRecovery(a)
 		}
-		a.Error = fmt.Sprintf("Compensation stopped: %s %d of %d batches are reverted.", batchMessage(err), res.Compensated, res.Batches)
+		if p.Compensated == 0 && !p.Complete {
+			_, err = batches.Forward(ctx, a.ID, *d.Batch, d.BatchSize)
+		}
+	} else {
+		_, err = batches.Compensate(ctx, a.ID)
 	}
-	if ok, serr := s.store.settleBatch(context.WithoutCancel(ctx), a, settled, s.now().UTC()); serr != nil || !ok {
-		// The ledger stays authoritative; redelivery settles it again.
-		return a, fail(ErrTargetUnavailable, "The recovery finished on the target but could not be recorded yet.")
+	if errors.Is(err, ErrOutcomeUnknown) {
+		return pendingRecovery(a)
+	}
+	return s.finishRecovery(ctx, batches, a, r, err)
+}
+
+func pendingRecovery(a Attempt) (Attempt, error) {
+	a.Status, a.Error = StatusUnknown, "Batch recovery cannot be confirmed until the target ledger is checked."
+	return a, fail(ErrOutcomeUnknown, a.Error)
+}
+
+func (s *Service) finishRecovery(ctx context.Context, batches BatchRunner, a Attempt, r Request, cause error) (Attempt, error) {
+	res, err := batches.Inspect(ctx, a.ID, r.Operation)
+	if err != nil || res.Batches == 0 {
+		return pendingRecovery(a)
+	}
+	switch {
+	case r.Operation == OpCompensate && res.Compensated == res.Batches:
+		a.Status, a.RecoveredBy = StatusReverted, r.ID
+		a.Error = fmt.Sprintf("Compensated: %d batches (%d rows) were restored in reverse order.", res.Compensated, res.Rows)
+	case res.Compensated > 0:
+		a.Status = StatusPartiallyReverted
+		a.Error = fmt.Sprintf("Compensation stopped: %s %d of %d batches are reverted.", batchMessage(cause), res.Compensated, res.Batches)
+	case r.Operation == OpResume && res.Complete:
+		a.Status, a.Error, a.RecoveredBy = StatusSucceeded, "", r.ID
+	case r.Operation == OpResume:
+		a.Status = StatusPartiallyApplied
+		a.Error = fmt.Sprintf("Resume stopped: %s %d batches (%d of %d rows) are committed.", batchMessage(cause), res.Batches, res.Rows, res.TotalRows)
+	default:
+		a.Status = StatusPartiallyApplied
+		a.Error = fmt.Sprintf("Compensation stopped: %s 0 of %d batches are reverted.", batchMessage(cause), res.Batches)
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cleanupTimeout)
+	defer cancel()
+	if ok, err := s.store.settleBatch(cleanup, a, r.ID, s.now().UTC()); err != nil || !ok {
+		return pendingRecovery(a)
 	}
 	slog.InfoContext(ctx, "migration recovery finished", "event", "migration.recovery.result", "database", r.DatabaseID,
 		"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", a.ID, "operation", string(r.Operation), "status", string(a.Status))
-	switch {
-	case err == nil:
-		return a, nil
-	case errors.Is(err, ErrTargetUnavailable):
-		return a, fail(ErrTargetUnavailable, a.Error)
-	}
-	return a, fail(ErrRecoveryRequired, a.Error)
+	return a, outcome(a)
 }
 
 func batchMessage(err error) string {

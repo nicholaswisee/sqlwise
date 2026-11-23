@@ -181,7 +181,8 @@ type Attempt struct {
 	// Batch marks an execution run as checkpointed target batches.
 	Batch bool
 	// RecoveredBy is the recovery request that settled a partial execution.
-	RecoveredBy string
+	RecoveredBy  string
+	lastRecovery string
 }
 
 type DraftInput struct {

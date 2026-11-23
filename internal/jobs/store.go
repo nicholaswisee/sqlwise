@@ -99,24 +99,34 @@ func (s *Store) insert(ctx context.Context, tx pgx.Tx, j Job, key string) (Job, 
 // Get loads a job of databaseID; jobs of other databases are not found.
 func (s *Store) Get(ctx context.Context, databaseID, jobID string) (Job, error) {
 	var blocker string
-	j, err := scanJob(s.pool.QueryRow(ctx, `SELECT `+jobColumns+`, COALESCE((SELECT b.id FROM jobs b WHERE b.database_id=j.database_id
+	var recoverability string
+	j, err := scanJob(s.pool.QueryRow(ctx, `SELECT `+jobColumns+`, `+recoveryState+`, COALESCE((SELECT b.id FROM jobs b WHERE b.database_id=j.database_id
 		AND b.status='blocked' AND b.resolved_by_job_id IS NULL AND b.id<>j.id AND j.status='queued'
-		AND j.operation NOT IN ('resume', 'compensate') ORDER BY b.created_at LIMIT 1), '')
-		FROM jobs j WHERE j.database_id=$1 AND j.id=$2`, databaseID, jobID), &blocker)
+		AND j.operation NOT IN ('resume', 'compensate') ORDER BY (b.effect='unknown') DESC, b.finished_at DESC, b.id LIMIT 1), '')
+		FROM jobs j WHERE j.database_id=$1 AND j.id=$2`, databaseID, jobID), &recoverability, &blocker)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Job{}, fail(ErrNotFound, "Job not found for this database.")
 	}
 	j.BlockedBy = blocker
+	j.recoveryState = recoverability
 	return j, err
 }
 
+const recoveryState = `COALESCE((SELECT a.status FROM migration_attempts a
+	WHERE a.id=COALESCE(j.recovers_execution_id, j.execution_id) AND a.mode='batch' AND j.status='blocked'), '')`
+
 // List returns the newest jobs of a database.
 func (s *Store) List(ctx context.Context, databaseID string, limit int) ([]Job, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+jobColumns+` FROM jobs j WHERE j.database_id=$1 ORDER BY j.created_at DESC, j.id DESC LIMIT $2`, databaseID, limit)
+	rows, err := s.pool.Query(ctx, `SELECT `+jobColumns+`, `+recoveryState+` FROM jobs j WHERE j.database_id=$1 ORDER BY j.created_at DESC, j.id DESC LIMIT $2`, databaseID, limit)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Job, error) { return scanJob(row) })
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Job, error) {
+		var state string
+		j, err := scanJob(row, &state)
+		j.recoveryState = state
+		return j, err
+	})
 }
 
 // claimed is a job together with the status it had before this claim.
@@ -187,12 +197,21 @@ func (s *Store) heartbeat(ctx context.Context, jobID, worker string, lease time.
 
 // finish records a delivery's outcome while the claim is still ours.
 func (s *Store) finish(ctx context.Context, jobID, worker string, o Outcome, attempts int, recheck time.Duration) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `WITH delivery AS (`+closeDelivery("$3")+`)
+	// Partial recovery hands the block to the new job; success releases all
+	// related blocks, including rows left behind by earlier workers.
+	var ok bool
+	err := s.pool.QueryRow(ctx, `WITH delivery AS (`+closeDelivery("$3")+`), finished AS (
 		UPDATE jobs SET status=$3, effect=$4, error_message=$5, attempts=$6, finished_at=now(),
 		next_run_at=now() + make_interval(secs => $7), claimed_by=NULL, lease_until=NULL, updated_at=now()
-		WHERE id=$1 AND claimed_by=$2 AND status='running'`, jobID, worker, string(o.Status), string(o.Effect), nullable(clip(o.Message)),
-		attempts, recheck.Seconds())
-	return tag.RowsAffected() == 1, err
+		WHERE id=$1 AND claimed_by=$2 AND status='running' RETURNING id, database_id, recovers_execution_id
+	), resolved AS (
+		UPDATE jobs b SET resolved_by_job_id=f.id, updated_at=now() FROM finished f
+		WHERE ($3='succeeded' OR ($3='blocked' AND $4='partial' AND b.effect='partial'))
+		AND b.database_id=f.database_id AND b.id<>f.id AND b.status='blocked' AND b.resolved_by_job_id IS NULL
+		AND (b.execution_id=f.recovers_execution_id OR b.recovers_execution_id=f.recovers_execution_id)
+	) SELECT EXISTS (SELECT 1 FROM finished)`, jobID, worker, string(o.Status), string(o.Effect), nullable(clip(o.Message)),
+		attempts, recheck.Seconds()).Scan(&ok)
+	return ok, err
 }
 
 // closeDelivery ends the open delivery of job $1 claimed by worker $2; a
@@ -226,18 +245,11 @@ func (s *Store) progress(ctx context.Context, jobID, worker string, batches, row
 func (s *Store) blocker(ctx context.Context, databaseID, jobID string) (string, error) {
 	var id string
 	err := s.pool.QueryRow(ctx, `SELECT id FROM jobs WHERE database_id=$1 AND status='blocked' AND resolved_by_job_id IS NULL
-		AND id<>$2 ORDER BY created_at LIMIT 1`, databaseID, jobID).Scan(&id)
+		AND id<>$2 ORDER BY (effect='unknown') DESC, finished_at DESC, id LIMIT 1`, databaseID, jobID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	return id, err
-}
-
-// resolve marks the blocked job of an interrupted execution as handed to recovery.
-func (s *Store) resolve(ctx context.Context, databaseID, executionID, recoveryJobID string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE jobs SET resolved_by_job_id=$3, updated_at=now()
-		WHERE database_id=$1 AND execution_id=$2 AND status='blocked' AND resolved_by_job_id IS NULL`, databaseID, executionID, recoveryJobID)
-	return err
 }
 
 // Counts returns durable jobs per status for the status gauges.

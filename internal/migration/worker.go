@@ -43,6 +43,9 @@ func (s *Service) RunWith(ctx context.Context, target Target, batches BatchRunne
 			return Attempt{}, err
 		}
 		if a.Status == StatusRunning || a.Status == StatusUnknown {
+			if a.Batch {
+				return s.reconcileBatch(ctx, batches, a)
+			}
 			if err := s.reconcile(ctx, target, r.DatabaseID); err != nil {
 				if reloaded, found, _ := s.store.attemptByID(ctx, r.ExecutionID); found {
 					a = reloaded

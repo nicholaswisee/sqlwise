@@ -69,6 +69,18 @@ func (b gateBatches) Compensate(ctx context.Context, executionID string) (migrat
 	})
 }
 
+func (b gateBatches) Inspect(ctx context.Context, executionID string, operation migration.Operation) (migration.BatchResult, error) {
+	p, err := b.gate.ReadBatchProgress(ctx, executionID)
+	if err == nil {
+		direction := database.Forward
+		if operation == migration.OpCompensate {
+			direction = database.Compensate
+		}
+		b.progress(direction, p)
+	}
+	return batchResult(p), batchError(err)
+}
+
 // track publishes durable progress after every batch; a lost gate keeps the last ledger read.
 func (b gateBatches) track(direction string, run func(database.BatchHooks) (database.BatchProgress, error)) (migration.BatchResult, error) {
 	var last database.BatchProgress
@@ -81,7 +93,11 @@ func (b gateBatches) track(direction string, run func(database.BatchHooks) (data
 	} else if p != (database.BatchProgress{}) {
 		b.progress(direction, p)
 	}
-	return migration.BatchResult{Batches: p.Batches, Rows: p.Rows, TotalRows: p.TotalRows, Compensated: p.Compensated}, batchError(err)
+	return batchResult(p), batchError(err)
+}
+
+func batchResult(p database.BatchProgress) migration.BatchResult {
+	return migration.BatchResult{Batches: p.Batches, Rows: p.Rows, TotalRows: p.TotalRows, Compensated: p.Compensated, Complete: p.Complete}
 }
 
 // batchError keeps the safe target message under the migration error kinds.
@@ -105,8 +121,7 @@ func batchError(err error) error {
 	return &migration.Error{Kind: kind, Message: message}
 }
 
-// classify maps a migration result to a job outcome. Run never repeats a
-// recorded execution, so a retry after a transient error only reconciles.
+// classify maps a migration result to a job outcome.
 func classify(job jobs.Job, a migration.Attempt, err error) jobs.Outcome {
 	message := migration.Message(err)
 	partial := a.Status == migration.StatusPartiallyApplied || a.Status == migration.StatusPartiallyReverted
@@ -118,6 +133,8 @@ func classify(job jobs.Job, a migration.Attempt, err error) jobs.Outcome {
 		return jobs.Partial(or(a.Error, message))
 	case errors.Is(err, migration.ErrOutcomeUnknown):
 		return jobs.Unknown(message)
+	case errors.Is(err, migration.ErrTargetUnavailable) && a.ID != "":
+		return jobs.Failure(or(message, "The target database is unavailable."))
 	case errors.Is(err, migration.ErrTargetUnavailable):
 		return jobs.Transient(or(message, "The target database is unavailable."))
 	case errors.Is(err, access.ErrPermissionDenied):

@@ -142,7 +142,7 @@ const attemptColumns = `a.id, a.seq, a.database_id, a.migration_id, d.title, a.o
 	COALESCE(a.cancels_execution_id, ''), a.draft_revision, a.candidate_version,
 	COALESCE(a.applied_version, 0), a.sql_text, a.sql_sha256, a.dialect, a.statement_count, a.executor_id, u.username,
 	a.status, COALESCE(a.error_message, ''), COALESCE(a.failed_statement, 0), a.started_at, a.finished_at, a.reconciled_at,
-	a.mode = 'batch', COALESCE(a.recovered_by_request_id, '')`
+	a.mode = 'batch', COALESCE(a.recovered_by_request_id, ''), COALESCE(a.last_recovery_request_id, '')`
 
 const attemptFrom = ` FROM migration_attempts a JOIN migration_drafts d ON d.id=a.migration_id JOIN users u ON u.id=a.executor_id`
 
@@ -152,7 +152,7 @@ func scanAttempt(row pgx.Row) (Attempt, error) {
 	err := row.Scan(&a.ID, &a.Seq, &a.DatabaseID, &a.MigrationID, &a.MigrationTitle, &operation, &a.RequestID,
 		&a.CancelsExecutionID, &a.DraftRevision, &a.CandidateVersion,
 		&a.AppliedVersion, &a.SQL, &a.SQLHash, &dialect, &a.StatementCount, &a.ExecutorID, &a.ExecutorName,
-		&status, &a.Error, &a.FailedStatement, &a.StartedAt, &a.FinishedAt, &a.ReconciledAt, &a.Batch, &a.RecoveredBy)
+		&status, &a.Error, &a.FailedStatement, &a.StartedAt, &a.FinishedAt, &a.ReconciledAt, &a.Batch, &a.RecoveredBy, &a.lastRecovery)
 	a.Dialect, a.Status, a.Operation = Dialect(dialect), Status(status), Operation(operation)
 	return a, err
 }
@@ -248,16 +248,24 @@ func (s *Store) finish(ctx context.Context, a Attempt) (bool, error) {
 	return tag.RowsAffected() == 1, err
 }
 
-// settleBatch records a recovery of a partial batch execution. settledBy is
-// set once it succeeded or was fully compensated; otherwise only the message moves.
-func (s *Store) settleBatch(ctx context.Context, a Attempt, settledBy string, at time.Time) (bool, error) {
+func (s *Store) beginRecovery(ctx context.Context, tx pgx.Tx, a Attempt, requestID string) error {
+	tag, err := tx.Exec(ctx, `UPDATE migration_attempts SET status='unknown', last_recovery_request_id=$2,
+		error_message='Batch recovery has not been reconciled.' WHERE id=$1 AND status=$3`, a.ID, requestID, string(a.Status))
+	if err == nil && tag.RowsAffected() != 1 {
+		return fail(ErrConflict, "The batch execution changed before recovery started.")
+	}
+	return err
+}
+
+// settleBatch finishes the recovery whose effects were verified against the ledger.
+func (s *Store) settleBatch(ctx context.Context, a Attempt, requestID string, at time.Time) (bool, error) {
 	var applied *int64
 	if a.Status == StatusSucceeded {
 		applied = &a.CandidateVersion
 	}
 	tag, err := s.pool.Exec(ctx, `UPDATE migration_attempts SET status=$2, applied_version=$3, error_message=$4,
-		recovered_by_request_id=$5, finished_at=$6 WHERE id=$1 AND status IN ('partially_applied', 'partially_reverted') AND mode='batch'
-		AND recovered_by_request_id IS NULL`, a.ID, string(a.Status), applied, nullable(a.Error), nullable(settledBy), at)
+		recovered_by_request_id=$5, finished_at=$6 WHERE id=$1 AND status='unknown' AND mode='batch'
+		AND last_recovery_request_id=$7`, a.ID, string(a.Status), applied, nullable(a.Error), nullable(a.RecoveredBy), at, requestID)
 	return tag.RowsAffected() == 1, err
 }
 

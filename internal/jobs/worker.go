@@ -215,12 +215,20 @@ func (w *Worker) acquire(ctx context.Context, c claimed, log *slog.Logger) (*dat
 		w.requeue(ctx, c, c.Attempts, w.cfg.Defer, "", "busy", log)
 	case errors.Is(err, database.ErrUnsupportedDialect), errors.Is(err, database.ErrNotFound):
 		lockWait.WithLabelValues("refused").Observe(waited.Seconds())
+		if c.previous == Blocked || c.previous == Running {
+			w.settle(ctx, c, Unknown("The target cannot be reached to reconcile the previous delivery."), c.Attempts, log)
+			break
+		}
 		w.settle(ctx, c, Failure(messageOr(err, "This database cannot run queued jobs.")+" Nothing was executed."), c.Attempts+1, log)
 	default:
 		lockWait.WithLabelValues("unavailable").Observe(waited.Seconds())
 		message := messageOr(err, "The target database is unavailable.") + " Nothing was executed."
 		if c.previous == Blocked {
 			w.requeue(ctx, c, c.Attempts, w.cfg.Recheck, "", "unavailable", log)
+			break
+		}
+		if c.previous == Running {
+			w.settle(ctx, c, Unknown("The target is unavailable; the previous delivery has not been reconciled."), c.Attempts, log)
 			break
 		}
 		w.settle(ctx, c, Transient(message), c.Attempts+1, log)
@@ -261,6 +269,10 @@ func (w *Worker) run(ctx context.Context, gate *database.Gate, c claimed, log *s
 // settle applies the retry policy and records the outcome.
 func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int, log *slog.Logger) {
 	ctx = context.WithoutCancel(ctx)
+	if o.Retryable && c.previous == Blocked {
+		w.requeue(ctx, c, attempts, w.cfg.Recheck, "", "unavailable", log)
+		return
+	}
 	if o.Retryable && o.Effect == EffectNone && attempts < c.MaxAttempts {
 		delay := w.cfg.Backoff[attempts-1]
 		jobRetries.WithLabelValues(operationLabel(c.Operation)).Inc()
@@ -276,12 +288,6 @@ func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int,
 		// Another worker owns the claim now; it reconciles the same execution.
 		log.WarnContext(ctx, "job claim lost before recording", "event", "job.claim_lost", "status", string(o.Status))
 		return
-	}
-	// A recovery that changed nothing leaves the original block in place.
-	if c.RecoversExecutionID != "" && o.Status != Failed {
-		if err := w.store.resolve(ctx, c.DatabaseID, c.RecoversExecutionID, c.ID); err != nil {
-			log.ErrorContext(ctx, "recovered block not released", "event", "job.resolve.error")
-		}
 	}
 	if c.previous != Blocked || o.Status != Blocked {
 		jobsFinished.WithLabelValues(operationLabel(c.Operation), string(o.Status), string(o.Effect)).Inc()

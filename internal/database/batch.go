@@ -373,9 +373,26 @@ func (g *Gate) RunBatches(ctx context.Context, plan BatchPlan, hooks BatchHooks)
 		}
 	}
 	if _, err := g.conn.Exec(ctx, `UPDATE `+batchExecutions+` SET completed_at=COALESCE(completed_at, now()) WHERE execution_id=$1`, plan.ExecutionID); err != nil {
-		return g.progressAfter(ctx, plan.ExecutionID, targetError(ctx, err))
+		return BatchProgress{}, fail(ErrOutcomeUnknown, "The batch completion could not be confirmed; the ledger must be checked.")
 	}
 	return g.BatchProgress(ctx, plan.ExecutionID)
+}
+
+// ReadBatchProgress checks the ledger without preparing a batch or writing to the target.
+func (g *Gate) ReadBatchProgress(ctx context.Context, executionID string) (BatchProgress, error) {
+	var exists bool
+	err := g.conn.QueryRow(ctx, `SELECT to_regclass('`+batchExecutions+`') IS NOT NULL`).Scan(&exists)
+	if err != nil {
+		return BatchProgress{}, targetError(ctx, err)
+	}
+	if !exists {
+		return BatchProgress{}, nil
+	}
+	p, err := g.BatchProgress(ctx, executionID)
+	if errors.Is(err, ErrNotFound) {
+		err = nil
+	}
+	return p, err
 }
 
 // progressAfter reports durable progress with the error that stopped the run.

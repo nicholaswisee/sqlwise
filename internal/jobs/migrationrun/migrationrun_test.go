@@ -521,6 +521,10 @@ func TestInterruptedCompensationIsPartiallyRevertedAndCannotBeResumed(t *testing
 	if err != nil || len(h.Committed) != 0 {
 		t.Fatalf("a compensated execution entered history: %+v, %v", h.Committed, err)
 	}
+	later := f.enqueue(t, f.approved(t, f.define(t, "Later", "CREATE TABLE later (id int)", "DROP TABLE later"), migration.OpUp))
+	if j := jobstest.Wait(t, f.store, "db", later.ID, 2*time.Second, jobstest.Settled); j.Status != jobs.Succeeded || !f.has(t, "later") {
+		t.Fatalf("job after second compensation = %+v", j)
+	}
 }
 
 type faultRow struct{ err error }
@@ -600,6 +604,132 @@ func TestConfirmedStartupFailureCanRetryWithTheSameExecution(t *testing.T) {
 			var receipt string
 			if err := f.target.QueryRow(t.Context(), `SELECT outcome FROM sqlwise_internal.migration_receipts WHERE attempt_id=$1`, job.ExecutionID).Scan(&receipt); err != nil || receipt != "applied" {
 				t.Fatalf("receipt = %q, %v", receipt, err)
+			}
+		})
+	}
+}
+
+type lostBatchAck struct {
+	migration.BatchRunner
+	gate   *database.Gate
+	stopAt int
+}
+
+func (b lostBatchAck) hooks() database.BatchHooks {
+	return database.BatchHooks{BeforeCommit: func(n int) error {
+		if n == b.stopAt {
+			return errors.New("batch stopped")
+		}
+		return nil
+	}}
+}
+
+func (b lostBatchAck) Forward(ctx context.Context, id string, spec migration.BatchSpec, size int) (migration.BatchResult, error) {
+	plan, err := b.gate.PrepareBatch(ctx, id, database.BatchUpdate(spec), size)
+	if err != nil {
+		return migration.BatchResult{}, err
+	}
+	_, _ = b.gate.RunBatches(ctx, plan, b.hooks())
+	b.gate.Close()
+	return migration.BatchResult{}, migration.ErrOutcomeUnknown
+}
+
+func (b lostBatchAck) Compensate(ctx context.Context, id string) (migration.BatchResult, error) {
+	_, _ = b.gate.RevertBatches(ctx, id, b.hooks())
+	b.gate.Close()
+	return migration.BatchResult{}, migration.ErrOutcomeUnknown
+}
+
+func TestUncertainBatchForwardRequiresLedgerBeforeRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stopAt int
+		status migration.Status
+		effect jobs.Effect
+		rows   int64
+	}{
+		{"zero", 1, migration.StatusFailed, jobs.EffectNone, 0},
+		{"partial", 2, migration.StatusPartiallyApplied, jobs.EffectPartial, 100},
+		{"complete", -1, migration.StatusSucceeded, jobs.EffectCommitted, 500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.seedAccounts(t)
+			if _, err := f.target.Exec(t.Context(), `DELETE FROM fail_switch`); err != nil {
+				t.Fatal(err)
+			}
+			d, err := f.service.Create(f.editor.Ctx, "db", migration.DraftInput{Title: "Archive", SQLDown: "UPDATE accounts SET status='active'", BatchSize: 100,
+				Batch: &migration.BatchSpec{Schema: "public", Table: "accounts", Key: "id", Column: "status", Value: "archived"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := f.approved(t, d, migration.OpUp)
+			job := f.enqueue(t, req)
+			f.loseAck(t, req, tc.stopAt)
+			f.worker(t, f.runner())
+			if done := f.settled(t, job.ID); done.Effect != tc.effect || done.CommittedRows != tc.rows {
+				t.Fatalf("reconciled job = %+v", done)
+			}
+			if a := f.attempt(t, job.ExecutionID); a.Status != tc.status {
+				t.Fatalf("reconciled attempt = %+v", a)
+			}
+			if n := f.count(t, `SELECT count(*) FROM accounts WHERE status='archived'`); n != tc.rows {
+				t.Fatalf("%d rows archived, want %d", n, tc.rows)
+			}
+		})
+	}
+}
+
+func (f *flow) loseAck(t *testing.T, req migration.Request, stopAt int) {
+	t.Helper()
+	gate, err := f.gates.Gate(t.Context(), "db", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Close()
+	a, err := f.service.RunWith(t.Context(), migrationrun.Target(gate), lostBatchAck{migrationrun.Batches(gate, nil), gate, stopAt}, req.ID)
+	if !errors.Is(err, migration.ErrOutcomeUnknown) || a.Status != migration.StatusUnknown {
+		t.Fatalf("lost acknowledgement = %+v, %v", a, err)
+	}
+}
+
+func TestUncertainCompensationReconcilesWithoutMoreWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stopAt int
+		status migration.Status
+		effect jobs.Effect
+		rows   int64
+	}{
+		{"zero", 2, migration.StatusPartiallyApplied, jobs.EffectPartial, 0},
+		{"partial", 1, migration.StatusPartiallyReverted, jobs.EffectPartial, 100},
+		{"complete", -1, migration.StatusReverted, jobs.EffectCommitted, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			stop := f.worker(t, f.runner())
+			d, first := f.partialBatch(t)
+			stop()
+			req := f.recovery(t, d, migration.OpCompensate, first.ExecutionID)
+			job := f.enqueue(t, req)
+			f.loseAck(t, req, tc.stopAt)
+			if j, _ := f.store.Get(t.Context(), "db", first.ID); len(j.Recovery()) != 0 {
+				t.Fatalf("recovery offered while ledger unverified: %v", j.Recovery())
+			}
+			f.p.Exec(t, `DELETE FROM group_memberships WHERE user_id=$1`, f.editor.ID)
+			f.worker(t, f.runner())
+			done := f.settled(t, job.ID)
+			if done.Effect != tc.effect || done.CommittedRows != tc.rows {
+				t.Fatalf("reconciled job = %+v", done)
+			}
+			if tc.status == migration.StatusPartiallyReverted && (len(done.Recovery()) != 1 || done.Recovery()[0] != jobs.OpCompensate) {
+				t.Fatalf("unsafe recovery = %v", done.Recovery())
+			}
+			if a := f.attempt(t, first.ExecutionID); a.Status != tc.status {
+				t.Fatalf("reconciled attempt = %+v", a)
+			}
+			if n := f.count(t, `SELECT count(*) FROM accounts WHERE status='archived'`); n != 200-tc.rows {
+				t.Fatalf("%d rows archived after recovery reconciliation", n)
 			}
 		})
 	}
