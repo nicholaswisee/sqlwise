@@ -269,18 +269,19 @@ func (h *Migrations) apiDetail(c *gin.Context) {
 }
 
 func apiWorkspaceEngine(w *apiWorkspace) {
+	var dbms database.DBMS
 	switch w.Engine {
 	case database.PostgreSQL.Label():
-		w.Dialect = string(database.PostgreSQL)
-		c := database.PostgreSQL.Capabilities()
-		c.ExplainAnalyze = false // The workspace header has no target sandbox handle.
-		w.Capabilities = apiCapabilities{c.ConnectionTest, c.SchemaInspection, c.DataPreview, c.MigrationExecution, c.AtomicMigrations, c.SchemaDiff, c.Explain, c.ExplainAnalyze}
+		dbms = database.PostgreSQL
 	case database.MySQL.Label():
-		w.Dialect = string(database.MySQL)
-		c := database.MySQL.Capabilities()
-		c.ExplainAnalyze = false // The workspace header has no target sandbox handle.
-		w.Capabilities = apiCapabilities{c.ConnectionTest, c.SchemaInspection, c.DataPreview, c.MigrationExecution, c.AtomicMigrations, c.SchemaDiff, c.Explain, c.ExplainAnalyze}
+		dbms = database.MySQL
+	default:
+		return
 	}
+	w.Dialect = string(dbms)
+	c := dbms.Capabilities()
+	c.ExplainAnalyze = false // The workspace header has no target sandbox handle.
+	w.Capabilities = apiWorkspaceCapabilities(dbms, c)
 }
 func (h *Migrations) apiUpdate(c *gin.Context) {
 	var in struct {

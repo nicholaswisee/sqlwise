@@ -430,6 +430,19 @@ func TestSPAWorkspaceMySQLHTTP(t *testing.T) {
 	if _, err := target.Exec("INSERT INTO items VALUES (1, NULL, X'deadbeef'), (2, 'two', NULL)"); err != nil {
 		t.Fatal(err)
 	}
+	for _, path := range []string{base, base + "/tables/" + database.TableRef{Schema: conn.Database, Name: "items"}.ID(), base + "/migrations"} {
+		data := spaData[struct {
+			Workspace struct {
+				Capabilities struct {
+					MigrationExecution bool `json:"migration_execution"`
+					DataPreview        bool `json:"data_preview"`
+				} `json:"capabilities"`
+			} `json:"workspace"`
+		}](t, f.request(t, "GET", path, &f.Viewer, nil, 200))
+		if c := data.Workspace.Capabilities; c.MigrationExecution || !c.DataPreview {
+			t.Errorf("MySQL workspace %s: got %+v; want data preview, not migration execution", path, c)
+		}
+	}
 	explorer := spaData[struct {
 		Schema string `json:"schema"`
 	}](t, f.request(t, "GET", base, &f.Viewer, nil, 200))
