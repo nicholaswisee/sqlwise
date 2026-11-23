@@ -13,20 +13,45 @@ sqlwise is a database management web app built for the IF3110 Web Application De
 
 ## Features
 
-- **Database explorer:** Browse PostgreSQL and MySQL schemas, tables, columns, and data.
-- **Migrations:** Write SQL drafts, run migrations, and review version history and execution results.
+### Milestone 1 foundation
+
+- **Authentication and sessions:** Sign in and manage authenticated sessions.
 - **Access control:** Manage users, groups, and view or edit permissions for each database.
 - **Connection management:** Register, test, enable, and disable database connections.
+- **Database explorer:** Browse database schemas, tables, columns, and data.
+- **Linear migrations:** Write SQL drafts, apply them in order, and track database versions and execution results.
+
+### Milestone 2 additions
+
+- **Responsive SPA:** Use the Go JSON API from the SPA for both existing pages, including login and administration, and new migration workflows.
+- **Rollback, forward, and history:** Define SQL up and down or mark a migration irreversible with a reason. Roll back the latest active reversible migration and reapply changes in order. Committed history is separate from attempts, and **Hide rollback** filters out canceled execution pairs without deleting records.
+- **Review and approval:** Requests need approval from the leader of every group with view or edit access, including for rollback and forward.
+- **Asynchronous execution:** A durable queue and Go worker run approved migrations, report progress in the SPA, and support checkpointed batches with reviewed resume or compensation. See [Jobs and large-data benchmark](#jobs-and-large-data-benchmark).
+- **Activity logging and tracing:** Structured Go logs and OpenTelemetry traces correlate API requests, queued jobs, worker activity, and database operations.
+
+Milestone 2 reviewed execution is PostgreSQL-only. MySQL connections, browsing, and existing migration records remain available, but there is no synchronous MySQL fallback.
 
 ## Bonus features
 
-## Milestone 1
+### Milestone 1
+
+These statuses describe what shipped in Milestone 1.
 
 | Feature       | Status                  | What it does                                                                                                              |
 | ------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | MySQL support | Complete                | Adds MySQL connections, browsing, and migrations. Partial or uncertain migration outcomes can be reviewed and reconciled. |
 | Schema diff   | Complete for PostgreSQL | Compares a live schema with a desired JSON snapshot and generates a migration draft with change warnings.                 |
 | Query plans   | Complete for PostgreSQL | Shows Explain plans and supports Analyze for SELECT queries on an authorized sandbox connection.                          |
+
+### Milestone 2
+
+| Feature           | Status           | What it does                                                                                                                                                                                             |
+| ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Observability     | Partial          | [Collector, Prometheus, and Grafana configuration](deploy/observability/) is included. The provisioned dashboard covers the API and platform database pool; queue and migration panels are not included. |
+| k6 stress testing | Fixtures only    | [`cmd/k6fixture`](cmd/k6fixture/) prepares approved requests. No k6 workload or staged stress-test results are included.                                                                                 |
+| CodeQL SAST       | Scanning enabled | The [CodeQL workflow](.github/workflows/codeql.yml) scans Go and JavaScript/TypeScript. Findings triage is not documented.                                                                               |
+
+The separate early-submission bonus depends on the submission time and is not claimed here.
 
 ## Run with Docker
 
@@ -59,6 +84,8 @@ go run ./cmd/admin -username admin
 ```
 
 The admin command prompts for a password. Skip it if an administrator already exists.
+
+When upgrading, stop the API and worker and back up the platform database. Run `go run ./cmd/admin -schema-only` before restarting both from the same version. Docker Compose applies the schema during app startup.
 
 Start the SPA development server in one terminal:
 
@@ -93,8 +120,6 @@ The active frontend lives in `web/spa` and uses TanStack Start in static SPA mod
 
 The previous templ/HTMX frontend remains in `internal/web/views`, `web/src`, and the legacy Vite configuration. Its templates, generated Go, HTML handlers, and regression tests are retained; production no longer mounts those HTML routes. `vp build` and `go tool templ generate` still check the legacy frontend. The optional Compose `legacy` profile retains the old frontend asset-development service, not a second production UI.
 
-This refactor changes only the frontend and its API/serving boundary. It does **not** introduce M2 approval, rollback/forward, queue, worker, or database-schema changes; migration execution retains its existing synchronous behavior. Keeping the legacy source is not a guarantee that an older application release will be safe after future M2 data/schema changes.
-
 ## Demo target databases
 
 The Docker stack includes a seeded PostgreSQL target. Register it under **Admin → Connections**. Start the optional seeded MySQL target with `docker compose --profile bonus up -d mysql`.
@@ -112,18 +137,18 @@ Approved executions are queued durably and run by `cmd/worker`, never inside an 
 
 - One worker at a time holds a target's execution gate (a session advisory lock on a dedicated target connection) for the whole job, so the same database is serialized, including between batch commits, while different databases run in parallel.
 - Confirmed transient failures before any target write are retried at most 3 times in total, after 1 s and 2 s. SQL, access and stale-request failures are final.
-- A batch migration ("Run as checkpointed batches") commits each batch with its checkpoint and saved row values in one target transaction. If it stops, the committed batches stay, the execution is partially applied, and later jobs on that database wait. An approved **resume** finishes it (only then does it enter history); an approved **compensate** restores saved values newest batch first and stops rather than overwrite rows changed since.
+- A batch migration ("Run as checkpointed batches") commits each batch with its checkpoint and saved row values in one target transaction. If it stops after committing only some batches, those changes stay and later jobs on that database wait for recovery. An approved **resume** finishes the migration so it can enter committed history; an approved **compensate** restores saved values newest batch first and stops rather than overwrite rows changed since.
 - Worker settings use `WORKER_*` variables (`WORKER_ID`, `WORKER_CONCURRENCY`, `WORKER_LEASE`, `WORKER_LOCK_WAIT`, `WORKER_JOB_TIMEOUT`, `WORKER_SHUTDOWN_GRACE`, `WORKER_RECHECK`, `WORKER_METRICS_ADDR`); the worker serves `/metrics` and `/health` on port 9091.
 
 Recovery runbook:
 
-| Situation                | What happens                                                                                                                                                                  | Action                                                                |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Worker died              | Its target session ends, releasing the gate. After the lease expires another worker reclaims the job and checks the target receipt or batch ledger instead of re-running SQL. | None; a restart with the same `WORKER_ID` reclaims at once.           |
-| Worker stalled but alive | Another worker claims the expired job but waits for the gate, without spending attempts.                                                                                      | Stop the stalled process if it is hung.                               |
-| Target unreachable       | Retried after 1 s and 2 s, then failed with no target effect.                                                                                                                 | Restore connectivity and create a new request.                        |
-| Outcome unknown          | `blocked/unknown`; the worker re-checks the receipt every `WORKER_RECHECK`.                                                                                                   | None unless the target stays unreachable.                             |
-| Batch stopped            | `blocked/partial`; later jobs on that database wait.                                                                                                                          | Request resume or compensation from the job page and get it approved. |
+| Situation                                    | What happens                                                                                                                                                                       | Action                                                                                                                                              |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Worker died                                  | Its target session ends, releasing the gate. After the lease expires another worker reclaims the job and checks the target receipt or batch ledger instead of re-running SQL.      | None; a restart with the same `WORKER_ID` reclaims at once.                                                                                         |
+| Worker stalled but alive                     | Another worker claims the expired job but waits for the gate, without spending attempts.                                                                                           | Stop the stalled process if it is hung.                                                                                                             |
+| Target unreachable before execution          | Confirmed no-effect connection failures are retried after 1 s and 2 s.                                                                                                             | Restore connectivity; if the job already failed, create a new request.                                                                              |
+| Outcome unknown                              | `blocked/unknown`; the worker reacquires the target lock and checks the receipt or batch checkpoints. It does not repeat the SQL or offer recovery while the outcome is uncertain. | Restore connectivity if the target stays unreachable.                                                                                               |
+| Batch stopped with confirmed partial changes | `blocked/partial`; later jobs on that database wait until recovery succeeds.                                                                                                       | Request resume or compensation from the job page and get it approved. If any batches have already been compensated, only compensation can continue. |
 
 Large-data benchmark (`cmd/batchbench`, disposable database only):
 
@@ -201,8 +226,8 @@ Set `SQLWISE_E2E_USERNAME` and `SQLWISE_E2E_PASSWORD` if the test administrator 
 
 ## Team
 
-| Student ID | Member                         | Main contributions                                                                          |
-| ---------- | ------------------------------ | ------------------------------------------------------------------------------------------- |
-| 13524034   | Jason Edward Salim             | Database connections, PostgreSQL adapter and explorer, demo target, test database isolation |
-| 13524037   | Nicholas Wise Saragih Sumbayak | Authentication, sessions, access control, administration, frontend foundation, CI           |
-| 13524106   | Michael James Liman            | Migration editor and execution, history, schema diff and generation                         |
+| Student ID | Member                         | Main contributions                                                                                   |
+| ---------- | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| 13524034   | Jason Edward Salim             | Database connections and explorer, durable queue and worker, batch recovery, Jobs UI and benchmark   |
+| 13524037   | Nicholas Wise Saragih Sumbayak | Authentication, sessions, access control, administration, frontend foundation, CI                    |
+| 13524106   | Michael James Liman            | Migration editor, approval workflow, rollback and forward, committed history, schema diff and CodeQL |
