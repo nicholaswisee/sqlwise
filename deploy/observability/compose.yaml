@@ -12,6 +12,19 @@ services:
       collector:
         condition: service_started
 
+  worker:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: 127.0.0.1:24224
+        fluentd-async: "true"
+        tag: sqlwise.worker
+    depends_on:
+      collector:
+        condition: service_started
+
   collector:
     image: otel/opentelemetry-collector-contrib:0.136.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]

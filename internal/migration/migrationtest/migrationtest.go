@@ -26,7 +26,8 @@ type Platform struct {
 	Pool     *pgxpool.Pool
 	Sessions *auth.Service
 	Access   *access.Service
-	admin    context.Context
+	// Admin is a platform administrator's session context.
+	Admin context.Context
 }
 
 const password = "migration fixture passphrase"
@@ -37,7 +38,7 @@ func NewPlatform(t *testing.T) *Platform {
 	if err := migration.NewStore(f.Pool).ApplySchema(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	return &Platform{Pool: f.Pool, Sessions: f.Auth, Access: f.Access, admin: f.Admin.Context}
+	return &Platform{Pool: f.Pool, Sessions: f.Auth, Access: f.Access, Admin: f.Admin.Context}
 }
 
 func (p *Platform) Exec(t *testing.T, sql string, args ...any) {
@@ -66,16 +67,16 @@ type User struct {
 // database), then signs in and binds the session to a context.
 func (p *Platform) User(t *testing.T, username string, grants map[string]string) User {
 	t.Helper()
-	principal, err := p.Sessions.CreateUser(p.admin, credentials(t, username))
+	principal, err := p.Sessions.CreateUser(p.Admin, credentials(t, username))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(grants) > 0 {
-		group, err := p.Access.CreateGroup(p.admin, "Group "+username)
+		group, err := p.Access.CreateGroup(p.Admin, "Group "+username)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := p.Access.AddMembership(p.admin, principal.UserID, group.ID); err != nil {
+		if err := p.Access.AddMembership(p.Admin, principal.UserID, group.ID); err != nil {
 			t.Fatal(err)
 		}
 		for database, name := range grants {
@@ -83,12 +84,43 @@ func (p *Platform) User(t *testing.T, username string, grants map[string]string)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := p.Access.SetGrant(p.admin, group.ID, database, permission); err != nil {
+			if err := p.Access.SetGrant(p.Admin, group.ID, database, permission); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
 	return p.Login(t, username)
+}
+
+// Group creates an active group with grants ("view"/"edit" per database),
+// the given members, and leader (a member, or "" for none). Sign users in
+// again afterwards: policy changes end their earlier sessions' proof.
+func (p *Platform) Group(t *testing.T, name string, grants map[string]string, leader string, members ...string) string {
+	t.Helper()
+	group, err := p.Access.CreateGroup(p.Admin, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range members {
+		if err := p.Access.AddMembership(p.Admin, member, group.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for database, name := range grants {
+		permission, err := access.ParsePermission(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Access.SetGrant(p.Admin, group.ID, database, permission); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if leader != "" {
+		if err := p.Access.SetGroupLeader(p.Admin, group.ID, leader); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return group.ID
 }
 
 // Login signs in again, issuing proof for the user's current policy epoch.

@@ -24,6 +24,7 @@ type connectionFixture struct {
 	router *gin.Engine
 	target *pgxpool.Pool
 	form   url.Values
+	pools  *database.Pools
 }
 
 func newConnectionFixture(t *testing.T) *connectionFixture {
@@ -53,7 +54,7 @@ func newConnectionFixture(t *testing.T) *connectionFixture {
 	target := migrationtest.TargetDatabase(t)
 	cc := target.Config().ConnConfig
 	form := url.Values{"name": {"Demo target"}, "dbms": {"postgresql"}, "host": {cc.Host}, "port": {strconv.Itoa(int(cc.Port))}, "database": {cc.Database}, "username": {cc.User}, "password": {cc.Password}, "tls": {"disable"}}
-	return &connectionFixture{Fixture: f, router: router, target: target, form: form}
+	return &connectionFixture{Fixture: f, router: router, target: target, form: form, pools: pools}
 }
 
 func (f *connectionFixture) do(method, path string, actor *testfixture.Actor, form url.Values, hx, csrf bool) *httptest.ResponseRecorder {

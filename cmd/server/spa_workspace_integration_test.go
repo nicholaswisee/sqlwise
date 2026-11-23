@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"sqlwise/internal/access/testfixture"
@@ -43,6 +44,7 @@ func newSPAWorkspaceFixture(t *testing.T) *spaWorkspaceFixture {
 	}
 	pools := database.NewPools(store)
 	t.Cleanup(pools.Close)
+	startWorker(t, f.Pool, f.Access, pools)
 	router := newAPIRouter(f.Auth, f.Access)
 	adapter := migrationTargets{resolver: pools}
 	registerDatabaseAPIRoutes(router, f.Auth, f.Access, f.Pool, databaseTargets{targets: adapter, snapshot: adapter, store: store, pools: pools})
@@ -108,24 +110,67 @@ func (f *spaWorkspaceFixture) register(t *testing.T, conn database.Connection) s
 }
 
 type spaDraft struct {
-	ID       string `json:"id"`
-	SQL      string `json:"sql"`
-	SQLHash  string `json:"sql_hash"`
-	Revision int64  `json:"revision"`
-	Dialect  string `json:"dialect"`
+	ID             string `json:"id"`
+	SQL            string `json:"sql"`
+	SQLDown        string `json:"sql_down"`
+	DefinitionHash string `json:"definition_hash"`
+	Revision       int64  `json:"revision"`
+	Dialect        string `json:"dialect"`
 }
 
 type spaAttempt struct {
-	ID              string `json:"id"`
-	MigrationID     string `json:"migration_id"`
-	Status          string `json:"status"`
-	AppliedVersion  int64  `json:"applied_version"`
-	FailedStatement int    `json:"failed_statement"`
-	SQL             string `json:"sql"`
+	ID               string `json:"id"`
+	MigrationID      string `json:"migration_id"`
+	Operation        string `json:"operation"`
+	CancelsExecution string `json:"cancels_execution_id"`
+	Status           string `json:"status"`
+	AppliedVersion   int64  `json:"applied_version"`
+	FailedStatement  int    `json:"failed_statement"`
+	SQL              string `json:"sql"`
 }
 
-func spaConfirmation(d spaDraft, version int64) map[string]any {
-	return map[string]any{"expected_revision": d.Revision, "expected_version": version, "expected_sql_hash": d.SQLHash}
+type spaRequest struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	Approvals []struct {
+		GroupID string `json:"group_id"`
+	} `json:"approvals"`
+	Execution *spaAttempt `json:"execution"`
+}
+
+type spaJob struct {
+	ID          string `json:"job_id"`
+	ExecutionID string `json:"execution_id"`
+	Status      string `json:"status"`
+	Error       string `json:"error"`
+}
+
+func spaRequestInput(operation string, d spaDraft, version int64) map[string]any {
+	return map[string]any{"operation": operation, "expected_revision": d.Revision, "expected_definition_hash": d.DefinitionHash, "expected_version": version}
+}
+
+// approveAll submits a request and approves it as both fixture group leaders.
+func (f *spaWorkspaceFixture) approveAll(t *testing.T, base, requestID string) {
+	t.Helper()
+	f.request(t, "POST", base+"/requests/"+requestID+"/submit", &f.Editor, nil, 200)
+	f.request(t, "POST", base+"/requests/"+requestID+"/approve", &f.Viewer, map[string]any{"group_id": f.ViewGroup}, 200)
+	f.request(t, "POST", base+"/requests/"+requestID+"/approve", &f.Editor, map[string]any{"group_id": f.EditGroup}, 200)
+}
+
+// waitJob polls a job the way the SPA does until it finishes.
+func (f *spaWorkspaceFixture) waitJob(t *testing.T, base, jobID string) spaJob {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		job := spaData[spaJob](t, f.request(t, "GET", base+"/jobs/"+jobID, &f.Viewer, nil, 200))
+		if job.Status != "queued" && job.Status != "running" {
+			return job
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job %s still %s", jobID, job.Status)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func TestSPAWorkspacePostgresHTTP(t *testing.T) {
@@ -204,72 +249,127 @@ func TestSPAWorkspacePostgresHTTP(t *testing.T) {
 		f.request(t, "GET", path+"?limit=201", &f.Viewer, nil, 422)
 		f.request(t, "GET", base+"?schema=missing", &f.Viewer, nil, 404)
 	})
-	t.Run("draft execution and immutable attempt ownership", func(t *testing.T) {
-		input := map[string]any{"title": "API migration", "sql": "CREATE TABLE executed (id int);"}
+	t.Run("reviewed execution through the queue", func(t *testing.T) {
+		// Leaders are assigned directly so the fixture sessions stay fresh.
+		if _, err := f.Pool.Exec(t.Context(), `INSERT INTO group_leaders(group_id,user_id) VALUES ($1,$2),($3,$4)`, f.ViewGroup, f.Viewer.UserID, f.EditGroup, f.Editor.UserID); err != nil {
+			t.Fatal(err)
+		}
+		input := map[string]any{"title": "API migration", "sql": "CREATE TABLE executed (id int);", "sql_down": "DROP TABLE executed;"}
 		f.request(t, "POST", base+"/migrations", &f.Viewer, input, 403)
 		created := f.request(t, "POST", base+"/migrations", &f.Editor, input, 201)
 		d := spaData[spaDraft](t, created)
 		path := base + "/migrations/" + d.ID
-		if d.ID == "" || d.Revision != 1 || d.Dialect != "postgresql" || created.Header().Get("Location") != path {
+		if d.ID == "" || d.Revision != 1 || d.Dialect != "postgresql" || d.SQLDown != "DROP TABLE executed;" || created.Header().Get("Location") != path {
 			t.Fatalf("draft=%+v", d)
 		}
-		update := map[string]any{"title": "Updated", "sql": "CREATE TABLE executed (id int); INSERT INTO executed VALUES (7);", "expected_revision": 1}
+		update := map[string]any{"title": "Updated", "sql": "CREATE TABLE executed (id int); INSERT INTO executed VALUES (7);", "sql_down": "DROP TABLE executed;", "expected_revision": 1}
 		d = spaData[spaDraft](t, f.request(t, "PATCH", path, &f.Editor, update, 200))
-		if d.Revision != 2 || d.SQLHash == "" {
+		if d.Revision != 2 || d.DefinitionHash == "" {
 			t.Fatalf("updated=%+v", d)
 		}
 		f.request(t, "PATCH", path, &f.Editor, update, 409)
-		f.request(t, "POST", path+"/execute", &f.Viewer, spaConfirmation(d, 0), 403)
-		for _, bad := range []map[string]any{
-			{"expected_revision": 1, "expected_version": 0, "expected_sql_hash": d.SQLHash},
-			{"expected_revision": 2, "expected_version": 1, "expected_sql_hash": d.SQLHash},
-			{"expected_revision": 2, "expected_version": 0, "expected_sql_hash": strings.Repeat("0", 64)},
-		} {
-			f.request(t, "POST", path+"/execute", &f.Editor, bad, 409)
+
+		up := spaRequestInput("up", d, 0)
+		f.request(t, "POST", path+"/requests", &f.Viewer, up, 403)
+		f.request(t, "POST", path+"/requests", &f.Editor, spaRequestInput("up", spaDraft{Revision: 1, DefinitionHash: d.DefinitionHash}, 0), 409)
+		f.request(t, "POST", path+"/requests", &f.Editor, spaRequestInput("up", d, 1), 409)
+		r := spaData[spaRequest](t, f.request(t, "POST", path+"/requests", &f.Editor, up, 201))
+		execute := map[string]any{"request_id": r.ID, "idempotency_key": "first"}
+		f.request(t, "POST", path+"/execute", &f.Editor, execute, 409) // not reviewed yet
+		f.request(t, "POST", base+"/requests/"+r.ID+"/submit", &f.Viewer, nil, 403)
+		r = spaData[spaRequest](t, f.request(t, "POST", base+"/requests/"+r.ID+"/submit", &f.Editor, nil, 200))
+		if r.Status != "pending_review" || len(r.Approvals) != 2 {
+			t.Fatalf("submitted=%+v", r)
 		}
-		a := spaData[spaAttempt](t, f.request(t, "POST", path+"/execute", &f.Editor, spaConfirmation(d, 0), 200))
-		if a.ID == "" || a.Status != "succeeded" || a.AppliedVersion != 1 {
-			t.Fatalf("attempt=%+v", a)
+		// Each group's own leader decides; a view-only leader may approve.
+		f.request(t, "POST", base+"/requests/"+r.ID+"/approve", &f.Viewer, map[string]any{"group_id": f.EditGroup}, 403)
+		f.request(t, "POST", base+"/requests/"+r.ID+"/approve", &f.Viewer, map[string]any{"group_id": f.ViewGroup}, 200)
+		f.request(t, "POST", path+"/execute", &f.Editor, execute, 409) // one approval missing
+		r = spaData[spaRequest](t, f.request(t, "POST", base+"/requests/"+r.ID+"/approve", &f.Editor, map[string]any{"group_id": f.EditGroup}, 200))
+		if r.Status != "approved" {
+			t.Fatalf("approved=%+v", r)
+		}
+		f.request(t, "POST", path+"/execute", &f.Viewer, execute, 403)
+		f.request(t, "POST", path+"/execute", &f.Editor, map[string]any{"request_id": r.ID}, 422)
+		f.request(t, "POST", "/api/v1/databases/"+testfixture.PrimaryTargetID+"/migrations/"+d.ID+"/execute", &f.Editor, execute, 404)
+		var exists bool
+		if err := target.QueryRow(t.Context(), "SELECT to_regclass('public.executed') IS NOT NULL").Scan(&exists); err != nil || exists {
+			t.Fatalf("denied requests reached the target: exists=%v err=%v", exists, err)
+		}
+
+		accepted := f.request(t, "POST", path+"/execute", &f.Editor, execute, 202)
+		job := spaData[spaJob](t, accepted)
+		if job.ID == "" || job.ExecutionID == "" || job.ExecutionID == r.ID || accepted.Header().Get("Location") != base+"/jobs/"+job.ID {
+			t.Fatalf("job=%+v location=%q", job, accepted.Header().Get("Location"))
+		}
+		if job = f.waitJob(t, base, job.ID); job.Status != "succeeded" {
+			t.Fatalf("job=%+v", job)
 		}
 		var n int
 		if err := target.QueryRow(t.Context(), "SELECT id FROM executed").Scan(&n); err != nil || n != 7 {
 			t.Fatalf("target value=%d err=%v", n, err)
 		}
-		f.request(t, "POST", path+"/execute", &f.Editor, spaConfirmation(d, 0), 409)
-		failedDraft := spaData[spaDraft](t, f.request(t, "POST", base+"/migrations", &f.Editor, map[string]any{"title": "Rollback", "sql": "CREATE TABLE rolled_back (id int); INSERT INTO missing_table VALUES (1);"}, 201))
+		// Enqueueing the same request again never runs it twice.
+		again := f.waitJob(t, base, spaData[spaJob](t, f.request(t, "POST", path+"/execute", &f.Editor, map[string]any{"request_id": r.ID, "idempotency_key": "retry"}, 202)).ID)
+		var rows int
+		if err := target.QueryRow(t.Context(), "SELECT count(*) FROM executed").Scan(&rows); err != nil || rows != 1 || again.ExecutionID != job.ExecutionID {
+			t.Fatalf("redelivery rows=%d job=%+v err=%v", rows, again, err)
+		}
+		r = spaData[spaRequest](t, f.request(t, "GET", base+"/requests/"+r.ID, &f.Viewer, nil, 200))
+		if r.Status != "queued" || r.Execution == nil || r.Execution.ID != job.ExecutionID || r.Execution.Status != "succeeded" || r.Execution.AppliedVersion != 1 {
+			t.Fatalf("request after job=%+v", r)
+		}
+
+		// Rollback runs SQL down as a new execution; hide_rollback hides the pair.
+		rollback := spaData[spaRequest](t, f.request(t, "POST", path+"/requests", &f.Editor, spaRequestInput("rollback", d, 1), 201))
+		f.approveAll(t, base, rollback.ID)
+		rolledBack := f.waitJob(t, base, spaData[spaJob](t, f.request(t, "POST", path+"/execute", &f.Editor, map[string]any{"request_id": rollback.ID, "idempotency_key": "rb"}, 202)).ID)
+		if err := target.QueryRow(t.Context(), "SELECT to_regclass('public.executed') IS NOT NULL").Scan(&exists); err != nil || exists || rolledBack.Status != "succeeded" {
+			t.Fatalf("rollback job=%+v exists=%v err=%v", rolledBack, exists, err)
+		}
+		type historyBody struct {
+			CurrentVersion int64        `json:"current_version"`
+			Attempts       []spaAttempt `json:"attempts"`
+			Committed      []spaAttempt `json:"committed"`
+			Head           struct {
+				Active  []map[string]string `json:"active"`
+				Pending []map[string]string `json:"pending"`
+			} `json:"head"`
+		}
+		full := spaData[historyBody](t, f.request(t, "GET", base+"/migrations", &f.Viewer, nil, 200))
+		hidden := spaData[historyBody](t, f.request(t, "GET", base+"/migrations?hide_rollback=true", &f.Viewer, nil, 200))
+		if full.CurrentVersion != 2 || len(full.Committed) != 2 || full.Committed[1].Operation != "rollback" || full.Committed[1].CancelsExecution != job.ExecutionID ||
+			len(hidden.Committed) != 0 || len(hidden.Attempts) != 2 || len(full.Head.Active) != 0 || len(full.Head.Pending) != 1 {
+			t.Fatalf("history=%+v hidden=%+v", full, hidden)
+		}
+
+		// A failing migration rolls back, stays visible as an attempt, and keeps the head.
+		failedDraft := spaData[spaDraft](t, f.request(t, "POST", base+"/migrations", &f.Editor, map[string]any{"title": "Rollback", "sql": "CREATE TABLE rolled_back (id int); INSERT INTO missing_table VALUES (1);", "irreversible": true, "irreversible_reason": "test data"}, 201))
 		failedPath := base + "/migrations/" + failedDraft.ID
-		failed := f.request(t, "POST", failedPath+"/execute", &f.Editor, spaConfirmation(failedDraft, 1), 422)
-		var failure struct {
-			Error struct {
-				Code    string            `json:"code"`
-				Attempt spaAttempt        `json:"attempt"`
-				Fields  map[string]string `json:"fields"`
-			} `json:"error"`
+		f.request(t, "POST", failedPath+"/requests", &f.Editor, spaRequestInput("up", failedDraft, 2), 409) // B waits for forward
+		forward := spaData[spaRequest](t, f.request(t, "POST", path+"/requests", &f.Editor, spaRequestInput("forward", d, 2), 201))
+		f.approveAll(t, base, forward.ID)
+		f.waitJob(t, base, spaData[spaJob](t, f.request(t, "POST", path+"/execute", &f.Editor, map[string]any{"request_id": forward.ID, "idempotency_key": "fw"}, 202)).ID)
+		failing := spaData[spaRequest](t, f.request(t, "POST", failedPath+"/requests", &f.Editor, spaRequestInput("up", failedDraft, 3), 201))
+		f.approveAll(t, base, failing.ID)
+		failedJob := f.waitJob(t, base, spaData[spaJob](t, f.request(t, "POST", failedPath+"/execute", &f.Editor, map[string]any{"request_id": failing.ID, "idempotency_key": "f"}, 202)).ID)
+		if failedJob.Status != "failed" || !strings.Contains(failedJob.Error, "Statement 2 failed") {
+			t.Fatalf("failed job=%+v", failedJob)
 		}
-		if err := json.Unmarshal(failed.Body.Bytes(), &failure); err != nil {
-			t.Fatal(err)
-		}
-		fa := failure.Error.Attempt
-		if failure.Error.Code != "validation" || failure.Error.Fields == nil || fa.ID == "" || fa.Status != "failed" || fa.FailedStatement != 2 || fa.SQL != failedDraft.SQL {
-			t.Fatalf("lost failed attempt: %s", failed.Body)
-		}
-		var exists bool
 		if err := target.QueryRow(t.Context(), "SELECT to_regclass('public.rolled_back') IS NOT NULL").Scan(&exists); err != nil || exists {
 			t.Fatalf("rollback exists=%v err=%v", exists, err)
 		}
-		got := spaData[spaAttempt](t, f.request(t, "GET", failedPath+"/attempts/"+fa.ID, &f.Viewer, nil, 200))
-		if got.ID != fa.ID || got.SQL != failedDraft.SQL {
-			t.Fatalf("attempt detail=%+v", got)
+		fa := spaData[spaAttempt](t, f.request(t, "GET", failedPath+"/attempts/"+failedJob.ExecutionID, &f.Viewer, nil, 200))
+		if fa.Status != "failed" || fa.FailedStatement != 2 || fa.SQL != failedDraft.SQL {
+			t.Fatalf("attempt detail=%+v", fa)
 		}
 		f.request(t, "GET", path+"/attempts/"+fa.ID, &f.Viewer, nil, 404)
 		f.request(t, "GET", "/api/v1/databases/"+testfixture.PrimaryTargetID+"/migrations/"+d.ID, &f.Viewer, nil, 404)
-		f.request(t, "POST", "/api/v1/databases/"+testfixture.PrimaryTargetID+"/migrations/"+d.ID+"/execute", &f.Editor, spaConfirmation(d, 0), 404)
-		history := spaData[struct {
-			CurrentVersion int64        `json:"current_version"`
-			Attempts       []spaAttempt `json:"attempts"`
-		}](t, f.request(t, "GET", base+"/migrations", &f.Viewer, nil, 200))
-		if history.CurrentVersion != 1 || len(history.Attempts) != 2 {
-			t.Fatalf("denied/stale/duplicate requests changed history: %+v", history)
+		f.request(t, "GET", "/api/v1/databases/"+testfixture.PrimaryTargetID+"/requests/"+r.ID, &f.Viewer, nil, 404)
+		f.request(t, "GET", "/api/v1/databases/"+testfixture.PrimaryTargetID+"/jobs/"+job.ID, &f.Viewer, nil, 404)
+		after := spaData[historyBody](t, f.request(t, "GET", base+"/migrations", &f.Viewer, nil, 200))
+		if after.CurrentVersion != 3 || len(after.Committed) != 3 || len(after.Attempts) != 4 || len(after.Head.Active) != 1 {
+			t.Fatalf("failure changed history: %+v", after)
 		}
 	})
 	t.Run("diff and estimated plans never execute", func(t *testing.T) {
@@ -330,6 +430,19 @@ func TestSPAWorkspaceMySQLHTTP(t *testing.T) {
 	if _, err := target.Exec("INSERT INTO items VALUES (1, NULL, X'deadbeef'), (2, 'two', NULL)"); err != nil {
 		t.Fatal(err)
 	}
+	for _, path := range []string{base, base + "/tables/" + database.TableRef{Schema: conn.Database, Name: "items"}.ID(), base + "/migrations"} {
+		data := spaData[struct {
+			Workspace struct {
+				Capabilities struct {
+					MigrationExecution bool `json:"migration_execution"`
+					DataPreview        bool `json:"data_preview"`
+				} `json:"capabilities"`
+			} `json:"workspace"`
+		}](t, f.request(t, "GET", path, &f.Viewer, nil, 200))
+		if c := data.Workspace.Capabilities; c.MigrationExecution || !c.DataPreview {
+			t.Errorf("MySQL workspace %s: got %+v; want data preview, not migration execution", path, c)
+		}
+	}
 	explorer := spaData[struct {
 		Schema string `json:"schema"`
 	}](t, f.request(t, "GET", base, &f.Viewer, nil, 200))
@@ -347,13 +460,14 @@ func TestSPAWorkspaceMySQLHTTP(t *testing.T) {
 	if d.Dialect != "mysql" {
 		t.Fatalf("MySQL draft=%+v", d)
 	}
-	a := spaData[spaAttempt](t, f.request(t, "POST", base+"/migrations/"+d.ID+"/execute", &f.Editor, spaConfirmation(d, 0), 200))
-	if a.Status != "succeeded" || a.AppliedVersion != 1 {
-		t.Fatalf("MySQL attempt=%+v", a)
+	// Reviewed execution is PostgreSQL-only; MySQL has no synchronous fallback.
+	refused := f.request(t, "POST", base+"/migrations/"+d.ID+"/requests", &f.Editor, spaRequestInput("up", d, 0), 422)
+	if !strings.Contains(refused.Body.String(), "PostgreSQL targets only") {
+		t.Fatalf("MySQL request=%s", refused.Body)
 	}
-	var n int
-	if err := target.QueryRow("SELECT id FROM api_created").Scan(&n); err != nil || n != 9 {
-		t.Fatalf("MySQL target=%d err=%v", n, err)
+	var tables int
+	if err := target.QueryRow("SELECT count(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='api_created'").Scan(&tables); err != nil || tables != 0 {
+		t.Fatalf("MySQL target changed: %d err=%v", tables, err)
 	}
 	for _, actor := range []*testfixture.Actor{&f.NoAccess, &f.Admin} {
 		f.request(t, "GET", base, actor, nil, 403)

@@ -205,15 +205,15 @@ func TestLinearHistoryCommitRollbackAndImmutability(t *testing.T) {
 		t.Fatalf("rollback left %d rows, %v", rows, err)
 	}
 
-	// Retrying the corrected draft reuses candidate 2 without a second applied v2.
-	second, err = f.service.Update(f.editor.Ctx, "db-a", second.ID, migration.UpdateInput{ExpectedRevision: 1,
+	// A failed definition is frozen; its correction is a new migration that
+	// reuses candidate 2 without a second applied v2.
+	_, err = f.service.Update(f.editor.Ctx, "db-a", second.ID, migration.UpdateInput{ExpectedRevision: 1,
 		DraftInput: migration.DraftInput{Title: "Add rows", SQL: "INSERT INTO items VALUES (2, 'two');\nINSERT INTO items VALUES (3, 'three');"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	a3, err := f.execute(f.editor.Ctx, second, 1)
-	if err != nil || a3.AppliedVersion != 2 || a3.DraftRevision != 2 {
-		t.Fatalf("retry v2 = %+v, %v", a3, err)
+	wantKind(t, err, migration.ErrConflict)
+	fixed := f.create(t, "Add rows", "INSERT INTO items VALUES (2, 'two');\nINSERT INTO items VALUES (3, 'three');")
+	a3, err := f.execute(f.editor.Ctx, fixed, 1)
+	if err != nil || a3.AppliedVersion != 2 || a3.MigrationID != fixed.ID {
+		t.Fatalf("corrected v2 = %+v, %v", a3, err)
 	}
 	third := f.create(t, "Index", "CREATE INDEX items_name_idx ON items (name);")
 	if a4, err := f.execute(f.editor.Ctx, third, 2); err != nil || a4.AppliedVersion != 3 {
@@ -235,7 +235,7 @@ func TestLinearHistoryCommitRollbackAndImmutability(t *testing.T) {
 		}
 	}
 	if history.Attempts[2].SQL != "INSERT INTO items VALUES (2, 'two');\nINSERT INTO items VALUES (1, 'duplicate');" {
-		t.Error("failed attempt lost its SQL snapshot after the draft was edited")
+		t.Error("failed attempt lost its SQL snapshot")
 	}
 	if _, a, err := f.service.Attempt(f.viewer.Ctx, "db-a", second.ID, a2.ID); err != nil || a.ID != a2.ID || a.Status != migration.StatusFailed {
 		t.Fatalf("attempt detail = %+v, %v", a, err)
@@ -328,10 +328,7 @@ func TestExecuteTimeoutAndCancellationRollBack(t *testing.T) {
 	}
 
 	f.service.WithTimeouts(migration.LockWait, time.Minute, migration.CleanupTimeout)
-	d, err = f.service.Update(f.editor.Ctx, "db-a", d.ID, migration.UpdateInput{ExpectedRevision: 1, DraftInput: migration.DraftInput{Title: "Slow", SQL: "CREATE TABLE cancel_effect (id int);\nSELECT pg_sleep(29);"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	d = f.create(t, "Slow again", "CREATE TABLE cancel_effect (id int);\nSELECT pg_sleep(29);")
 	ctx, cancel := context.WithCancel(f.editor.Ctx)
 	done := make(chan error, 1)
 	go func() { _, err := f.execute(ctx, d, 0); done <- err }()

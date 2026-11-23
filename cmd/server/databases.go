@@ -12,9 +12,11 @@ import (
 	"sqlwise/internal/auth"
 	"sqlwise/internal/database"
 	"sqlwise/internal/handlers"
+	"sqlwise/internal/jobs"
 	"sqlwise/internal/migration"
 	"sqlwise/internal/queryplan"
 	"sqlwise/internal/schemadiff"
+	"sqlwise/internal/telemetry"
 	"sqlwise/internal/web/views"
 )
 
@@ -35,7 +37,8 @@ func loadDatabaseTargets(pool *pgxpool.Pool) (databaseTargets, func(), error) {
 		return databaseTargets{}, nil, err
 	}
 	store := database.NewStore(pool, cipher)
-	pools := database.NewPools(store)
+	pools := database.NewPools(store).WithTracer(telemetry.PGXTracer{})
+	jobs.BindTargetPools(pools.Stat)
 	adapter := migrationTargets{resolver: pools}
 	return databaseTargets{targets: adapter, snapshot: adapter, store: store, pools: pools}, pools.Close, nil
 }
@@ -62,7 +65,8 @@ func registerDatabaseRoutes(router *gin.Engine, service *auth.Service, policy *a
 func checkMigrationSchema(pool *pgxpool.Pool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := pool.Exec(ctx, `SELECT d.revision, a.seq, a.status, l.database_id FROM migration_drafts d, migration_attempts a, migration_locks l LIMIT 0`); err != nil {
+	if _, err := pool.Exec(ctx, `SELECT d.revision, d.sql_down, a.seq, a.status, a.operation, l.database_id, r.status, p.decision
+		FROM migration_drafts d, migration_attempts a, migration_locks l, migration_requests r, migration_approvals p LIMIT 0`); err != nil {
 		return errors.New("migration schema unavailable; run go run ./cmd/admin -schema-only")
 	}
 	return nil

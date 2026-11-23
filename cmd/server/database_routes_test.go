@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -83,6 +84,18 @@ func (f *databaseFixture) history(t *testing.T) migration.History {
 		t.Fatal(err)
 	}
 	return h
+}
+
+// execute applies db-a's current revision of a migration through the
+// service's direct path, which no HTTP route exposes.
+func (f *databaseFixture) execute(t *testing.T, migrationID string) (migration.Attempt, error) {
+	t.Helper()
+	service := migration.NewService(migration.NewStore(f.platform.Pool), f.platform.Access, f.targets, time.Now)
+	d, err := service.Detail(f.editor.Ctx, "db-a", migrationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service.Execute(f.editor.Ctx, "db-a", migrationID, migration.ExecuteInput{ExpectedRevision: d.Draft.Revision, ExpectedVersion: d.CurrentVersion, ExpectedSQLHash: d.Draft.SQLHash()})
 }
 
 // text returns the visible text of an HTML document, with markup and
@@ -276,7 +289,7 @@ func TestMigrationEditorFlowOverHTTP(t *testing.T) {
 		t.Fatal("conflict lost the user's edit")
 	}
 
-	// A failing revision executes, rolls back and stays visible.
+	// The legacy form never executes: executions need a reviewed request.
 	failing := "INSERT INTO missing_table VALUES (1);"
 	saved := f.do(dbRequest{method: "PATCH", path: location, user: &f.editor, form: url.Values{"expected_revision": {"1"}, "title": {"Web flow"}, "sql": {sql + failing}}, hx: true})
 	expectStatus(t, saved, http.StatusNoContent)
@@ -285,30 +298,29 @@ func TestMigrationEditorFlowOverHTTP(t *testing.T) {
 	}
 	page = f.do(dbRequest{method: "GET", path: location + "?saved=1", user: &f.editor})
 	hash, _ := field(t, page.Body.String(), "expected_sql_hash")
-	failed := f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.editor, hx: true,
+	refused := f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.editor, hx: true,
 		form: url.Values{"expected_revision": {"2"}, "expected_version": {"0"}, "expected_sql_hash": {hash}}})
-	expectStatus(t, failed, http.StatusUnprocessableEntity)
-	if !strings.Contains(failed.Body.String(), "Statement 3 failed") || !strings.Contains(failed.Body.String(), "Failed, rolled back") {
-		t.Fatalf("failure fragment: %s", failed.Body.String())
+	expectStatus(t, refused, http.StatusConflict)
+	if !strings.Contains(text(t, refused.Body.String()), "approved review request") || f.targets.Opens() != 0 || len(f.history(t).Attempts) != 0 {
+		t.Fatalf("legacy execute ran or did not explain: %s", refused.Body.String())
 	}
 
-	// Fix and execute through the plain form fallback.
-	expectStatus(t, f.do(dbRequest{method: "POST", path: location, user: &f.editor, form: url.Values{"expected_revision": {"2"}, "title": {"Web flow"}, "sql": {sql}}}), http.StatusSeeOther)
-	page = f.do(dbRequest{method: "GET", path: location, user: &f.editor})
-	hash, _ = field(t, page.Body.String(), "expected_sql_hash")
-	executed := f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.editor,
-		form: url.Values{"expected_revision": {"3"}, "expected_version": {"0"}, "expected_sql_hash": {hash}}})
-	expectStatus(t, executed, http.StatusSeeOther)
-	result := f.do(dbRequest{method: "GET", path: executed.Header().Get("Location"), user: &f.viewer})
+	// A failed execution freezes the definition; the fix is a new migration.
+	if _, err := f.execute(t, strings.TrimPrefix(location, "/databases/db-a/migrations/")); !errors.Is(err, migration.ErrExecutionFailed) {
+		t.Fatalf("failing revision = %v", err)
+	}
+	expectStatus(t, f.do(dbRequest{method: "POST", path: location, user: &f.editor, form: url.Values{"expected_revision": {"2"}, "title": {"Web flow"}, "sql": {sql}}}), http.StatusConflict)
+	fixed := f.do(dbRequest{method: "POST", path: "/databases/db-a/migrations", user: &f.editor, form: url.Values{"title": {"Web flow fixed"}, "sql": {sql}}})
+	expectStatus(t, fixed, http.StatusSeeOther)
+	fixedLocation := fixed.Header().Get("Location")
+	if _, err := f.execute(t, strings.TrimPrefix(fixedLocation, "/databases/db-a/migrations/")); err != nil {
+		t.Fatal(err)
+	}
+	result := f.do(dbRequest{method: "GET", path: fixedLocation, user: &f.viewer})
 	expectStatus(t, result, http.StatusOK)
 	if !strings.Contains(result.Body.String(), "Applied as v1") || strings.Contains(result.Body.String(), `name="sql"`) {
 		t.Fatal("applied migration page is not read-only")
 	}
-	// Re-submitting the same confirmation never runs it again.
-	resubmit := f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.editor,
-		form: url.Values{"expected_revision": {"3"}, "expected_version": {"0"}, "expected_sql_hash": {hash}}})
-	expectStatus(t, resubmit, http.StatusConflict)
-	expectStatus(t, f.do(dbRequest{method: "POST", path: location + "/execute", user: &f.editor, form: url.Values{"expected_revision": {"x"}}}), http.StatusUnprocessableEntity)
 	if n := len(f.history(t).Attempts); n != 2 {
 		t.Fatalf("history has %d attempts, want the failed and the applied one", n)
 	}

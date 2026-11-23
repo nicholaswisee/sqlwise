@@ -3,7 +3,9 @@ package migration
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -26,6 +28,37 @@ const (
 	StatusFailed           Status = "failed"
 	StatusPartiallyApplied Status = "partially_applied"
 	StatusUnknown          Status = "unknown"
+	// StatusReverted is a partial batch execution fully compensated; never history.
+	StatusReverted Status = "reverted"
+	// StatusPartiallyReverted is an interrupted compensation: only a further
+	// compensation may settle it, never a resume over reverted batches.
+	StatusPartiallyReverted Status = "partially_reverted"
+)
+
+// Operation is what an execution does with a migration: up applies it the
+// first time, rollback runs its SQL down, forward re-applies its SQL up.
+type Operation string
+
+const (
+	OpUp       Operation = "up"
+	OpRollback Operation = "rollback"
+	OpForward  Operation = "forward"
+	// OpResume and OpCompensate recover a partially applied batch execution.
+	OpResume     Operation = "resume"
+	OpCompensate Operation = "compensate"
+)
+
+func (op Operation) Recovery() bool { return op == OpResume || op == OpCompensate }
+
+// RequestStatus is the review state of an action request.
+type RequestStatus string
+
+const (
+	RequestDraft         RequestStatus = "draft"
+	RequestPendingReview RequestStatus = "pending_review"
+	RequestApproved      RequestStatus = "approved"
+	RequestRejected      RequestStatus = "rejected"
+	RequestQueued        RequestStatus = "queued"
 )
 
 // Domain error kinds. Error.Message is safe to show; handlers map kinds to HTTP.
@@ -71,53 +104,97 @@ type Database struct {
 }
 
 type Draft struct {
-	ID             string
-	DatabaseID     string
-	Title          string
-	SQL            string
-	Dialect        Dialect
-	Revision       int64
-	CreatedBy      string
-	CreatedByName  string
-	UpdatedBy      string
-	UpdatedByName  string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	AppliedVersion int64
-	LastStatus     Status
+	ID         string
+	DatabaseID string
+	Title      string
+	SQL        string
+	// SQLDown is empty when the migration is irreversible or not yet defined.
+	SQLDown string
+	// IrreversibleReason is set exactly when the migration is irreversible.
+	IrreversibleReason string
+	Dialect            Dialect
+	Revision           int64
+	CreatedBy          string
+	CreatedByName      string
+	UpdatedBy          string
+	UpdatedByName      string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	AppliedVersion     int64
+	LastStatus         Status
+	// Batch, when set, runs SQL up as checkpointed batches of BatchSize rows.
+	Batch     *BatchSpec
+	BatchSize int
 }
 
 func (d Draft) Applied() bool { return d.AppliedVersion > 0 }
+
+// Executed reports a definition that ran at least once, failed runs included;
+// it is frozen from then on.
+func (d Draft) Executed() bool { return d.LastStatus != "" }
+
+func (d Draft) Irreversible() bool { return d.IrreversibleReason != "" }
+
+// Complete reports a definition that may be reviewed: SQL down or an
+// irreversible reason.
+func (d Draft) Complete() bool { return d.SQLDown != "" || d.Irreversible() }
+
+// DefinitionHash binds reviews to the exact up, down and reversibility.
+func (d Draft) DefinitionHash() string {
+	body := fmt.Sprintf("up:%d:%s\ndown:%d:%s\nirreversible:%d:%s", len(d.SQL), d.SQL, len(d.SQLDown), d.SQLDown, len(d.IrreversibleReason), d.IrreversibleReason)
+	if d.Batch != nil {
+		// Non-batch hashes stay unchanged, so existing approvals remain valid.
+		spec, _ := json.Marshal(d.Batch)
+		body += fmt.Sprintf("\nbatch:%s:%d", spec, d.BatchSize)
+	}
+	return HashSQL(body)
+}
 
 // SQLHash is the hex SHA-256 of the exact SQL text shown and executed.
 func (d Draft) SQLHash() string { return HashSQL(d.SQL) }
 
 type Attempt struct {
-	ID               string
-	Seq              int64
-	DatabaseID       string
-	MigrationID      string
-	MigrationTitle   string
-	DraftRevision    int64
-	CandidateVersion int64
-	AppliedVersion   int64
-	SQL              string
-	SQLHash          string
-	Dialect          Dialect
-	StatementCount   int
-	ExecutorID       string
-	ExecutorName     string
-	Status           Status
-	Error            string
-	FailedStatement  int
-	StartedAt        time.Time
-	FinishedAt       *time.Time
-	ReconciledAt     *time.Time
+	ID             string
+	Seq            int64
+	DatabaseID     string
+	MigrationID    string
+	MigrationTitle string
+	Operation      Operation
+	RequestID      string
+	// CancelsExecutionID is the successful execution a rollback cancels.
+	CancelsExecutionID string
+	DraftRevision      int64
+	CandidateVersion   int64
+	AppliedVersion     int64
+	SQL                string
+	SQLHash            string
+	Dialect            Dialect
+	StatementCount     int
+	ExecutorID         string
+	ExecutorName       string
+	Status             Status
+	Error              string
+	FailedStatement    int
+	StartedAt          time.Time
+	FinishedAt         *time.Time
+	ReconciledAt       *time.Time
+	// Batch marks an execution run as checkpointed target batches.
+	Batch bool
+	// RecoveredBy is the recovery request that settled a partial execution.
+	RecoveredBy  string
+	lastRecovery string
 }
 
 type DraftInput struct {
 	Title string
 	SQL   string
+	// SQLDown is optional while drafting; review needs it or Irreversible.
+	SQLDown            string
+	Irreversible       bool
+	IrreversibleReason string
+	// Batch replaces SQL up with the rendered template when set.
+	Batch     *BatchSpec
+	BatchSize int
 }
 
 type UpdateInput struct {
@@ -134,16 +211,23 @@ type ExecuteInput struct {
 type History struct {
 	Database       Database
 	CurrentVersion int64
+	Head           Head
 	Drafts         []Draft
 	Attempts       []Attempt
+	// Committed holds successful executions only, oldest first.
+	Committed []Attempt
 }
 
 type Detail struct {
 	Database       Database
 	CurrentVersion int64
+	Head           Head
 	Draft          Draft
 	Attempts       []Attempt
-	Blocked        string
+	Requests       []Request
+	// Eligible lists the operations a new request may ask for now.
+	Eligible []Operation
+	Blocked  string
 	// BlockedBy is the attempt an editor may mark as reconciled, if any.
 	BlockedBy *Attempt
 }
@@ -154,12 +238,85 @@ func (a Attempt) Reconcilable() bool {
 	return a.Dialect == MySQL && a.ReconciledAt == nil && (a.Status == StatusPartiallyApplied || a.Status == StatusUnknown)
 }
 
+// Request asks to run one operation of one definition revision at one
+// history position. It needs every authorized group's approval to be queued.
+type Request struct {
+	ID                 string
+	DatabaseID         string
+	MigrationID        string
+	MigrationTitle     string
+	Operation          Operation
+	DefinitionRevision int64
+	DefinitionHash     string
+	ExpectedVersion    int64
+	CancelsExecutionID string
+	// RecoversExecutionID is the partial execution a resume/compensate settles.
+	RecoversExecutionID string
+	RequestedBy         string
+	RequestedByName     string
+	Status              RequestStatus
+	ReviewRound         int
+	PolicyHash          string
+	ExecutionID         string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	// Filled on reads: why the request can no longer be approved or queued,
+	// the groups that must approve, and the execution once it exists.
+	Stale     string
+	Approvals []GroupApproval
+	Execution *Attempt
+}
+
+// GroupApproval is one authorized group's decision in the current round.
+type GroupApproval struct {
+	GroupID      string
+	GroupName    string
+	Permission   string
+	LeaderID     string
+	LeaderName   string
+	LeaderActive bool
+	Decision     string
+	DecidedBy    string
+	DecidedAt    *time.Time
+	// CanDecide is true when the caller leads this group and may decide now.
+	CanDecide bool
+}
+
+type RequestInput struct {
+	Operation          Operation
+	ExpectedRevision   int64
+	ExpectedDefinition string
+	ExpectedVersion    int64
+	// RecoversExecutionID is required for resume and compensate.
+	RecoversExecutionID string
+}
+
+// Execution identifies a consumed request for the job that will run it.
+type Execution struct {
+	ID          string
+	RequestID   string
+	DatabaseID  string
+	MigrationID string
+	Operation   Operation
+	ActorID     string
+	// RecoversExecutionID is set for resume and compensate executions.
+	RecoversExecutionID string
+}
+
 func HashSQL(sql string) string {
 	sum := sha256.Sum256([]byte(sql))
 	return hex.EncodeToString(sum[:])
 }
 
 func (in DraftInput) normalize() (DraftInput, error) {
+	if in.Batch != nil {
+		if err := in.Batch.validate(in.BatchSize); err != nil {
+			return in, err
+		}
+		in.SQL = in.Batch.render()
+	} else {
+		in.BatchSize = 0
+	}
 	in.Title = strings.TrimSpace(in.Title)
 	if !utf8.ValidString(in.Title) || strings.ContainsRune(in.Title, 0) || utf8.RuneCountInString(in.Title) < 1 || utf8.RuneCountInString(in.Title) > 200 {
 		return in, fail(ErrValidation, "Title must be 1 to 200 characters.")
@@ -174,6 +331,24 @@ func (in DraftInput) normalize() (DraftInput, error) {
 	}
 	if len(in.SQL) > MaxSQLBytes {
 		return in, fail(ErrValidation, "SQL must be at most 256 KiB.")
+	}
+	in.SQLDown = strings.ReplaceAll(in.SQLDown, "\r\n", "\n")
+	if strings.TrimSpace(in.SQLDown) == "" {
+		in.SQLDown = ""
+	}
+	if !utf8.ValidString(in.SQLDown) || strings.ContainsRune(in.SQLDown, 0) || len(in.SQLDown) > MaxSQLBytes {
+		return in, fail(ErrValidation, "SQL down must be valid UTF-8 text of at most 256 KiB.")
+	}
+	in.IrreversibleReason = strings.TrimSpace(in.IrreversibleReason)
+	if !in.Irreversible {
+		in.IrreversibleReason = ""
+		return in, nil
+	}
+	if in.SQLDown != "" {
+		return in, fail(ErrValidation, "An irreversible migration cannot have SQL down.")
+	}
+	if !utf8.ValidString(in.IrreversibleReason) || strings.ContainsRune(in.IrreversibleReason, 0) || utf8.RuneCountInString(in.IrreversibleReason) < 1 || utf8.RuneCountInString(in.IrreversibleReason) > 500 {
+		return in, fail(ErrValidation, "Explain why the migration is irreversible in 1 to 500 characters.")
 	}
 	return in, nil
 }

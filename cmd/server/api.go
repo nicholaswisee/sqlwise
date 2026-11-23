@@ -10,6 +10,7 @@ import (
 	"sqlwise/internal/auth"
 	"sqlwise/internal/database"
 	"sqlwise/internal/handlers"
+	"sqlwise/internal/jobs/migrationrun"
 	"sqlwise/internal/migration"
 	"sqlwise/internal/queryplan"
 	"sqlwise/internal/schemadiff"
@@ -40,7 +41,10 @@ func registerDatabaseAPIRoutes(router *gin.Engine, service *auth.Service, policy
 		resolver = targets.pools
 	}
 	header := handlers.NewWorkspaceHeader(migrations, resolver)
-	handlers.NewMigrations(guard, policy, migrations, diff, views.Assets{}).WithHeader(header).RegisterAPI(router)
+	// Execution is enqueued only; cmd/worker runs it outside HTTP requests.
+	queue := newJobQueue(pool, migrations)
+	handlers.NewMigrations(guard, policy, migrations, diff, views.Assets{}).WithHeader(header).WithJobs(migrationrun.Queue{Jobs: queue}).RegisterAPI(router)
+	handlers.NewJobs(guard, policy, queue).RegisterAPI(router)
 	if targets.pools != nil {
 		handlers.NewDatabaseViewer(guard, policy, targets.pools, views.Assets{}).WithHeader(header).RegisterAPI(router)
 		handlers.NewExplain(guard, policy, queryplan.NewService(policy, targets.pools), views.Assets{}).RegisterAPI(router)

@@ -75,6 +75,8 @@ func TestAPIRegistrationGuardsAllFeatures(t *testing.T) {
 		{"GET", "/api/v1/databases/a/migrations"},
 		{"PATCH", "/api/v1/databases/a/migrations/b"},
 		{"POST", "/api/v1/databases/a/migrations/b/execute"},
+		{"GET", "/api/v1/databases/a/jobs"},
+		{"GET", "/api/v1/databases/a/jobs/b"},
 		{"POST", "/api/v1/databases/a/schema-diff/preview"},
 	} {
 		t.Run(test.method+" "+test.path, func(t *testing.T) {

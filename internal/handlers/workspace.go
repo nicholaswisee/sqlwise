@@ -67,10 +67,11 @@ func versionTrack(databaseID string, h migration.History) ([]views.TrackStop, in
 		last := h.Attempts[0]
 		if last.CandidateVersion == next && last.ReconciledAt == nil {
 			switch last.Status {
-			case migration.StatusPartiallyApplied, migration.StatusUnknown, migration.StatusRunning:
-				note := map[migration.Status]string{migration.StatusPartiallyApplied: "partial", migration.StatusUnknown: "unknown", migration.StatusRunning: "running"}[last.Status]
+			case migration.StatusPartiallyApplied, migration.StatusPartiallyReverted, migration.StatusUnknown, migration.StatusRunning:
+				note := map[migration.Status]string{migration.StatusPartiallyApplied: "partial", migration.StatusPartiallyReverted: "partial",
+					migration.StatusUnknown: "unknown", migration.StatusRunning: "running"}[last.Status]
 				state := "partial"
-				if last.Status != migration.StatusPartiallyApplied {
+				if last.Status != migration.StatusPartiallyApplied && last.Status != migration.StatusPartiallyReverted {
 					state = "unknown"
 				}
 				stops = append(stops, views.TrackStop{Label: fmt.Sprintf("v%d", next), Note: note, NoteTone: "warn", State: state,

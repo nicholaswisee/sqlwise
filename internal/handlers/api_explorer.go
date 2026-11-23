@@ -58,9 +58,9 @@ func apiTrack(stops []views.TrackStop) []apiTrackStop {
 	return out
 }
 
-func apiHandleCapabilities(handle database.Handle) apiCapabilities {
-	cap := handle.Capabilities()
-	return apiCapabilities{cap.ConnectionTest, cap.SchemaInspection, cap.DataPreview, cap.MigrationExecution, cap.AtomicMigrations, cap.SchemaDiff, cap.Explain, cap.ExplainAnalyze}
+func apiWorkspaceCapabilities(dbms database.DBMS, cap database.Capabilities) apiCapabilities {
+	// The adapter's legacy execution support does not imply reviewed execution in the API.
+	return apiCapabilities{cap.ConnectionTest, cap.SchemaInspection, cap.DataPreview, dbms == database.PostgreSQL && cap.MigrationExecution, cap.AtomicMigrations, cap.SchemaDiff, cap.Explain, cap.ExplainAnalyze}
 }
 
 type apiSchemaColumn struct {
@@ -155,8 +155,7 @@ func (h *DatabaseViewer) apiWorkspace(c *gin.Context) (apiWorkspace, error) {
 		if d, e := h.resolver.DBMS(c.Request.Context(), id); e == nil {
 			w.Engine = d.Label()
 			w.Dialect = string(d)
-			cap := d.Capabilities()
-			w.Capabilities = apiCapabilities{cap.ConnectionTest, cap.SchemaInspection, cap.DataPreview, cap.MigrationExecution, cap.AtomicMigrations, cap.SchemaDiff, cap.Explain, cap.ExplainAnalyze}
+			w.Capabilities = apiWorkspaceCapabilities(d, d.Capabilities())
 		}
 	}
 	if h.header != nil {
@@ -184,7 +183,7 @@ func (h *DatabaseViewer) apiExplorer(c *gin.Context) {
 		return
 	}
 	defer handle.Close()
-	w.Capabilities = apiHandleCapabilities(handle)
+	w.Capabilities = apiWorkspaceCapabilities(handle.DBMS(), handle.Capabilities())
 	inspector, err := database.As[database.SchemaInspector](handle)
 	if err != nil {
 		apiExplorerFailure(c, err)
@@ -254,7 +253,7 @@ func (h *DatabaseViewer) apiTable(c *gin.Context) {
 		return
 	}
 	defer handle.Close()
-	w.Capabilities = apiHandleCapabilities(handle)
+	w.Capabilities = apiWorkspaceCapabilities(handle.DBMS(), handle.Capabilities())
 	reader, err := database.As[database.TableReader](handle)
 	if err != nil {
 		apiExplorerFailure(c, err)

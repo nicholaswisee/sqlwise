@@ -16,7 +16,7 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 RUN go build -o /out/sqlwise ./cmd/server \
-    && go build -o /out/sqlwise-admin ./cmd/admin
+    && go build -o /out/sqlwise-admin ./cmd/admin     && go build -o /out/sqlwise-worker ./cmd/worker
 
 FROM debian:bookworm-slim AS app
 RUN apt-get update \
@@ -24,7 +24,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 sqlwise
 WORKDIR /app
-COPY --from=go-build /out/sqlwise /out/sqlwise-admin /usr/local/bin/
+COPY --from=go-build /out/sqlwise /out/sqlwise-admin /out/sqlwise-worker /usr/local/bin/
 COPY --from=frontend-build /app/web/spa/dist/client ./web/spa/dist/client
 ENV APP_ENV=production PORT=8080
 USER sqlwise

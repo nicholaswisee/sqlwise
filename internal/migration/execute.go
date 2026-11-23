@@ -10,7 +10,9 @@ import (
 	"sqlwise/internal/access"
 )
 
-// Execute runs the stored SQL of a draft exactly as confirmed by the caller.
+// Execute is the Milestone 1 direct path: it applies a draft as confirmed by
+// the caller, without a reviewed request. No HTTP handler calls it; fixtures
+// and MySQL regression tests do. Reviewed executions go through Run.
 // It returns the recorded attempt whenever one was created, together with a
 // domain error for every outcome other than success.
 func (s *Service) Execute(ctx context.Context, databaseID, migrationID string, in ExecuteInput) (Attempt, error) {
@@ -63,16 +65,23 @@ func (s *Service) Execute(ctx context.Context, databaseID, migrationID string, i
 	if current != in.ExpectedVersion {
 		return Attempt{}, fail(ErrConflict, fmt.Sprintf("The database is at version %d, not %d. Reload to review the current history before executing.", current, in.ExpectedVersion))
 	}
+	head, err := s.store.head(ctx, s.store.pool, databaseID)
+	if err != nil {
+		return Attempt{}, err
+	}
+	if _, err := eligible(head, draft, OpUp); err != nil {
+		return Attempt{}, err
+	}
 
 	id, err := newID()
 	if err != nil {
 		return Attempt{}, err
 	}
-	attempt := Attempt{ID: id, DatabaseID: databaseID, MigrationID: migrationID, MigrationTitle: draft.Title,
+	attempt := Attempt{ID: id, DatabaseID: databaseID, MigrationID: migrationID, MigrationTitle: draft.Title, Operation: OpUp,
 		DraftRevision: draft.Revision, CandidateVersion: current + 1, SQL: draft.SQL, SQLHash: draft.SQLHash(),
 		Dialect: draft.Dialect, StatementCount: len(statements), ExecutorID: userID, Status: StatusRunning, StartedAt: s.now().UTC()}
 	// The durable running attempt precedes any target change.
-	if err := s.store.insertAttempt(ctx, attempt); err != nil {
+	if err := s.store.insertAttempt(ctx, s.store.pool, attempt); err != nil {
 		return Attempt{}, err
 	}
 	var kind error
@@ -114,6 +123,19 @@ func (s *Service) precheck(d Draft, in ExecuteInput) ([]Statement, error) {
 func (s *Service) run(ctx context.Context, target Target, a Attempt, statements []Statement) (Attempt, error) {
 	execCtx, cancel := context.WithTimeout(ctx, s.executeTimeout)
 	defer cancel()
+	tx, err := startTarget(execCtx, target)
+	if err != nil {
+		kind := ErrTargetUnavailable
+		if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+			kind = ErrTimeout
+		}
+		a.Status, a.Error = StatusFailed, Message(err)
+		return a, kind
+	}
+	return s.runTransaction(execCtx, target, tx, a, statements)
+}
+
+func (s *Service) runTransaction(execCtx context.Context, target Target, tx TargetTx, a Attempt, statements []Statement) (Attempt, error) {
 	failed := func(kind error, statement int, message string) (Attempt, error) {
 		if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
 			kind = ErrTimeout
@@ -121,15 +143,8 @@ func (s *Service) run(ctx context.Context, target Target, a Attempt, statements 
 		a.Status, a.FailedStatement, a.Error = StatusFailed, statement, message
 		return a, kind
 	}
-	if err := ProvisionReceipts(execCtx, target); err != nil {
-		return failed(ErrTargetUnavailable, 0, "Could not prepare the execution receipt on the target: "+targetMessage(execCtx, err)+" Nothing was executed.")
-	}
-	tx, err := target.Begin(execCtx)
-	if err != nil {
-		return failed(ErrTargetUnavailable, 0, "Could not start a target transaction: "+targetMessage(execCtx, err)+" Nothing was executed.")
-	}
 	rollback := func() {
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cleanupTimeout)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(execCtx), s.cleanupTimeout)
 		defer cancel()
 		// Without a commit the target cannot keep any change, even if this fails.
 		_ = tx.Rollback(cleanup)
@@ -144,14 +159,14 @@ func (s *Service) run(ctx context.Context, target Target, a Attempt, statements 
 			return failed(ErrExecutionFailed, i+1, fmt.Sprintf("Statement %d failed: %s All changes were rolled back.", i+1, targetMessage(execCtx, err)))
 		}
 	}
-	err = tx.Commit(execCtx)
+	err := tx.Commit(execCtx)
 	switch {
 	case err == nil:
 		a.Status = StatusSucceeded
 		return a, nil
 	case errors.Is(err, ErrCommitUnknown):
 		a.Status, a.Error = StatusUnknown, "The connection failed while committing, so the outcome is unknown. Further executions are blocked until the receipt is checked."
-		a = s.resolve(ctx, target, a)
+		a = s.resolve(execCtx, target, a)
 		switch a.Status {
 		case StatusSucceeded:
 			return a, nil
@@ -263,6 +278,10 @@ func (s *Service) reconcile(ctx context.Context, target Target, databaseID strin
 		a := pending[i]
 		if a.Status == StatusPartiallyApplied || a.Status == StatusUnknown && a.Dialect == MySQL {
 			return fail(ErrRecoveryRequired, blockedMessage(a))
+		}
+		if a.Batch {
+			// Only its own queued delivery may settle this batch from the pinned ledger.
+			return fail(ErrOutcomeUnknown, blockedMessage(a))
 		}
 		if a.Dialect != MySQL {
 			a = s.resolve(ctx, target, a)

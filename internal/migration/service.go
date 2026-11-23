@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
 )
@@ -15,6 +16,9 @@ import (
 type Authorizer interface {
 	EffectivePermission(ctx context.Context, userID, databaseID string) (access.Permission, error)
 	Require(ctx context.Context, userID, databaseID string, required access.Permission) error
+	// ApprovalPolicy reads the groups that must approve, with their leaders
+	// and members, holding the shared authorization lock in tx.
+	ApprovalPolicy(ctx context.Context, tx pgx.Tx, databaseID string) ([]access.ApprovalGroup, error)
 }
 
 const (
@@ -91,6 +95,10 @@ func (s *Service) History(ctx context.Context, databaseID string) (History, erro
 	if h.Attempts, err = s.store.attempts(ctx, `a.database_id=$1`, databaseID); err != nil {
 		return History{}, err
 	}
+	if h.Committed, err = s.store.committed(ctx, s.store.pool, databaseID); err != nil {
+		return History{}, err
+	}
+	h.Head = replay(h.Committed)
 	return h, nil
 }
 
@@ -110,6 +118,17 @@ func (s *Service) Detail(ctx context.Context, databaseID, migrationID string) (D
 		return Detail{}, err
 	}
 	if d.Attempts, err = s.store.attempts(ctx, `a.database_id=$1 AND a.migration_id=$2`, databaseID, migrationID); err != nil {
+		return Detail{}, err
+	}
+	if d.Head, err = s.store.head(ctx, s.store.pool, databaseID); err != nil {
+		return Detail{}, err
+	}
+	d.Eligible = []Operation{}
+	if d.Draft.Dialect == PostgreSQL && d.Draft.Complete() {
+		d.Eligible = d.Head.Eligible(d.Draft)
+	}
+	userID, _ := auth.UserIDFromContext(ctx)
+	if d.Requests, err = s.requestsOf(ctx, userID, databaseID, migrationID); err != nil {
 		return Detail{}, err
 	}
 	blocking, err := s.store.blocking(ctx, databaseID)
@@ -187,7 +206,8 @@ func (s *Service) Create(ctx context.Context, databaseID string, in DraftInput) 
 		return Draft{}, err
 	}
 	now := s.now().UTC()
-	d := Draft{ID: id, DatabaseID: databaseID, Title: in.Title, SQL: in.SQL, Dialect: dialect, CreatedBy: userID, CreatedAt: now}
+	d := Draft{ID: id, DatabaseID: databaseID, Title: in.Title, SQL: in.SQL, SQLDown: in.SQLDown, IrreversibleReason: in.IrreversibleReason,
+		Dialect: dialect, CreatedBy: userID, CreatedAt: now, Batch: in.Batch, BatchSize: in.BatchSize}
 	if err := s.store.createDraft(ctx, d); err != nil {
 		return Draft{}, err
 	}
@@ -211,7 +231,12 @@ func (s *Service) Update(ctx context.Context, databaseID, migrationID string, in
 func blockedMessage(a Attempt) string {
 	switch a.Status {
 	case StatusPartiallyApplied:
+		if a.Batch {
+			return fmt.Sprintf("Version %d was partially applied in batches. Executions are blocked until an approved resume or compensation settles it.", a.CandidateVersion)
+		}
 		return fmt.Sprintf("Version %d was partially applied. Executions are blocked until an editor checks the target and marks the attempt as reconciled.", a.CandidateVersion)
+	case StatusPartiallyReverted:
+		return fmt.Sprintf("Version %d was partly compensated. Executions are blocked until an approved compensation finishes it.", a.CandidateVersion)
 	case StatusRunning:
 		return fmt.Sprintf("Version %d is executing or was interrupted. Its outcome is checked before the next execution.", a.CandidateVersion)
 	}

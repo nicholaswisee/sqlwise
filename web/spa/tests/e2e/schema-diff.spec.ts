@@ -24,6 +24,11 @@ test("schema diff preview preserves review input and only creates an explicitly 
     id: "new-draft",
     title: "Reviewed change",
     sql: "CREATE TABLE reviewed (id int);",
+    sql_down: "",
+    irreversible: false,
+    irreversible_reason: "",
+    definition_hash: "def",
+    executed: false,
     sql_hash: "abc",
     dialect: "postgresql",
     revision: 1,
@@ -39,7 +44,14 @@ test("schema diff preview preserves review input and only creates an explicitly 
     let data: unknown;
     if (path.endsWith("/auth/session")) data = session;
     else if (path.endsWith("/migrations"))
-      data = { workspace, current_version: 0, drafts: [], attempts: [] };
+      data = {
+        workspace,
+        current_version: 0,
+        drafts: [],
+        attempts: [],
+        committed: [],
+        head: { active: [], pending: [] },
+      };
     else if (path.endsWith("/schema-diff/preview")) {
       previews++;
       data =
@@ -64,7 +76,17 @@ test("schema diff preview preserves review input and only creates an explicitly 
       created = route.request().postDataJSON();
       data = draft;
     } else if (path.endsWith("/migrations/new-draft"))
-      data = { workspace, current_version: 0, draft, attempts: [], blocked: "", blocked_by: null };
+      data = {
+        workspace,
+        current_version: 0,
+        draft,
+        attempts: [],
+        requests: [],
+        eligible: [],
+        head: { active: [], pending: [] },
+        blocked: "",
+        blocked_by: null,
+      };
     else throw new Error(`Unexpected schema diff request: ${path}`);
     await route.fulfill({ json: { data } });
   });
