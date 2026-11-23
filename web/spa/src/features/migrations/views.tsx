@@ -687,8 +687,16 @@ function ReviewPanel({
       <p className="mt-2 text-sm leading-6 text-slate-700">
         Every execution needs a request approved by the leader of each group with access to this
         database. Requests use saved revision {d.revision} (definition SHA-256{" "}
-        <code className="font-mono text-slate-900">{shortHash(d.definition_hash)}</code>); approved
-        requests run in the background in one transaction.
+        <code className="font-mono text-slate-900">{shortHash(d.definition_hash)}</code>);{" "}
+        {d.batch ? (
+          <>
+            Approved apply requests run in the background as checkpointed batches. Each batch
+            commits independently, so earlier batches remain applied if a later batch fails. Other
+            operations use their normal transaction behavior.
+          </>
+        ) : (
+          <>Approved requests run in the background in one transaction.</>
+        )}
       </p>
       {canEdit &&
         (data.eligible.length > 0 ? (
@@ -890,7 +898,14 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
     ]);
   };
   const save = useMutation({
-    mutationFn: (input: { title: string; sql: string; expected_revision: number } & Rollback) =>
+    mutationFn: (
+      input: {
+        title: string;
+        sql: string;
+        expected_revision: number;
+        batch?: BatchTemplate | null;
+      } & Rollback,
+    ) =>
       api.request<Draft>(
         `/databases/${encodeURIComponent(db)}/migrations/${encodeURIComponent(id)}`,
         { method: "PATCH", body: JSON.stringify(input) },
@@ -1079,11 +1094,12 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                   setEditError(undefined);
                   save.mutate({
                     title: editTitle,
-                    sql: editSQL,
+                    sql: d.batch ? d.sql : editSQL,
                     sql_down: editRollback.sql_down,
                     irreversible: editRollback.irreversible,
                     irreversible_reason: editRollback.irreversible_reason,
                     expected_revision: baseRevision ?? d.revision,
+                    ...(d.batch ? { batch: d.batch } : {}),
                   });
                 }}
               >
@@ -1103,33 +1119,56 @@ export function MigrationDetailPage({ db, id }: { db: string; id: string }) {
                     }}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <label htmlFor="edit-sql" className={styles.label}>
-                    SQL
-                  </label>
-                  <textarea
-                    id="edit-sql"
-                    required
-                    rows={14}
-                    maxLength={262144}
-                    spellCheck={false}
-                    autoCapitalize="none"
-                    value={editSQL}
-                    onChange={(e) => {
-                      setBaseRevision((revision) => revision ?? d.revision);
-                      setSQL(e.target.value);
-                    }}
-                    className={codeArea}
-                  />
-                </div>
-                <RollbackFields
-                  id="edit"
-                  value={editRollback}
-                  onChange={(value) => {
-                    setBaseRevision((revision) => revision ?? d.revision);
-                    setRollback(value);
-                  }}
-                />
+                {d.batch ? (
+                  <div>
+                    <h3 className={styles.label}>Checkpointed batch template (read-only)</h3>
+                    <dl className="mt-2 grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+                      {Object.entries({
+                        Schema: d.batch.schema,
+                        Table: d.batch.table,
+                        "Batch key": d.batch.key,
+                        "Column to update": d.batch.column,
+                        "New value": d.batch.value,
+                        "Rows per batch": d.batch.batch_size,
+                      }).map(([label, value]) => (
+                        <div key={label}>
+                          <dt className="inline text-slate-600">{label}: </dt>
+                          <dd className="inline break-words text-slate-900">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      <label htmlFor="edit-sql" className={styles.label}>
+                        SQL
+                      </label>
+                      <textarea
+                        id="edit-sql"
+                        required
+                        rows={14}
+                        maxLength={262144}
+                        spellCheck={false}
+                        autoCapitalize="none"
+                        value={editSQL}
+                        onChange={(e) => {
+                          setBaseRevision((revision) => revision ?? d.revision);
+                          setSQL(e.target.value);
+                        }}
+                        className={codeArea}
+                      />
+                    </div>
+                    <RollbackFields
+                      id="edit"
+                      value={editRollback}
+                      onChange={(value) => {
+                        setBaseRevision((revision) => revision ?? d.revision);
+                        setRollback(value);
+                      }}
+                    />
+                  </>
+                )}
                 {baseRevision !== undefined && baseRevision !== d.revision && (
                   <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
                     This draft changed on the server after you began editing. Your SQL is preserved,

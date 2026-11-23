@@ -202,6 +202,54 @@ test("a revision refresh never submits local SQL against the newer server revisi
   await expect(sql).toHaveValue("CREATE TABLE second_edit (id int);");
 });
 
+test("editing a batch migration keeps its template and explains checkpointed commits", async ({
+  page,
+}) => {
+  const batch = {
+    schema: "public",
+    table: "customers",
+    key: "id",
+    column: "status",
+    value: "'active'",
+    batch_size: 250,
+  };
+  const batchedDraft = { ...draft(1), batch };
+  await mockMigration(page, () => batchedDraft);
+  let saveBody: Record<string, unknown> | undefined;
+  await page.route(`**/api/v1${migrationURL}`, (route) => {
+    if (route.request().method() === "PATCH") {
+      saveBody = route.request().postDataJSON();
+      return route.fulfill(envelope({ ...batchedDraft, title: "Update customers" }));
+    }
+    return route.fulfill(envelope(detail(batchedDraft)));
+  });
+
+  await page.goto(migrationURL);
+  await expect(page.getByLabel("SQL", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("SQL down", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Batch key:", { exact: false })).toBeVisible();
+  await expect(page.getByText("Each batch commits independently", { exact: false })).toBeVisible();
+  await page.getByLabel("Title", { exact: true }).fill("Update customers");
+  await page.getByRole("button", { name: "Save revision" }).click();
+
+  await expect
+    .poll(() => saveBody)
+    .toMatchObject({
+      title: "Update customers",
+      sql: batchedDraft.sql,
+      batch,
+      expected_revision: 1,
+    });
+});
+
+test("ordinary migrations retain the single-transaction review explanation", async ({ page }) => {
+  await mockMigration(page, () => draft(1));
+  await page.goto(migrationURL);
+  await expect(
+    page.getByText("approved requests run in the background in one transaction."),
+  ).toBeVisible();
+});
+
 test("failed plan refresh warns about the retained plan without claiming unchanged SQL changed", async ({
   page,
 }) => {
