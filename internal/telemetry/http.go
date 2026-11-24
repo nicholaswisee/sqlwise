@@ -32,20 +32,21 @@ func HTTPMiddleware() gin.HandlerFunc {
 		c.Header("X-Request-ID", correlationID)
 		c.Next()
 		status := c.Writer.Status()
-		span.SetAttributes(attribute.String("http.request.method", c.Request.Method), attribute.Int("http.response.status_code", status))
+		method := normalizedHTTPMethod(c.Request.Method)
+		span.SetAttributes(attribute.String("http.request.method", method), attribute.Int("http.response.status_code", status))
 		if route := c.FullPath(); route != "" {
-			span.SetName(c.Request.Method + " " + route)
+			span.SetName(method + " " + route)
 			span.SetAttributes(attribute.String("http.route", route))
 		}
 		if status >= 500 {
 			span.SetStatus(codes.Error, "server error")
 		}
-		recordHTTP(c.Request.Method, c.FullPath(), status, time.Since(start))
+		recordHTTP(method, c.FullPath(), status, time.Since(start))
 		traceID, spanID := "", ""
 		if sc := span.SpanContext(); sc.IsValid() {
 			traceID, spanID = sc.TraceID().String(), sc.SpanID().String()
 		}
-		slog.InfoContext(ctx, "http request", "event", "http.request", "method", c.Request.Method,
+		slog.InfoContext(ctx, "http request", "event", "http.request", "method", method,
 			"route", c.FullPath(), "status", strconv.Itoa(status), "duration_ms", time.Since(start).Milliseconds(),
 			"actor", Actor(c.Request.Context()), "correlation_id", correlationID, "trace_id", traceID, "span_id", spanID)
 		span.End()
