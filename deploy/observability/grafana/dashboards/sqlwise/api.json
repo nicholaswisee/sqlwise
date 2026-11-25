@@ -47,6 +47,135 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [{ "expr": "rate(sqlwise_db_pool_acquire_seconds_total[5m])", "refId": "A" }]
+    },
+    {
+      "id": 5,
+      "title": "Current jobs by status",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "description": "Durable job counts; API and worker observe the same store.",
+      "targets": [
+        { "expr": "max by (status) (sqlwise_jobs)", "legendFormat": "{{status}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Job queue wait p95",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "description": "Time from publication to first worker start, across observations since worker startup.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, operation) (sqlwise_job_queue_wait_seconds_bucket))",
+          "legendFormat": "{{operation}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Job lock wait p95",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "description": "Time waiting for target lock acquisition or give-up, across observations since worker startup.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, outcome) (sqlwise_job_lock_wait_seconds_bucket))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Migration execution duration p95",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "description": "Execution time per worker delivery holding the gate, across observations since worker startup. Excludes queue wait and retry backoff.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, operation, status) (sqlwise_migration_duration_seconds_bucket))",
+          "legendFormat": "{{operation}} / {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Automatic retries",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "description": "Retries scheduled after confirmed transient failures, summed across workers since their last restarts.",
+      "targets": [
+        {
+          "expr": "sum by (operation) (sqlwise_job_retries_total)",
+          "legendFormat": "{{operation}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Committed batch progress",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "description": "Worker-reported committed batches and rows, split by forward or compensate. Recovery can report previously committed progress again; the target ledger is authoritative.",
+      "targets": [
+        {
+          "expr": "sum by (direction) (sqlwise_batches_committed_total)",
+          "legendFormat": "{{direction}} batches",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (direction) (sqlwise_batch_rows_committed_total)",
+          "legendFormat": "{{direction}} rows",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 11,
+      "title": "Target pool connections",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum(sqlwise_target_pool_active_connections)",
+          "legendFormat": "active",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(sqlwise_target_pool_idle_connections)",
+          "legendFormat": "idle",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Target pool acquisition wait (last 5m)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "description": "Cumulative target pool acquisition wait accrued in the trailing five minutes; zero means no acquisition wait was recorded.",
+      "targets": [
+        { "expr": "sum(increase(sqlwise_target_pool_acquire_seconds_total[5m]))", "refId": "A" }
+      ]
     }
   ]
 }
