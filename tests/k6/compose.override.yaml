@@ -1,0 +1,14 @@
+services:
+  app:
+    image: sqlwise-wise-m2:local
+    environment:
+      APP_ENV: development
+    build: !reset null
+    ports: !override ["127.0.0.1:18082:8080"]
+  worker:
+    image: sqlwise-wise-m2:local
+    build: !reset null
+  postgres:
+    ports: !reset []
+  target:
+    ports: !override ["127.0.0.1:18084:5432"]
