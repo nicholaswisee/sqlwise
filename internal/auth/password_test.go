@@ -46,7 +46,8 @@ func TestPasswordRejectsInvalidInputAndStoredHashes(t *testing.T) {
 	}
 	for _, encoded := range []string{"", "plaintext", strings.Replace(valid, "v=19", "v=16", 1),
 		strings.Replace(valid, "m=65536", "m=999999999", 1), strings.Replace(valid, "t=3", "t=0", 1),
-		strings.Replace(valid, "p=4", "p=999", 1), valid + "$extra", valid[:len(valid)-2]} {
+		strings.Replace(valid, "p=4", "p=5", 1), strings.Replace(valid, "p=4", "p=260", 1),
+		valid + "$extra", valid[:len(valid)-2]} {
 		if _, err := VerifyPassword(encoded, "password"); !errors.Is(err, ErrPasswordHash) {
 			t.Fatal("malformed hash accepted")
 		}

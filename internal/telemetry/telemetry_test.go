@@ -3,6 +3,7 @@ package telemetry
 import (
 	"bytes"
 	"context"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +79,46 @@ func TestHTTPMiddlewareUsesRouteAndOmitsQueryString(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "private-id") || strings.Contains(output.String(), "secret-canary") || !strings.Contains(output.String(), "/items/:id") {
 		t.Fatalf("unexpected request log: %s", output.String())
+	}
+}
+
+func TestHTTPMiddlewareBoundsCustomMethodsInTelemetry(t *testing.T) {
+	mode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(mode) })
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	previousWriter, previousFlags := log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+	})
+
+	router := gin.New()
+	router.Use(HTTPMiddleware())
+	const route = "/telemetry-method-test/:id"
+	router.Handle("BREW", route, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	t.Cleanup(func() {
+		requests.DeleteLabelValues(route, "OTHER", "204")
+		requestDuration.DeleteLabelValues(route, "OTHER")
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("BREW", "/telemetry-method-test/item", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("custom method route status = %d", response.Code)
+	}
+
+	logs := output.String()
+	if strings.Contains(logs, "BREW") || !strings.Contains(logs, `"method":"OTHER"`) {
+		t.Fatalf("custom method log is not normalized: %s", logs)
+	}
+
+	metrics := httptest.NewRecorder()
+	MetricsHandler().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metrics.Body.String(), `sqlwise_http_requests_total{method="OTHER",route="/telemetry-method-test/:id",status="204"} 1`+"\n") {
+		t.Fatalf("custom method metric is not normalized")
 	}
 }
 

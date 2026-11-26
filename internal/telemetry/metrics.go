@@ -65,12 +65,28 @@ func MetricsHandler() http.Handler {
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 }
 
-func recordHTTP(method, route string, status int, duration time.Duration) {
+func normalizedHTTPMethod(method string) string {
 	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions:
+	case http.MethodGet:
+		return http.MethodGet
+	case http.MethodHead:
+		return http.MethodHead
+	case http.MethodPost:
+		return http.MethodPost
+	case http.MethodPut:
+		return http.MethodPut
+	case http.MethodPatch:
+		return http.MethodPatch
+	case http.MethodDelete:
+		return http.MethodDelete
+	case http.MethodOptions:
+		return http.MethodOptions
 	default:
-		method = "OTHER"
+		return "OTHER"
 	}
+}
+
+func recordHTTP(method, route string, status int, duration time.Duration) {
 	if route == "" {
 		route = "unmatched"
 	}
