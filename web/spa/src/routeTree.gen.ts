@@ -22,7 +22,6 @@ import { Route as AuthenticatedAdminDatabasesIdRouteImport } from './routes/_aut
 import { Route as AuthenticatedAdminGroupsIndexRouteImport } from './routes/_authenticated/admin/groups/index'
 import { Route as AuthenticatedDatabasesDatabaseIDIndexRouteImport } from './routes/_authenticated/databases/$databaseID/index'
 import { Route as AuthenticatedDatabasesDatabaseIDSchemaDiffRouteImport } from './routes/_authenticated/databases/$databaseID/schema-diff'
-import { Route as AuthenticatedAdminGroupsIdDatabasesRouteImport } from './routes/_authenticated/admin/groups/$id/databases'
 import { Route as AuthenticatedAdminGroupsIdMembersRouteImport } from './routes/_authenticated/admin/groups/$id/members'
 import { Route as AuthenticatedDatabasesDatabaseIDJobsIndexRouteImport } from './routes/_authenticated/databases/$databaseID/jobs/index'
 import { Route as AuthenticatedDatabasesDatabaseIDJobsJobIDRouteImport } from './routes/_authenticated/databases/$databaseID/jobs/$jobID'
@@ -102,12 +101,6 @@ const AuthenticatedDatabasesDatabaseIDSchemaDiffRoute =
     path: '/databases/$databaseID/schema-diff',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedAdminGroupsIdDatabasesRoute =
-  AuthenticatedAdminGroupsIdDatabasesRouteImport.update({
-    id: '/groups/$id/databases',
-    path: '/groups/$id/databases',
-    getParentRoute: () => AuthenticatedAdminRouteRoute,
-  } as any)
 const AuthenticatedAdminGroupsIdMembersRoute =
   AuthenticatedAdminGroupsIdMembersRouteImport.update({
     id: '/groups/$id/members',
@@ -174,7 +167,6 @@ export interface FileRoutesByFullPath {
   '/admin/databases/': typeof AuthenticatedAdminDatabasesIndexRoute
   '/admin/groups/': typeof AuthenticatedAdminGroupsIndexRoute
   '/databases/$databaseID/': typeof AuthenticatedDatabasesDatabaseIDIndexRoute
-  '/admin/groups/$id/databases': typeof AuthenticatedAdminGroupsIdDatabasesRoute
   '/admin/groups/$id/members': typeof AuthenticatedAdminGroupsIdMembersRoute
   '/databases/$databaseID/jobs/$jobID': typeof AuthenticatedDatabasesDatabaseIDJobsJobIDRoute
   '/databases/$databaseID/migrations/$migrationID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren
@@ -196,7 +188,6 @@ export interface FileRoutesByTo {
   '/admin/databases': typeof AuthenticatedAdminDatabasesIndexRoute
   '/admin/groups': typeof AuthenticatedAdminGroupsIndexRoute
   '/databases/$databaseID': typeof AuthenticatedDatabasesDatabaseIDIndexRoute
-  '/admin/groups/$id/databases': typeof AuthenticatedAdminGroupsIdDatabasesRoute
   '/admin/groups/$id/members': typeof AuthenticatedAdminGroupsIdMembersRoute
   '/databases/$databaseID/jobs/$jobID': typeof AuthenticatedDatabasesDatabaseIDJobsJobIDRoute
   '/databases/$databaseID/tables/$tableID': typeof AuthenticatedDatabasesDatabaseIDTablesTableIDRoute
@@ -220,7 +211,6 @@ export interface FileRoutesById {
   '/_authenticated/admin/databases/': typeof AuthenticatedAdminDatabasesIndexRoute
   '/_authenticated/admin/groups/': typeof AuthenticatedAdminGroupsIndexRoute
   '/_authenticated/databases/$databaseID/': typeof AuthenticatedDatabasesDatabaseIDIndexRoute
-  '/_authenticated/admin/groups/$id/databases': typeof AuthenticatedAdminGroupsIdDatabasesRoute
   '/_authenticated/admin/groups/$id/members': typeof AuthenticatedAdminGroupsIdMembersRoute
   '/_authenticated/databases/$databaseID/jobs/$jobID': typeof AuthenticatedDatabasesDatabaseIDJobsJobIDRoute
   '/_authenticated/databases/$databaseID/migrations/$migrationID': typeof AuthenticatedDatabasesDatabaseIDMigrationsMigrationIDRouteWithChildren
@@ -245,7 +235,6 @@ export interface FileRouteTypes {
     | '/admin/databases/'
     | '/admin/groups/'
     | '/databases/$databaseID/'
-    | '/admin/groups/$id/databases'
     | '/admin/groups/$id/members'
     | '/databases/$databaseID/jobs/$jobID'
     | '/databases/$databaseID/migrations/$migrationID'
@@ -267,7 +256,6 @@ export interface FileRouteTypes {
     | '/admin/databases'
     | '/admin/groups'
     | '/databases/$databaseID'
-    | '/admin/groups/$id/databases'
     | '/admin/groups/$id/members'
     | '/databases/$databaseID/jobs/$jobID'
     | '/databases/$databaseID/tables/$tableID'
@@ -290,7 +278,6 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/databases/'
     | '/_authenticated/admin/groups/'
     | '/_authenticated/databases/$databaseID/'
-    | '/_authenticated/admin/groups/$id/databases'
     | '/_authenticated/admin/groups/$id/members'
     | '/_authenticated/databases/$databaseID/jobs/$jobID'
     | '/_authenticated/databases/$databaseID/migrations/$migrationID'
@@ -400,13 +387,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDatabasesDatabaseIDSchemaDiffRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/admin/groups/$id/databases': {
-      id: '/_authenticated/admin/groups/$id/databases'
-      path: '/groups/$id/databases'
-      fullPath: '/admin/groups/$id/databases'
-      preLoaderRoute: typeof AuthenticatedAdminGroupsIdDatabasesRouteImport
-      parentRoute: typeof AuthenticatedAdminRouteRoute
-    }
     '/_authenticated/admin/groups/$id/members': {
       id: '/_authenticated/admin/groups/$id/members'
       path: '/groups/$id/members'
@@ -472,7 +452,6 @@ interface AuthenticatedAdminRouteRouteChildren {
   AuthenticatedAdminDatabasesIdRoute: typeof AuthenticatedAdminDatabasesIdRoute
   AuthenticatedAdminDatabasesIndexRoute: typeof AuthenticatedAdminDatabasesIndexRoute
   AuthenticatedAdminGroupsIndexRoute: typeof AuthenticatedAdminGroupsIndexRoute
-  AuthenticatedAdminGroupsIdDatabasesRoute: typeof AuthenticatedAdminGroupsIdDatabasesRoute
   AuthenticatedAdminGroupsIdMembersRoute: typeof AuthenticatedAdminGroupsIdMembersRoute
 }
 
@@ -484,8 +463,6 @@ const AuthenticatedAdminRouteRouteChildren: AuthenticatedAdminRouteRouteChildren
     AuthenticatedAdminDatabasesIndexRoute:
       AuthenticatedAdminDatabasesIndexRoute,
     AuthenticatedAdminGroupsIndexRoute: AuthenticatedAdminGroupsIndexRoute,
-    AuthenticatedAdminGroupsIdDatabasesRoute:
-      AuthenticatedAdminGroupsIdDatabasesRoute,
     AuthenticatedAdminGroupsIdMembersRoute:
       AuthenticatedAdminGroupsIdMembersRoute,
   }

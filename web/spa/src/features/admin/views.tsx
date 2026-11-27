@@ -51,7 +51,6 @@ export type AdminTitle =
   | "Users"
   | "Groups"
   | "Group members"
-  | "Group database access"
   | "Connections"
   | "Edit connection";
 
@@ -64,8 +63,7 @@ export function AdminShell({
   connectionsAvailable: boolean;
   children: ReactNode;
 }) {
-  const activeGroups =
-    title === "Groups" || title === "Group members" || title === "Group database access";
+  const activeGroups = title === "Groups" || title === "Group members";
   const activeConnections = title === "Connections" || title === "Edit connection";
   const tab = (label: string, href: string, active: boolean) => (
     <Link
@@ -615,6 +613,8 @@ export interface MembersViewProps extends ViewStatus {
   onAdd: FormAction;
   onRemove: (userId: string) => void | Promise<void>;
   onLeader: FormAction;
+  onSaveGrant: FormAction;
+  onRemoveGrant: (databaseId: string) => void | Promise<void>;
 }
 export function MembersView({
   data,
@@ -622,6 +622,8 @@ export function MembersView({
   onAdd,
   onRemove,
   onLeader,
+  onSaveGrant,
+  onRemoveGrant,
   message,
   error,
   pending = false,
@@ -639,6 +641,8 @@ export function MembersView({
     );
   const memberships = data.memberships.filter((row) => row.group_id === group.id);
   const leader = data.users.find((user) => user.id === group.leader_user_id);
+  const grants = data.grants.filter((row) => row.group_id === group.id);
+  const activeDatabases = data.databases.filter((db) => db.active);
   return (
     <AdminShell title="Group members" connectionsAvailable={connectionsAvailable}>
       <main>
@@ -650,7 +654,7 @@ export function MembersView({
         </Link>
         <h1 className={`${wsHeading} mt-1 break-words`}>Members of {group.name}</h1>
         <p className={`${wsMuted} mt-2 leading-6`}>
-          Adding or removing membership changes effective database access.
+          Manage the group’s members, approval leader, and database access.
         </p>
         <Feedback status={{ message, error, refreshNeeded, onRefresh }} />
         <section className={`${wsPanel} mt-6 p-5`}>
@@ -753,57 +757,14 @@ export function MembersView({
             </ul>
           </section>
         </div>
-      </main>
-    </AdminShell>
-  );
-}
-
-export interface GrantsViewProps extends ViewStatus {
-  data: AdminSnapshot;
-  connectionsAvailable: boolean;
-  onSave: FormAction;
-  onRemove: (databaseId: string) => void | Promise<void>;
-}
-export function GrantsView({
-  data,
-  connectionsAvailable,
-  onSave,
-  onRemove,
-  message,
-  error,
-  pending = false,
-  refreshNeeded,
-  onRefresh,
-}: GrantsViewProps) {
-  const group = data.selected_group;
-  if (!group)
-    return (
-      <AdminShell title="Group database access" connectionsAvailable={connectionsAvailable}>
-        <p role="alert" className={wsAlert}>
-          Group not found.
-        </p>
-      </AdminShell>
-    );
-  const grants = data.grants.filter((row) => row.group_id === group.id);
-  const activeDatabases = data.databases.filter((db) => db.active);
-  return (
-    <AdminShell title="Group database access" connectionsAvailable={connectionsAvailable}>
-      <main>
-        <Link
-          className={`${wsLink} inline-flex min-h-11 items-center text-sm`}
-          to={path(`/admin/groups/${group.id}/members`)}
-        >
-          Group members
-        </Link>
-        <h1 className={`${wsHeading} mt-1 break-words`}>Database access for {group.name}</h1>
+        <h2 className={`${wsSubhead} mt-6`}>Database access</h2>
         <p className={`${wsMuted} mt-2 leading-6`}>
           Grant view or edit access to active registered databases.
         </p>
-        <Feedback status={{ message, error, refreshNeeded, onRefresh }} />
-        <div className="mt-6 flex flex-wrap items-start gap-6">
+        <div className="mt-4 flex flex-wrap items-start gap-6">
           <section className={`${wsPanel} min-w-0 flex-[1_1_20rem] p-5`}>
-            <h2 className={wsSubhead}>Set access</h2>
-            <form onSubmit={stopSubmit(onSave)} className="mt-4 space-y-4">
+            <h3 className={wsSubhead}>Set access</h3>
+            <form onSubmit={stopSubmit(onSaveGrant)} className="mt-4 space-y-4">
               <div className="space-y-1.5">
                 <label htmlFor="grant-db" className={wsLabel}>
                   Registered database
@@ -860,7 +821,7 @@ export function GrantsView({
             )}
           </section>
           <section className={`${wsPanel} min-w-0 flex-[999_1_32rem] p-5`}>
-            <h2 className={wsSubhead}>Current grants</h2>
+            <h3 className={wsSubhead}>Current grants</h3>
             {grants.length === 0 && (
               <p className={`${wsMuted} mt-2`}>No database grants for this group.</p>
             )}
@@ -883,7 +844,7 @@ export function GrantsView({
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
-                      void onRemove(grant.database_id);
+                      void onRemoveGrant(grant.database_id);
                     }}
                   >
                     <Submit pending={pending}>

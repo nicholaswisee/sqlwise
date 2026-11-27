@@ -13,7 +13,6 @@ import {
   ConnectionDetailView,
   ConnectionsView,
   DashboardView,
-  GrantsView,
   GroupsView,
   MembersView,
   UsersView,
@@ -245,39 +244,14 @@ export function MembersPage({ groupId }: { groupId: string }) {
           true,
         )
       }
-    />
-  );
-}
-
-export function GrantsPage({ groupId }: { groupId: string }) {
-  const result = useSnapshotPage(
-    `/admin/groups/${encodeURIComponent(groupId)}/databases`,
-    "Group database access",
-  );
-  if ("component" in result) return result.component;
-  const { run, ...status } = result.actions;
-  const data = result.query.data!;
-  const stale =
-    result.query.isError &&
-    result.query.error instanceof ApiError &&
-    result.query.error.code === "authorization_stale";
-  return (
-    <GrantsView
-      data={data}
-      connectionsAvailable
-      message={status.message}
-      error={result.query.isError ? result.query.error.message : status.error}
-      pending={status.pending}
-      refreshNeeded={stale || status.refreshNeeded}
-      onRefresh={status.onRefresh}
-      onSave={(form) =>
+      onSaveGrant={(form) =>
         run(
           `/admin/groups/${encodeURIComponent(groupId)}/databases`,
           { database_id: field(form, "database_id"), permission: field(form, "permission") },
           true,
         )
       }
-      onRemove={(databaseId) =>
+      onRemoveGrant={(databaseId) =>
         run(
           `/admin/groups/${encodeURIComponent(groupId)}/databases/remove`,
           { database_id: databaseId },

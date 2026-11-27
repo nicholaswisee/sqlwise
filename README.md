@@ -129,7 +129,7 @@ The Docker stack includes a seeded PostgreSQL target. Register it under **Admin 
 | PostgreSQL | `target:5432`           | `localhost:5434`            | `sqlwise_demo` |
 | MySQL      | `mysql:3306`            | `localhost:3307`            | `sqlwise_demo` |
 
-Both demo targets use username `sqlwise_target`, password `sqlwise_target_dev_only`, and TLS disabled. Grant a group access after registering a target.
+Both demo targets use username `sqlwise_target`, password `sqlwise_target_dev_only`, and TLS disabled. To grant access, go to **Admin → Groups → Members and databases** for your group. Under **Database access**, select the target, choose **View** or **Edit**, and click **Save access**.
 
 ## Jobs and large-data benchmark
 
