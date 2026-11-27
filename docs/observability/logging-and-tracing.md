@@ -6,15 +6,15 @@ View them with `docker compose logs -f app worker`.
 
 ## What is logged
 
-| Event | Where | When |
-|---|---|---|
-| `http.request` | API | Every request: method, route template (never the raw path or query), status, duration. |
-| `audit` | API | Every state-changing `/api/v1` call: `action` (for example `databases.requests.approve`, `admin.groups.databases.grant`, `auth.login`), `outcome` (`success`, `denied` for 401/403, `rejected` for other 4xx, `error` for 5xx), actor, route IDs (`database_id`, `request_id`, `target_id`, …) and result IDs (`created_id`, `job_id`, `execution_id`, `group_id`). Request bodies are never logged. |
-| `sql.start`, `sql.result` | API, worker | Every statement on the platform database and on PostgreSQL and MySQL targets, including read-only explorer queries, `BEGIN`, `COMMIT` and `ROLLBACK`: masked query, `sql_hash`, parameter types, duration, rows, SQLSTATE and, on failure, the masked server message at WARN. Context fields add `database`, and in the worker `job_id`, `migration_id`, `execution_id`, `operation`, `attempt`, `batch` and `batch_direction`. |
-| `job.enqueued`, `job.claimed`, `job.lock.acquired`, `job.start`, `job.batch.committed`, `job.retry`, `job.deferred`, `job.reclaimed`, `job.finished` | API, worker | The queue lifecycle of every delivery, with job, delivery, request, execution and migration IDs and the attempt number. |
-| `migration.execution.start`, `migration.execution.result` | worker | Every execution attempt: migration, execution and request IDs, operation, revision, candidate and applied version, executor, status, masked copy of the SQL, `sql_sha256` (the exact text is kept in migration history), duration, failed statement and masked error. |
-| `migration.execution.precheck_failed`, `migration.execution.refused` | worker | Revalidation before any SQL (stale head, changed approvals, revoked access, unreachable target). A final refusal is also written to migration history with status `refused`. |
-| `migration.recovery.start`, `migration.recovery.result`, `migration.recovery.refused` | worker | Batch resume and compensation. |
+| Event                                                                                                                                                | Where       | When                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http.request`                                                                                                                                       | API         | Every request: method, route template (never the raw path or query), status, duration.                                                                                                                                                                                                                                                                                                                                          |
+| `audit`                                                                                                                                              | API         | Every state-changing `/api/v1` call: `action` (for example `databases.requests.approve`, `admin.groups.databases.grant`, `auth.login`), `outcome` (`success`, `denied` for 401/403, `rejected` for other 4xx, `error` for 5xx), actor, route IDs (`database_id`, `request_id`, `target_id`, …) and result IDs (`created_id`, `job_id`, `execution_id`, `group_id`). Request bodies are never logged.                            |
+| `sql.start`, `sql.result`                                                                                                                            | API, worker | Every statement on the platform database and on PostgreSQL and MySQL targets, including read-only explorer queries, `BEGIN`, `COMMIT` and `ROLLBACK`: masked query, `sql_hash`, parameter types, duration, rows, SQLSTATE and, on failure, the masked server message at WARN. Context fields add `database`, and in the worker `job_id`, `migration_id`, `execution_id`, `operation`, `attempt`, `batch` and `batch_direction`. |
+| `job.enqueued`, `job.claimed`, `job.lock.acquired`, `job.start`, `job.batch.committed`, `job.retry`, `job.deferred`, `job.reclaimed`, `job.finished` | API, worker | The queue lifecycle of every delivery, with job, delivery, request, execution and migration IDs and the attempt number.                                                                                                                                                                                                                                                                                                         |
+| `migration.execution.start`, `migration.execution.result`                                                                                            | worker      | Every execution attempt: migration, execution and request IDs, operation, revision, candidate and applied version, executor, status, masked copy of the SQL, `sql_sha256` (the exact text is kept in migration history), duration, failed statement and masked error.                                                                                                                                                           |
+| `migration.execution.precheck_failed`, `migration.execution.refused`                                                                                 | worker      | Revalidation before any SQL (stale head, changed approvals, revoked access, unreachable target). A final refusal is also written to migration history with status `refused`.                                                                                                                                                                                                                                                    |
+| `migration.recovery.start`, `migration.recovery.result`, `migration.recovery.refused`                                                                | worker      | Batch resume and compensation.                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 Every line written with a request or job context carries `trace_id`, `span_id` and `correlation_id`. The correlation ID is the HTTP request ID in the API and the job ID in the worker; the trace ID survives the queue hop.
 
@@ -760,9 +760,7 @@ Failing spans: `db.query` with an `exception` event and `db.response.status_code
   "span_id": "cb7f2164162a9373",
   "query": "SELECT c.TABLE_NAME, c.COLUMN_NAME, c.COLUMN_TYPE, c.IS_NULLABLE = [REDACTED], c.COLUMN_DEFAULT\n\t\tFROM information_schema.COLUMNS c JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_TYPE = [REDACTED]\n\t\tWHERE c.TABLE_SCHEMA = ? ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION",
   "sql_hash": "09d699943a7aee20343f86ce2257e78e91d81e2c7ce6aca4dbdfb919188cf0d7",
-  "params": [
-    "[REDACTED string]"
-  ],
+  "params": ["[REDACTED string]"],
   "status": "started",
   "duration_ms": 0,
   "rows": 0,
@@ -784,9 +782,7 @@ Failing spans: `db.query` with an `exception` event and `db.response.status_code
   "span_id": "cb7f2164162a9373",
   "query": "SELECT c.TABLE_NAME, c.COLUMN_NAME, c.COLUMN_TYPE, c.IS_NULLABLE = [REDACTED], c.COLUMN_DEFAULT\n\t\tFROM information_schema.COLUMNS c JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_TYPE = [REDACTED]\n\t\tWHERE c.TABLE_SCHEMA = ? ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION",
   "sql_hash": "09d699943a7aee20343f86ce2257e78e91d81e2c7ce6aca4dbdfb919188cf0d7",
-  "params": [
-    "[REDACTED string]"
-  ],
+  "params": ["[REDACTED string]"],
   "status": "success",
   "duration_ms": 7,
   "rows": -1,
