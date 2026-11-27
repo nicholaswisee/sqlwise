@@ -76,6 +76,10 @@ var (
 	// ErrCommitUnknown must be wrapped by TargetTx.Commit when the commit
 	// request may have reached the target but no reply confirmed it.
 	ErrCommitUnknown = errors.New("commit outcome unknown")
+	// ErrBatchPending is an unknown outcome that belongs to another
+	// execution's batch run: only that execution's own delivery can settle it,
+	// so a caller with nothing recorded should wait rather than block.
+	ErrBatchPending = fmt.Errorf("another execution's batch run is unsettled: %w", ErrOutcomeUnknown)
 )
 
 type Error struct {

@@ -831,6 +831,68 @@ func TestWorkerDeathBeforeTargetCommitIsFencedNotReplayed(t *testing.T) {
 	}
 }
 
+// A job claimed ahead of a dead batch run must not block the database on the
+// batch's behalf: only the batch's own delivery can settle its ledger.
+func TestJobQueuedBehindADeadBatchRunWaitsInsteadOfBlocking(t *testing.T) {
+	f := newFlow(t)
+	f.seedAccounts(t)
+	if _, err := f.target.Exec(t.Context(), `DELETE FROM fail_switch`); err != nil {
+		t.Fatal(err)
+	}
+	spec := migration.BatchSpec{Schema: "public", Table: "accounts", Key: "id", Column: "status", Value: "archived"}
+	d, err := f.service.Create(f.editor.Ctx, "db", migration.DraftInput{Title: "Archive accounts", SQLDown: "UPDATE accounts SET status = 'active'",
+		Batch: &spec, BatchSize: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := f.approved(t, f.define(t, "Widgets", "CREATE TABLE widgets (id int)", "DROP TABLE widgets"), migration.OpUp)
+	batchReq := f.approved(t, d, migration.OpUp)
+	batch := f.enqueue(t, batchReq)
+	f.dieAfterClaim(t, batch.ID, batchReq.ID, "batch")
+	gate, err := f.gates.Gate(t.Context(), "db", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := gate.PrepareBatch(t.Context(), batch.ExecutionID, database.BatchUpdate(spec), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	died := errors.New("process ended")
+	if _, err := gate.RunBatches(t.Context(), plan, database.BatchHooks{BeforeCommit: func(n int) error {
+		if n == 3 {
+			return died
+		}
+		return nil
+	}}); !errors.Is(err, died) {
+		t.Fatal(err)
+	}
+	gate.Close()
+	queued := f.enqueue(t, next)
+	// Order the reclaimed batch after the queued job, as a busy deferral does.
+	f.p.Exec(t, `UPDATE jobs SET next_run_at = now() + interval '1 hour' WHERE id=$1`, batch.ID)
+	f.worker(t, f.runner())
+
+	if done := f.settled(t, batch.ID); done.Status != jobs.Blocked || done.Effect != jobs.EffectPartial || len(done.Recovery()) != 2 {
+		t.Fatalf("dead batch job = %+v", done)
+	}
+	waiting := jobstest.Wait(t, f.store, "db", queued.ID, 10*time.Second, func(j jobs.Job) bool { return j.Status != jobs.Running })
+	if waiting.Status != jobs.Queued || waiting.Effect != jobs.EffectNone || waiting.Attempts != 0 {
+		t.Fatalf("job behind the batch = %+v; it must wait without blocking", waiting)
+	}
+	if _, found := f.attemptMaybe(t, queued.ExecutionID); found {
+		t.Fatal("the waiting job recorded an execution")
+	}
+}
+
+func (f *flow) attemptMaybe(t *testing.T, id string) (migration.Attempt, bool) {
+	t.Helper()
+	var n int
+	if err := f.p.Pool.QueryRow(t.Context(), `SELECT count(*) FROM migration_attempts WHERE id=$1`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return migration.Attempt{}, n > 0
+}
+
 func TestWorkerDeathDuringBatchRunLeavesItPartialForApprovedRecovery(t *testing.T) {
 	f := newFlow(t)
 	f.seedAccounts(t)

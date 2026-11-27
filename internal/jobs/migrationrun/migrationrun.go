@@ -131,6 +131,10 @@ func classify(job jobs.Job, a migration.Attempt, err error) jobs.Outcome {
 		return jobs.Success()
 	case errors.Is(err, migration.ErrRecoveryRequired) && ownPartial:
 		return jobs.Partial(or(a.Error, message))
+	case errors.Is(err, migration.ErrBatchPending) && a.ID == "":
+		// Nothing of this job ran; blocking it would stop the batch's own job
+		// from being claimed to settle the ledger.
+		return jobs.Deferred(or(message, "Waiting for another execution's batch run to settle."))
 	case errors.Is(err, migration.ErrOutcomeUnknown):
 		return jobs.Unknown(message)
 	case errors.Is(err, migration.ErrTargetUnavailable) && a.ID != "":

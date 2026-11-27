@@ -271,6 +271,14 @@ func (w *Worker) run(ctx context.Context, gate *database.Gate, c claimed, log *s
 // settle applies the retry policy and records the outcome.
 func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int, log *slog.Logger) {
 	ctx = context.WithoutCancel(ctx)
+	if o.Deferred {
+		jobDeferrals.WithLabelValues("batch_pending").Inc()
+		log.InfoContext(ctx, "job deferred", "event", "job.deferred", "reason", "batch_pending", "delay_ms", w.cfg.Defer.Milliseconds(), "error", o.Message)
+		if ok, err := w.store.release(ctx, c.ID, w.cfg.ID, c.Attempts, w.cfg.Defer, o.Message); err != nil || !ok {
+			log.WarnContext(ctx, "job claim lost before requeue", "event", "job.claim_lost")
+		}
+		return
+	}
 	if o.Retryable && c.previous == Blocked {
 		w.requeue(ctx, c, attempts, w.cfg.Recheck, "", "unavailable", log)
 		return

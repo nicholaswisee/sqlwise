@@ -281,7 +281,7 @@ func (s *Service) reconcile(ctx context.Context, target Target, databaseID strin
 		}
 		if a.Batch {
 			// Only its own queued delivery may settle this batch from the pinned ledger.
-			return fail(ErrOutcomeUnknown, blockedMessage(a))
+			return fail(ErrBatchPending, blockedMessage(a))
 		}
 		if a.Dialect != MySQL {
 			a = s.resolve(ctx, target, a)
