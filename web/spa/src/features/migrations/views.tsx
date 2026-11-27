@@ -1366,7 +1366,7 @@ export function AttemptDetailPage({
       )}
       <section aria-labelledby="executed-sql-heading" className={`${styles.panel} mt-6 p-5 sm:p-6`}>
         <h2 id="executed-sql-heading" className="text-lg font-semibold text-slate-900">
-          Executed SQL (immutable)
+          {a.status === "refused" ? "SQL that would have run (not executed)" : "Executed SQL (immutable)"}
         </h2>
         <div className="mt-4">
           <SQL>{a.sql}</SQL>
