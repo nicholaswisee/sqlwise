@@ -58,6 +58,7 @@ func HTTPMiddleware() gin.HandlerFunc {
 			for _, p := range c.Params {
 				args = append(args, auditTarget(p.Key), p.Value)
 			}
+			args = append(args, auditFields(c.Request.Context())...)
 			slog.Log(ctx, level, "audit", args...)
 		}
 		span.End()

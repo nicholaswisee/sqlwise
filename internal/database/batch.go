@@ -306,6 +306,9 @@ func (g *Gate) CommitBatch(ctx context.Context, executionID, direction string,
 	}
 	rollback := func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }
 	cp, err := work(ctx, tx.(*gateTx))
+	if cp.Batch > 0 {
+		span.SetAttributes(attribute.Int("sqlwise.batch.number", cp.Batch))
+	}
 	if err != nil {
 		rollback()
 		return Checkpoint{}, failed(batchError(ctx, err))

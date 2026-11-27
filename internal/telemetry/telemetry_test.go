@@ -219,7 +219,10 @@ func TestHTTPMiddlewareAuditsMutationsWithActorTargetsAndOutcome(t *testing.T) {
 	router := gin.New()
 	router.Use(HTTPMiddleware())
 	withActor := func(c *gin.Context) { c.Request = c.Request.WithContext(WithActor(c.Request.Context(), "user-1")) }
-	router.POST("/api/v1/databases/:databaseID/requests/:requestID/approve", withActor, func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.POST("/api/v1/databases/:databaseID/requests/:requestID/approve", withActor, func(c *gin.Context) {
+		c.Request = c.Request.WithContext(WithAuditFields(c.Request.Context(), "group_id", "group-1"))
+		c.Status(http.StatusOK)
+	})
 	router.POST("/api/v1/databases/:databaseID/requests/:requestID/reject", withActor, func(c *gin.Context) { c.Status(http.StatusForbidden) })
 	router.GET("/api/v1/databases/:databaseID/jobs", withActor, func(c *gin.Context) { c.Status(http.StatusOK) })
 	for _, path := range []string{"/api/v1/databases/db-1/requests/req-1/approve", "/api/v1/databases/db-1/requests/req-2/reject"} {
@@ -241,7 +244,7 @@ func TestHTTPMiddlewareAuditsMutationsWithActorTargetsAndOutcome(t *testing.T) {
 	}
 	approve, reject := audits[0], audits[1]
 	if approve["action"] != "databases.requests.approve" || approve["outcome"] != "success" || approve["level"] != "INFO" ||
-		approve["actor"] != "user-1" || approve["database_id"] != "db-1" || approve["request_id"] != "req-1" || approve["correlation_id"] == "" {
+		approve["actor"] != "user-1" || approve["database_id"] != "db-1" || approve["request_id"] != "req-1" || approve["group_id"] != "group-1" || approve["correlation_id"] == "" {
 		t.Errorf("approve audit = %v", approve)
 	}
 	if reject["action"] != "databases.requests.reject" || reject["outcome"] != "denied" || reject["level"] != "WARN" || reject["request_id"] != "req-2" {
@@ -307,5 +310,19 @@ func TestContextHandlerAddsTraceAndCorrelationOnce(t *testing.T) {
 	}
 	if _, ok := third["trace_id"]; ok {
 		t.Errorf("line without context got a trace: %v", third)
+	}
+}
+
+func TestRedactMessageMasksQuotedValuesButKeepsCodes(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`Statement 1 failed: invalid input syntax for type integer: "rd_secret" (SQLSTATE 22P02). All changes were rolled back.`,
+			`Statement 1 failed: invalid input syntax for type integer: [REDACTED] (SQLSTATE 22P02). All changes were rolled back.`},
+		{`value 'a''b' and "c"`, `value [REDACTED][REDACTED] and [REDACTED]`},
+		{`unterminated 'secret tail`, `unterminated [REDACTED]`},
+		{"Gave up after 3 attempts.", "Gave up after 3 attempts."},
+	} {
+		if got := RedactMessage(tc.in); got != tc.want {
+			t.Errorf("RedactMessage(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

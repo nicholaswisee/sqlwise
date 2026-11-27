@@ -65,7 +65,7 @@ func (t SQLTrace) End(rows int64, err error, sqlstate, message string) {
 		if message == "" {
 			message = "The database connection or driver failed."
 		}
-		message = RedactSQL(message)
+		message = RedactMessage(message)
 		t.state.span.RecordError(errors.New(message))
 		t.state.span.SetStatus(codes.Error, "query failed")
 		if sqlstate != "" {
@@ -113,6 +113,29 @@ func logSQL(ctx context.Context, level slog.Level, event string, state queryStat
 		args = append(args, "error", message)
 	}
 	slog.Log(ctx, level, "sql statement", append(args, logFields(ctx)...)...)
+}
+
+// RedactMessage masks quoted text in a database or domain error message,
+// where servers echo rejected values: invalid input syntax for type
+// integer: "x".
+// Unlike RedactSQL it keeps bare numbers such as statement positions and
+// SQLSTATE codes readable. An unterminated quote masks the rest.
+func RedactMessage(message string) string {
+	var out strings.Builder
+	for i := 0; i < len(message); i++ {
+		quote := message[i]
+		if quote != '\'' && quote != '"' && quote != '`' {
+			out.WriteByte(quote)
+			continue
+		}
+		end := strings.IndexByte(message[i+1:], quote)
+		out.WriteString("[REDACTED]")
+		if end < 0 {
+			break
+		}
+		i += end + 1
+	}
+	return out.String()
 }
 
 func RedactSQL(sql string) string {

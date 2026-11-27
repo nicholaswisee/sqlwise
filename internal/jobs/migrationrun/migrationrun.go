@@ -15,6 +15,7 @@ import (
 	"sqlwise/internal/database"
 	"sqlwise/internal/jobs"
 	"sqlwise/internal/migration"
+	"sqlwise/internal/telemetry"
 )
 
 // Consumer consumes approved requests through the migration domain.
@@ -46,7 +47,7 @@ func (r Runner) Run(ctx context.Context, gate *database.Gate, job jobs.Job, prog
 func (r Runner) RecordFailure(ctx context.Context, job jobs.Job, message string) {
 	if _, err := r.Service.RecordRefusal(ctx, job.RequestID, message); err != nil {
 		slog.WarnContext(ctx, "refused execution not recorded", "event", "migration.execution.refusal_unrecorded",
-			"database", job.DatabaseID, "job_id", job.ID, "execution_id", job.ExecutionID, "error", err.Error())
+			"database", job.DatabaseID, "job_id", job.ID, "execution_id", job.ExecutionID, "error", telemetry.RedactMessage(err.Error()))
 	}
 }
 

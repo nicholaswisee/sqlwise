@@ -48,6 +48,7 @@ const (
 	correlationKey contextKey = iota
 	actorKey
 	fieldsKey
+	auditKey
 )
 
 func WithCorrelation(ctx context.Context, id string) context.Context {
@@ -66,6 +67,17 @@ func WithLogFields(ctx context.Context, args ...any) context.Context {
 
 func logFields(ctx context.Context) []any {
 	fields, _ := ctx.Value(fieldsKey).([]any)
+	return fields
+}
+
+// WithAuditFields adds key/value pairs to the audit event of the current
+// API call, such as the ID of the object it created or the job it queued.
+func WithAuditFields(ctx context.Context, args ...any) context.Context {
+	return context.WithValue(ctx, auditKey, append(slices.Clip(auditFields(ctx)), args...))
+}
+
+func auditFields(ctx context.Context) []any {
+	fields, _ := ctx.Value(auditKey).([]any)
 	return fields
 }
 

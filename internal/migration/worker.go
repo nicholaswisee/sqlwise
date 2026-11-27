@@ -115,7 +115,7 @@ func (s *Service) RunWith(ctx context.Context, target Target, batches BatchRunne
 		// recorded in history by RecordRefusal.
 		slog.WarnContext(ctx, "migration execution not started", "event", "migration.execution.precheck_failed", "database", r.DatabaseID,
 			"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", r.ExecutionID, "operation", string(r.Operation),
-			"actor", r.RequestedBy, "status", "not_started", "error", or(Message(err), "The platform database could not be read."))
+			"actor", r.RequestedBy, "status", "not_started", "error", telemetry.RedactMessage(or(Message(err), "The platform database could not be read.")))
 		return Attempt{}, err
 	}
 	logAttempt(ctx, slog.LevelInfo, "migration.execution.start", attempt)
@@ -235,7 +235,7 @@ func logAttempt(ctx context.Context, level slog.Level, event string, a Attempt) 
 		args = append(args, "failed_statement", a.FailedStatement)
 	}
 	if a.Error != "" {
-		args = append(args, "error", a.Error)
+		args = append(args, "error", telemetry.RedactMessage(a.Error))
 	}
 	slog.Log(ctx, level, "migration execution", args...)
 }

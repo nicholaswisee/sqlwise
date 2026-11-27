@@ -159,6 +159,7 @@ func (h *ConnectionAdmin) apiCreate(c *gin.Context) {
 		apiConnectionFailure(c, err)
 		return
 	}
+	audit(c, "created_id", reg.ID)
 	if !h.apiFresh(c) {
 		return
 	}

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"sqlwise/internal/telemetry"
+
 	"encoding/json"
 	"errors"
 	"io"
@@ -79,4 +81,9 @@ func apiDecode(c *gin.Context, dst any) bool {
 		return false
 	}
 	return true
+}
+
+// audit adds result IDs to the audit event of this API call.
+func audit(c *gin.Context, args ...any) {
+	c.Request = c.Request.WithContext(telemetry.WithAuditFields(c.Request.Context(), args...))
 }

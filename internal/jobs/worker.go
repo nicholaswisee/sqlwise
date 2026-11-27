@@ -281,7 +281,7 @@ func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int,
 	ctx = context.WithoutCancel(ctx)
 	if o.Deferred {
 		jobDeferrals.WithLabelValues("batch_pending").Inc()
-		log.InfoContext(ctx, "job deferred", "event", "job.deferred", "reason", "batch_pending", "delay_ms", w.cfg.Defer.Milliseconds(), "error", o.Message)
+		log.InfoContext(ctx, "job deferred", "event", "job.deferred", "reason", "batch_pending", "delay_ms", w.cfg.Defer.Milliseconds(), "error", telemetry.RedactMessage(o.Message))
 		if ok, err := w.store.release(ctx, c.ID, w.cfg.ID, c.Attempts, w.cfg.Defer, o.Message); err != nil || !ok {
 			log.WarnContext(ctx, "job claim lost before requeue", "event", "job.claim_lost")
 		}
@@ -294,7 +294,7 @@ func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int,
 	if o.Retryable && o.Effect == EffectNone && attempts < c.MaxAttempts {
 		delay := w.cfg.Backoff[attempts-1]
 		jobRetries.WithLabelValues(operationLabel(c.Operation)).Inc()
-		log.WarnContext(ctx, "job retry scheduled", "event", "job.retry", "attempt", attempts, "delay_ms", delay.Milliseconds(), "error", o.Message)
+		log.WarnContext(ctx, "job retry scheduled", "event", "job.retry", "attempt", attempts, "delay_ms", delay.Milliseconds(), "error", telemetry.RedactMessage(o.Message))
 		w.requeue(ctx, c, attempts, delay, o.Message, "", log)
 		return
 	}
@@ -318,7 +318,7 @@ func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int,
 		level = slog.LevelWarn
 	}
 	log.Log(ctx, level, "job finished", "event", "job.finished", "status", string(o.Status), "effect", string(o.Effect),
-		"attempt", attempts, "error", o.Message)
+		"attempt", attempts, "error", telemetry.RedactMessage(o.Message))
 }
 
 func (w *Worker) requeue(ctx context.Context, c claimed, attempts int, delay time.Duration, message, reason string, log *slog.Logger) {

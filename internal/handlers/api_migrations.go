@@ -233,6 +233,7 @@ func (h *Migrations) apiCreate(c *gin.Context) {
 		apiMigrationFailure(c, e)
 		return
 	}
+	audit(c, "created_id", d.ID)
 	c.Header("Location", "/api/v1/databases/"+d.DatabaseID+"/migrations/"+d.ID)
 	c.JSON(http.StatusCreated, gin.H{"data": apiDraftDTO(d)})
 }
@@ -340,6 +341,7 @@ func (h *Migrations) apiExecute(c *gin.Context) {
 		apiMigrationFailure(c, e)
 		return
 	}
+	audit(c, "request_id", r.ID, "operation", string(r.Operation))
 	if h.jobs == nil {
 		apiError(c, http.StatusServiceUnavailable, "target_unavailable", "The execution queue is not configured on this server.")
 		return
@@ -349,6 +351,7 @@ func (h *Migrations) apiExecute(c *gin.Context) {
 		apiMigrationFailure(c, e)
 		return
 	}
+	audit(c, "job_id", job.ID, "execution_id", job.ExecutionID)
 	c.Header("Location", "/api/v1/databases/"+databaseID+"/jobs/"+job.ID)
 	c.JSON(http.StatusAccepted, gin.H{"data": apiJob{job.ID, job.RequestID, job.ExecutionID, job.Status, job.Error}})
 }
@@ -371,6 +374,7 @@ func (h *Migrations) apiCreateRequest(c *gin.Context) {
 		apiMigrationFailure(c, e)
 		return
 	}
+	audit(c, "created_id", r.ID, "operation", string(r.Operation))
 	c.Header("Location", "/api/v1/databases/"+r.DatabaseID+"/requests/"+r.ID)
 	c.JSON(http.StatusCreated, gin.H{"data": apiRequestDTO(r)})
 }
@@ -402,6 +406,9 @@ func (h *Migrations) apiDecide(approve bool) gin.HandlerFunc {
 			return
 		}
 		r, e := h.migrations.Decide(c.Request.Context(), c.Param("databaseID"), c.Param("requestID"), in.GroupID, approve)
+		if e == nil {
+			audit(c, "group_id", in.GroupID, "request_status", string(r.Status))
+		}
 		if e != nil {
 			apiMigrationFailure(c, e)
 			return

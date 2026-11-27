@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"sqlwise/internal/access"
+	"sqlwise/internal/telemetry"
 )
 
 // MaxBatchSize bounds one batch transaction; it matches the target runtime.
@@ -206,7 +207,7 @@ func (s *Service) recover(ctx context.Context, batches BatchRunner, r Request) (
 	if err != nil {
 		slog.WarnContext(ctx, "migration recovery refused", "event", "migration.recovery.refused", "database", r.DatabaseID,
 			"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", a.ID, "operation", string(r.Operation), "actor", r.RequestedBy,
-			"status", "refused", "error", or(Message(err), "The platform database could not be read."))
+			"status", "refused", "error", telemetry.RedactMessage(or(Message(err), "The platform database could not be read.")))
 		return Attempt{}, err
 	}
 	slog.InfoContext(ctx, "migration recovery started", "event", "migration.recovery.start", "database", r.DatabaseID,
@@ -267,7 +268,7 @@ func (s *Service) finishRecovery(ctx context.Context, batches BatchRunner, a Att
 	}
 	slog.Log(ctx, level, "migration recovery finished", "event", "migration.recovery.result", "database", r.DatabaseID,
 		"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", a.ID, "operation", string(r.Operation), "actor", r.RequestedBy,
-		"status", string(a.Status), "error", a.Error)
+		"status", string(a.Status), "detail", telemetry.RedactMessage(a.Error))
 	return a, outcome(a)
 }
 
