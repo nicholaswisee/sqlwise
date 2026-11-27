@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -314,9 +315,7 @@ func targetMessage(ctx context.Context, err error) string {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		message := pgErr.Message
-		if len(message) > 500 {
-			message = message[:500] + "…"
-		}
+		message = clip(message, 500)
 		return fmt.Sprintf("%s (SQLSTATE %s).", message, pgErr.Code)
 	}
 	var myErr *mysql.MySQLError
@@ -325,13 +324,18 @@ func targetMessage(ctx context.Context, err error) string {
 		if myErr.Number == 1062 {
 			message = "Duplicate entry for a unique key"
 		}
-		if len(message) > 500 {
-			message = message[:500] + "…"
-		}
+		message = clip(message, 500)
 		return fmt.Sprintf("%s (MySQL error %d).", message, myErr.Number)
 	}
 	if errors.Is(err, ErrTargetUnavailable) {
 		return "the target connection is unavailable."
 	}
 	return "the target reported an error."
+}
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + "…"
 }

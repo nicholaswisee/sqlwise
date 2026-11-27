@@ -240,7 +240,7 @@ func (s *Store) requeue(ctx context.Context, jobID, worker string, previous Stat
 func (s *Store) release(ctx context.Context, jobID, worker string, attempts int, delay time.Duration, message string) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `WITH delivery AS (`+closeDelivery("'requeued'")+`)
 		UPDATE jobs SET status='queued', effect='none', attempts=$3, next_run_at=now() + make_interval(secs => $4),
-		error_message=$5, finished_at=NULL, claimed_by=NULL, lease_until=NULL, updated_at=now()
+		error_message=$5, started_at=NULL, finished_at=NULL, claimed_by=NULL, lease_until=NULL, updated_at=now()
 		WHERE id=$1 AND claimed_by=$2 AND status='running'`, jobID, worker, attempts, delay.Seconds(), nullable(clip(message)))
 	return tag.RowsAffected() == 1, err
 }

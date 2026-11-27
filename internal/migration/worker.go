@@ -198,9 +198,7 @@ func (s *Service) RecordRefusal(ctx context.Context, requestID, reason string) (
 	if reason == "" {
 		reason = "The execution ended before any SQL ran."
 	}
-	if len(reason) > 2000 {
-		reason = reason[:2000]
-	}
+	reason = clip(reason, 1999)
 	now := s.now().UTC()
 	a := Attempt{ID: r.ExecutionID, DatabaseID: r.DatabaseID, MigrationID: r.MigrationID, MigrationTitle: d.Title, Operation: r.Operation,
 		RequestID: r.ID, CancelsExecutionID: r.CancelsExecutionID, DraftRevision: d.Revision, CandidateVersion: r.ExpectedVersion + 1,

@@ -915,7 +915,7 @@ func TestJobQueuedBehindADeadBatchRunWaitsInsteadOfBlocking(t *testing.T) {
 		t.Fatalf("dead batch job = %+v", done)
 	}
 	waiting := jobstest.Wait(t, f.store, "db", queued.ID, 10*time.Second, func(j jobs.Job) bool { return j.Status != jobs.Running })
-	if waiting.Status != jobs.Queued || waiting.Effect != jobs.EffectNone || waiting.Attempts != 0 {
+	if waiting.Status != jobs.Queued || waiting.Effect != jobs.EffectNone || waiting.Attempts != 0 || waiting.StartedAt != nil {
 		t.Fatalf("job behind the batch = %+v; it must wait without blocking", waiting)
 	}
 	if _, found := f.attemptMaybe(t, queued.ExecutionID); found {
