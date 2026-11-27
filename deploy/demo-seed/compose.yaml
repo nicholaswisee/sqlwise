@@ -1,0 +1,68 @@
+name: sqlwise-demo-seed
+
+services:
+  app:
+    environment:
+      APP_ENV: development
+    ports: !override
+      - "127.0.0.1:18083:8080"
+
+  postgres:
+    ports: !override []
+
+  target:
+    environment:
+      POSTGRES_DB: postgres
+    ports: !override []
+    volumes: !override
+      - target_data:/var/lib/postgresql/data
+      - ./deploy/demo-seed/postgres.sql:/docker-entrypoint-initdb.d/01-demo.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -h 127.0.0.1 -U target_owner -d shipment_archive &&
+          PGPASSWORD=$${POSTGRES_PASSWORD} psql -h 127.0.0.1 -U target_owner
+          -d shipment_archive -Atqc
+          "SELECT to_regclass('public.shipments') IS NOT NULL" | grep -qx t
+
+  mysql:
+    profiles: !override []
+    environment:
+      MYSQL_DATABASE: stock_catalog
+    ports: !override []
+    volumes: !override
+      - mysql_data:/var/lib/mysql
+      - ./deploy/demo-seed/mysql.sql:/docker-entrypoint-initdb.d/01-demo.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          MYSQL_PWD=$${MYSQL_PASSWORD} mysql -N -h 127.0.0.1 -u sqlwise_target
+          stock_catalog -e "SELECT EXISTS (SELECT 1 FROM information_schema.tables
+          WHERE table_schema = DATABASE() AND table_name = 'stock_levels')"
+          | grep -qx 1
+
+  seed:
+    image: python:3.13-alpine
+    working_dir: /demo
+    volumes:
+      - ./deploy/demo-seed:/demo:ro
+      - state:/state
+    command: ["python", "-B", "/demo/seed.py"]
+    environment:
+      SQLWISE_ADMIN_USERNAME: ${SQLWISE_ADMIN_USERNAME:-admin}
+      SQLWISE_ADMIN_PASSWORD: ${SQLWISE_ADMIN_PASSWORD:-SqlwiseAdminLocal2026!}
+      SQLWISE_DEMO_PASSWORD: ${SQLWISE_DEMO_PASSWORD:-}
+    depends_on:
+      app:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+      target:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+volumes:
+  state:

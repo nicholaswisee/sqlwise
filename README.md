@@ -70,6 +70,36 @@ These are application credentials, not database credentials. Existing administra
 
 Use `docker compose logs -f app` for logs, `docker compose up -d --build` after source changes, and `docker compose down` to stop the stack without removing database volumes. The image builds the SPA with Node and serves its static client from Go; no Node application server runs in production.
 
+### Seed a disposable demo
+
+The optional demo project sets up five logistics databases (four PostgreSQL and one MySQL), named users and groups, and ready-to-try migration requests. The real SQLwise worker applies the two starter migrations on Billing Ledger; the other requests are left for the demo. This seed is separate from the default app and the k6 benchmark.
+
+From the repository root, with Docker Compose 2.24.4 or later, OpenSSL, and local port `18083` free:
+
+```sh
+export SQLWISE_ADMIN_USERNAME=admin
+export SQLWISE_ADMIN_PASSWORD="$(openssl rand -hex 24)"
+export SQLWISE_DEMO_PASSWORD="$(openssl rand -hex 24)"
+docker compose -p sqlwise-demo-seed -f compose.yaml -f deploy/demo-seed/compose.yaml run --build --rm seed
+```
+
+After the seeder succeeds, open <http://localhost:18083/login>. Sign in as `nadia.pratama` with `SQLWISE_DEMO_PASSWORD` to start on Delivery Orders, or as `admin` with `SQLWISE_ADMIN_PASSWORD` to manage the demo. All non-admin demo users share the supplied demo password. Keep the original passwords for this project. To rerun, repeat the Compose command without generating new passwords; it does not duplicate records or revert progress.
+
+To verify the starting state before trying the scenarios, run the smoke test against the fresh demo:
+
+```sh
+docker compose -p sqlwise-demo-seed -f compose.yaml -f deploy/demo-seed/compose.yaml \
+  run --rm --no-deps -e SQLWISE_VERIFY_DEMO=1 seed python -B -m unittest -v
+```
+
+To collect telemetry for this project, add `-f deploy/observability/compose.yaml` before `run` and use the same Compose files for subsequent operations. Free its host ports first; don't start a second observability stack on the same ports.
+
+If the seed is interrupted after it starts making changes, or you want to replay from the original state, remove **only** the disposable demo project and rerun the setup command. **`-v` permanently deletes this project's demo data and migration history.** If you enabled the observability overlay, include it in the teardown command too.
+
+```sh
+docker compose -p sqlwise-demo-seed -f compose.yaml -f deploy/demo-seed/compose.yaml down -v
+```
+
 ## Run manually
 
 Install the Go version in `go.mod`, a C compiler, Node.js, and Vite+ (`vp`). Use a POSIX shell. Start the databases and create the platform administrator once:
