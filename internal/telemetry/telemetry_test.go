@@ -3,6 +3,7 @@ package telemetry
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log"
 	"log/slog"
 	"net/http"
@@ -173,5 +174,76 @@ func TestSQLLogCarriesContextFields(t *testing.T) {
 				t.Errorf("%s misses %s", line, expected)
 			}
 		}
+	}
+}
+
+func TestAuditActionNamesEveryMutatingAPIRoute(t *testing.T) {
+	for _, tc := range []struct{ method, route, want string }{
+		{http.MethodPost, "/api/v1/auth/login", "auth.login"},
+		{http.MethodPost, "/api/v1/auth/logout", "auth.logout"},
+		{http.MethodPost, "/api/v1/admin/users", "admin.users.create"},
+		{http.MethodPost, "/api/v1/admin/users/:id", "admin.users.update"},
+		{http.MethodPost, "/api/v1/admin/users/:id/disable", "admin.users.disable"},
+		{http.MethodPost, "/api/v1/admin/users/:id/admin", "admin.users.platform_admin"},
+		{http.MethodPost, "/api/v1/admin/groups/:id/leader", "admin.groups.leader"},
+		{http.MethodPost, "/api/v1/admin/groups/:id/members", "admin.groups.members.add"},
+		{http.MethodPost, "/api/v1/admin/groups/:id/members/remove", "admin.groups.members.remove"},
+		{http.MethodPost, "/api/v1/admin/groups/:id/databases", "admin.groups.databases.grant"},
+		{http.MethodPost, "/api/v1/admin/groups/:id/databases/remove", "admin.groups.databases.revoke"},
+		{http.MethodPost, "/api/v1/admin/databases", "admin.databases.create"},
+		{http.MethodPost, "/api/v1/admin/databases/:id/test", "admin.databases.test"},
+		{http.MethodPost, "/api/v1/databases/:databaseID/migrations", "databases.migrations.create"},
+		{http.MethodPatch, "/api/v1/databases/:databaseID/migrations/:migrationID", "databases.migrations.update"},
+		{http.MethodPost, "/api/v1/databases/:databaseID/migrations/:migrationID/requests", "databases.migrations.requests.create"},
+		{http.MethodPost, "/api/v1/databases/:databaseID/requests/:requestID/submit", "databases.requests.submit"},
+		{http.MethodPost, "/api/v1/databases/:databaseID/requests/:requestID/approve", "databases.requests.approve"},
+		{http.MethodPost, "/api/v1/databases/:databaseID/requests/:requestID/reject", "databases.requests.reject"},
+		{http.MethodPost, "/api/v1/databases/:databaseID/migrations/:migrationID/execute", "databases.migrations.execute"},
+		{http.MethodGet, "/api/v1/databases/:databaseID/jobs", ""},
+		{http.MethodPost, "/login", ""},
+		{http.MethodPost, "", ""},
+	} {
+		if got := auditAction(tc.method, tc.route); got != tc.want {
+			t.Errorf("auditAction(%s %s) = %q, want %q", tc.method, tc.route, got, tc.want)
+		}
+	}
+}
+
+func TestHTTPMiddlewareAuditsMutationsWithActorTargetsAndOutcome(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	router := gin.New()
+	router.Use(HTTPMiddleware())
+	withActor := func(c *gin.Context) { c.Request = c.Request.WithContext(WithActor(c.Request.Context(), "user-1")) }
+	router.POST("/api/v1/databases/:databaseID/requests/:requestID/approve", withActor, func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.POST("/api/v1/databases/:databaseID/requests/:requestID/reject", withActor, func(c *gin.Context) { c.Status(http.StatusForbidden) })
+	router.GET("/api/v1/databases/:databaseID/jobs", withActor, func(c *gin.Context) { c.Status(http.StatusOK) })
+	for _, path := range []string{"/api/v1/databases/db-1/requests/req-1/approve", "/api/v1/databases/db-1/requests/req-2/reject"} {
+		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"password":"body-canary"}`)))
+	}
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/databases/db-1/jobs", nil))
+	var audits []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("log line is not JSON: %s", line)
+		}
+		if entry["event"] == "audit" {
+			audits = append(audits, entry)
+		}
+	}
+	if len(audits) != 2 || strings.Contains(output.String(), "body-canary") {
+		t.Fatalf("audit lines = %v\n%s", audits, output.String())
+	}
+	approve, reject := audits[0], audits[1]
+	if approve["action"] != "databases.requests.approve" || approve["outcome"] != "success" || approve["level"] != "INFO" ||
+		approve["actor"] != "user-1" || approve["database_id"] != "db-1" || approve["request_id"] != "req-1" || approve["correlation_id"] == "" {
+		t.Errorf("approve audit = %v", approve)
+	}
+	if reject["action"] != "databases.requests.reject" || reject["outcome"] != "denied" || reject["level"] != "WARN" || reject["request_id"] != "req-2" {
+		t.Errorf("reject audit = %v", reject)
 	}
 }
