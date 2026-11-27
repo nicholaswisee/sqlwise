@@ -16,6 +16,8 @@ import (
 type Authorizer interface {
 	EffectivePermission(ctx context.Context, userID, databaseID string) (access.Permission, error)
 	Require(ctx context.Context, userID, databaseID string, required access.Permission) error
+	// RequireTx checks the same access inside tx, without another connection.
+	RequireTx(ctx context.Context, tx pgx.Tx, userID, databaseID string, required access.Permission) error
 	// ApprovalPolicy reads the groups that must approve, with their leaders
 	// and members, holding the shared authorization lock in tx.
 	ApprovalPolicy(ctx context.Context, tx pgx.Tx, databaseID string) ([]access.ApprovalGroup, error)
@@ -58,6 +60,22 @@ func (s *Service) authorize(ctx context.Context, databaseID string, required acc
 		return "", access.ErrPermissionDenied
 	}
 	if err := s.authz.Require(ctx, userID, databaseID, required); err != nil {
+		return "", err
+	}
+	return userID, nil
+}
+
+// authorizeTx is authorize for callers that already hold a platform
+// transaction; it never takes a second pool connection.
+func (s *Service) authorizeTx(ctx context.Context, tx pgx.Tx, databaseID string, required access.Permission) (string, error) {
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		return "", auth.ErrSession
+	}
+	if !validID(databaseID) {
+		return "", access.ErrPermissionDenied
+	}
+	if err := s.authz.RequireTx(ctx, tx, userID, databaseID, required); err != nil {
 		return "", err
 	}
 	return userID, nil

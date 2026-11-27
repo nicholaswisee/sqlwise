@@ -3,6 +3,7 @@ package migrationrun_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -184,6 +185,39 @@ func TestEveryOperationIsQueuedWithItsOwnExecution(t *testing.T) {
 	}
 	if executions[0] == executions[1] || executions[1] == executions[2] || executions[0] == executions[2] {
 		t.Fatalf("executions %v must be distinct", executions)
+	}
+}
+
+// Enqueue authorizes inside its own platform transaction. Taking a second pool
+// connection for that check deadlocked once every connection held an enqueue.
+func TestConcurrentEnqueuesDoNotExhaustThePlatformPool(t *testing.T) {
+	f := newFlow(t)
+	n := int(f.p.Pool.Config().MaxConns) * 3
+	requests := make([]migration.Request, n)
+	for i := range requests {
+		table := fmt.Sprintf("w%d", i)
+		requests[i] = f.approved(t, f.define(t, table, "CREATE TABLE "+table+" (id int)", "DROP TABLE "+table), migration.OpUp)
+	}
+	ctx, cancel := context.WithTimeout(f.editor.Ctx, 15*time.Second)
+	defer cancel()
+	errs := make(chan error, n)
+	start := make(chan struct{})
+	for _, req := range requests {
+		go func() {
+			<-start
+			_, err := f.queue.Enqueue(ctx, "db", req.ID, "key-"+req.ID)
+			errs <- err
+		}()
+	}
+	close(start)
+	for range n {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent enqueue: %v", err)
+		}
+	}
+	var published int
+	if err := f.p.Pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs`).Scan(&published); err != nil || published != n {
+		t.Fatalf("%d of %d jobs published, %v", published, n, err)
 	}
 }
 

@@ -44,10 +44,25 @@ func (s *Service) EffectivePermission(ctx context.Context, userID, databaseID st
 }
 
 func (s *Service) Require(ctx context.Context, userID, databaseID string, required Permission) error {
+	return pgx.BeginFunc(ctx, s.store.pool, func(tx pgx.Tx) error {
+		return s.RequireTx(ctx, tx, userID, databaseID, required)
+	})
+}
+
+// RequireTx is Require inside the caller's transaction, so a caller that
+// already holds a platform connection never waits for a second one.
+func (s *Service) RequireTx(ctx context.Context, tx pgx.Tx, userID, databaseID string, required Permission) error {
 	if required != View && required != Edit {
 		return ErrInvalidPermission
 	}
-	permission, err := s.EffectivePermission(ctx, userID, databaseID)
+	principal, err := s.sessions.ValidateContext(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if principal.UserID != userID {
+		return auth.ErrSession
+	}
+	permission, err := permissionFor(ctx, tx, userID, databaseID)
 	if err != nil {
 		return err
 	}
