@@ -3,7 +3,9 @@ package migration
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func committed(events ...[3]string) []Attempt {
@@ -114,5 +116,16 @@ func TestDefinitionInputAndHash(t *testing.T) {
 		if changed.DefinitionHash() == base.DefinitionHash() {
 			t.Errorf("hash ignores change %+v", changed)
 		}
+	}
+}
+
+func TestClipKeepsValidUTF8(t *testing.T) {
+	long := "x" + strings.Repeat("é", 400)
+	got := clip(long, 500)
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "…") || len(got) > 500+len("…") {
+		t.Fatalf("clip = %q (%d bytes)", got, len(got))
+	}
+	if clip("short", 500) != "short" {
+		t.Fatal("short messages must stay unchanged")
 	}
 }
