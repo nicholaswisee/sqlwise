@@ -82,6 +82,21 @@ func TestHTTPMiddlewareUsesRouteAndOmitsQueryString(t *testing.T) {
 	}
 }
 
+func TestHTTPRouteForTelemetryNormalizesLineSeparators(t *testing.T) {
+	for _, tc := range []struct {
+		route string
+		want  string
+	}{
+		{"/items/:id", "/items/:id"},
+		{"/items/\n:id\r", "/items/ :id "},
+		{"", ""},
+	} {
+		if got := safeHTTPRoute(tc.route); got != tc.want {
+			t.Errorf("safeHTTPRoute(%q) = %q, want %q", tc.route, got, tc.want)
+		}
+	}
+}
+
 func TestHTTPMiddlewareBoundsCustomMethodsInTelemetry(t *testing.T) {
 	mode := gin.Mode()
 	gin.SetMode(gin.TestMode)

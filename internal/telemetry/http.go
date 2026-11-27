@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -33,22 +34,27 @@ func HTTPMiddleware() gin.HandlerFunc {
 		c.Next()
 		status := c.Writer.Status()
 		method := normalizedHTTPMethod(c.Request.Method)
+		route := safeHTTPRoute(c.FullPath())
 		span.SetAttributes(attribute.String("http.request.method", method), attribute.Int("http.response.status_code", status))
-		if route := c.FullPath(); route != "" {
+		if route != "" {
 			span.SetName(method + " " + route)
 			span.SetAttributes(attribute.String("http.route", route))
 		}
 		if status >= 500 {
 			span.SetStatus(codes.Error, "server error")
 		}
-		recordHTTP(method, c.FullPath(), status, time.Since(start))
+		recordHTTP(method, route, status, time.Since(start))
 		traceID, spanID := "", ""
 		if sc := span.SpanContext(); sc.IsValid() {
 			traceID, spanID = sc.TraceID().String(), sc.SpanID().String()
 		}
 		slog.InfoContext(ctx, "http request", "event", "http.request", "method", method,
-			"route", c.FullPath(), "status", strconv.Itoa(status), "duration_ms", time.Since(start).Milliseconds(),
+			"route", route, "status", strconv.Itoa(status), "duration_ms", time.Since(start).Milliseconds(),
 			"actor", Actor(c.Request.Context()), "correlation_id", correlationID, "trace_id", traceID, "span_id", spanID)
 		span.End()
 	}
+}
+
+func safeHTTPRoute(route string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(route, "\r", " "), "\n", " ")
 }

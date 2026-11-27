@@ -326,16 +326,32 @@ func (h *mysqlHandle) readTable(ctx context.Context, req TableRequest) (TablePag
 	if req.Table.Schema != h.database {
 		return page, fail(ErrNotFound, "Table not found.")
 	}
-	var found int
-	err := h.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE'`,
-		req.Table.Schema, req.Table.Name).Scan(&found)
+	rows, err := h.db.QueryContext(ctx, `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE'`,
+		h.database, req.Table.Name)
 	if err != nil {
 		return page, err
 	}
-	if found == 0 {
-		return page, fail(ErrNotFound, "Table not found.")
+	var tableNames []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return page, err
+		}
+		tableNames = append(tableNames, name)
 	}
-	rows, err := h.db.QueryContext(ctx, `SELECT COLUMN_NAME, COLUMN_TYPE, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`, req.Table.Schema, req.Table.Name)
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return page, err
+	}
+	if err := rows.Close(); err != nil {
+		return page, err
+	}
+	tableName, err := mysqlUniqueMetadataName(tableNames)
+	if err != nil {
+		return page, err
+	}
+	rows, err = h.db.QueryContext(ctx, `SELECT COLUMN_NAME, COLUMN_TYPE, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`, h.database, tableName)
 	if err != nil {
 		return page, err
 	}
@@ -353,7 +369,7 @@ func (h *mysqlHandle) readTable(ctx context.Context, req TableRequest) (TablePag
 	if err := rows.Err(); err != nil {
 		return page, err
 	}
-	rows, err = h.db.QueryContext(ctx, `SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' ORDER BY ORDINAL_POSITION`, req.Table.Schema, req.Table.Name)
+	rows, err = h.db.QueryContext(ctx, `SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' ORDER BY ORDINAL_POSITION`, h.database, tableName)
 	if err != nil {
 		return page, err
 	}
@@ -378,7 +394,7 @@ func (h *mysqlHandle) readTable(ctx context.Context, req TableRequest) (TablePag
 			exprs[i] = "LEFT(CAST(" + my.Quote(c.Name) + " AS CHAR), " + strconv.Itoa(MaxCellBytes+1) + ")"
 		}
 	}
-	query := "SELECT " + strings.Join(exprs, ", ") + " FROM " + my.Qualify(req.Table.Schema, req.Table.Name)
+	query := "SELECT " + strings.Join(exprs, ", ") + " FROM " + my.Qualify(h.database, tableName)
 	if len(key) > 0 {
 		query += " ORDER BY " + strings.Join(key, ", ")
 		page.Ordered = true
@@ -403,4 +419,15 @@ func (h *mysqlHandle) readTable(ctx context.Context, req TableRequest) (TablePag
 		}
 	}
 	return page, rows.Err()
+}
+
+func mysqlUniqueMetadataName(names []string) (string, error) {
+	switch len(names) {
+	case 0:
+		return "", fail(ErrNotFound, "Table not found.")
+	case 1:
+		return names[0], nil
+	default:
+		return "", fail(ErrConflict, "Table metadata is ambiguous.")
+	}
 }

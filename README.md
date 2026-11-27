@@ -49,7 +49,7 @@ These statuses describe what shipped in Milestone 1.
 | ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Observability     | Partial          | [Collector, Prometheus, and Grafana configuration](deploy/observability/) is included. The provisioned dashboard covers the API and platform database pool; queue and migration panels are not included. |
 | k6 stress testing | Fixtures only    | [`cmd/k6fixture`](cmd/k6fixture/) prepares approved requests. No k6 workload or staged stress-test results are included.                                                                                 |
-| CodeQL SAST       | Scanning enabled | The [CodeQL workflow](.github/workflows/codeql.yml) scans Go and JavaScript/TypeScript. Findings triage is not documented.                                                                               |
+| CodeQL SAST       | Scanning enabled | The [CodeQL workflow](.github/workflows/codeql.yml) scans Go and JavaScript/TypeScript. See the [finding register and scan evidence](docs/codeql/README.md).                                             |
 
 The separate early-submission bonus depends on the submission time and is not claimed here.
 
