@@ -158,3 +158,20 @@ func TestTraceContextRoundTrip(t *testing.T) {
 		t.Fatal("trace ID changed across queue propagation")
 	}
 }
+
+func TestSQLLogCarriesContextFields(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	ctx := WithLogFields(WithLogFields(context.Background(), "database", "db-1"), "job_id", "job-1")
+	tracer := PGXTracer{}
+	tracer.TraceQueryEnd(tracer.TraceQueryStart(ctx, nil, pgx.TraceQueryStartData{SQL: "SELECT 1"}), nil, pgx.TraceQueryEndData{})
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		for _, expected := range []string{`"database":"db-1"`, `"job_id":"job-1"`} {
+			if !strings.Contains(line, expected) {
+				t.Errorf("%s misses %s", line, expected)
+			}
+		}
+	}
+}

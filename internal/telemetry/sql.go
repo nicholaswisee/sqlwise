@@ -61,10 +61,11 @@ func logSQL(ctx context.Context, event string, state queryState, status string, 
 	if sc := state.span.SpanContext(); sc.IsValid() {
 		traceID, spanID = sc.TraceID().String(), sc.SpanID().String()
 	}
-	slog.InfoContext(ctx, "sql statement", "event", event, "actor", Actor(ctx),
+	args := []any{"event", event, "actor", Actor(ctx),
 		"correlation_id", Correlation(ctx), "trace_id", traceID, "span_id", spanID,
 		"query", state.query, "sql_hash", state.hash, "status", status,
-		"duration_ms", time.Since(state.start).Milliseconds(), "rows", rows, "sqlstate", sqlstate)
+		"duration_ms", time.Since(state.start).Milliseconds(), "rows", rows, "sqlstate", sqlstate}
+	slog.InfoContext(ctx, "sql statement", append(args, logFields(ctx)...)...)
 }
 
 func RedactSQL(sql string) string {
