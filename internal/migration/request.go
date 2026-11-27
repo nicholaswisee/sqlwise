@@ -319,7 +319,8 @@ func (s *Service) Decide(ctx context.Context, databaseID, requestID, groupID str
 // request again returns its execution, so publication can be retried.
 // Edit required.
 func (s *Service) Consume(ctx context.Context, tx pgx.Tx, databaseID, requestID string) (Execution, error) {
-	if _, err := s.authorize(ctx, databaseID, access.Edit); err != nil {
+	// Check access on tx: the queue already holds a platform connection here.
+	if _, err := s.authorizeTx(ctx, tx, databaseID, access.Edit); err != nil {
 		return Execution{}, err
 	}
 	if !validID(requestID) {

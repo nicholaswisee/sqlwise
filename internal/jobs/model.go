@@ -105,6 +105,9 @@ type Outcome struct {
 	Message string
 	// Retryable marks a confirmed transient failure before any target write.
 	Retryable bool
+	// Deferred returns the job to the queue unchanged: nothing ran, no attempt
+	// is spent, and it no longer blocks its database.
+	Deferred bool
 }
 
 func Success() Outcome { return Outcome{Status: Succeeded, Effect: EffectCommitted} }
@@ -119,6 +122,10 @@ func Transient(message string) Outcome {
 
 func Unknown(message string) Outcome {
 	return Outcome{Status: Blocked, Effect: EffectUnknown, Message: message}
+}
+
+func Deferred(message string) Outcome {
+	return Outcome{Status: Queued, Effect: EffectNone, Message: message, Deferred: true}
 }
 
 func Partial(message string) Outcome {

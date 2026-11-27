@@ -42,10 +42,10 @@ These statuses describe what shipped in Milestone 1.
 ## Milestone 2 workflow
 
 - **Responsive SPA.** The same Go JSON API powers sign-in, administration, exploration, and the migration workflow.
-- **Rollback, forward, and history.** Define SQL up and down, or mark a migration irreversible with a reason. Roll back the latest active reversible migration and reapply changes in order. The committed history is separate from attempts; **Hide rollbacks** filters out canceled execution pairs without deleting them.
+- **Rollback, forward, and history.** Define SQL up and down, or mark a migration irreversible with a reason. Roll back the latest active reversible migration and reapply changes in order. Committed history is separate from [execution attempts](jobs.md#workflow-and-worker-behavior); **Hide rollbacks** filters out canceled pairs without deleting them.
 - **Review and approval.** The leader of each group with view or edit access to the database must approve the request. This also applies to rollback and forward requests.
 - **Asynchronous execution.** The API queues approved requests; the worker executes them. The Jobs page shows progress, and checkpointed batches can be resumed or compensated after review. See [Migration jobs and recovery](jobs.md).
-- **Logging and tracing.** Structured Go logs and OpenTelemetry traces connect API requests, jobs, worker activity, and database operations. See [Local observability](../deploy/observability/README.md).
+- **Logging, tracing, and audit.** Structured JSON logs and OpenTelemetry traces connect API requests, jobs, and SQL on PostgreSQL and MySQL. State-changing API calls emit an `audit` event with the actor, targets, and outcome. See the [event reference and samples](observability/logging-and-tracing.md) or [local Grafana setup](../deploy/observability/README.md).
 
 Reviewed execution in Milestone 2 is PostgreSQL-only. MySQL connections, browsing, and existing migration records remain available. There is no synchronous MySQL fallback for reviewed execution.
 

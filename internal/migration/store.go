@@ -58,7 +58,7 @@ func (s *Store) databaseName(ctx context.Context, databaseID string) (string, er
 const draftColumns = `d.id, d.database_id, d.title, d.sql_text, COALESCE(d.sql_down, ''), COALESCE(d.irreversible_reason, ''), d.dialect, d.revision,
 	d.created_by, cu.username, d.updated_by, uu.username, d.created_at, d.updated_at,
 	COALESCE((SELECT a.applied_version FROM migration_attempts a WHERE a.migration_id=d.id AND a.status='succeeded' AND a.operation='up'), 0),
-	COALESCE((SELECT a.status FROM migration_attempts a WHERE a.migration_id=d.id ORDER BY a.seq DESC LIMIT 1), ''),
+	COALESCE((SELECT a.status FROM migration_attempts a WHERE a.migration_id=d.id AND a.status<>'refused' ORDER BY a.seq DESC LIMIT 1), ''),
 	d.batch_spec, COALESCE(d.batch_size, 0)`
 
 const draftFrom = ` FROM migration_drafts d JOIN users cu ON cu.id=d.created_by JOIN users uu ON uu.id=d.updated_by`
@@ -225,6 +225,19 @@ func (s *Store) insertAttempt(ctx context.Context, q execer, a Attempt) error {
 		a.ID, a.DatabaseID, a.MigrationID, string(a.Operation), nullable(a.RequestID), nullable(a.CancelsExecutionID), a.DraftRevision, a.CandidateVersion,
 		a.SQL, a.SQLHash, string(a.Dialect), a.StatementCount, a.ExecutorID, a.StartedAt, attemptMode(a.Batch))
 	return err
+}
+
+// insertRefusal records a finished refused execution once; a later call for
+// the same execution or request, or after a real attempt, changes nothing.
+func (s *Store) insertRefusal(ctx context.Context, a Attempt) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `INSERT INTO migration_attempts
+		(id, database_id, migration_id, operation, request_id, cancels_execution_id, draft_revision, candidate_version,
+		sql_text, sql_sha256, dialect, statement_count, executor_id, status, error_message, started_at, finished_at, mode)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'refused', $14, $15, $15, $16)
+		ON CONFLICT DO NOTHING`,
+		a.ID, a.DatabaseID, a.MigrationID, string(a.Operation), nullable(a.RequestID), nullable(a.CancelsExecutionID), a.DraftRevision, a.CandidateVersion,
+		a.SQL, a.SQLHash, string(a.Dialect), a.StatementCount, a.ExecutorID, a.Error, a.StartedAt, attemptMode(a.Batch))
+	return err == nil && tag.RowsAffected() == 1, err
 }
 
 // finish records an outcome for a running or unknown attempt; it is a no-op

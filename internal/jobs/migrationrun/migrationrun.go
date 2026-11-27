@@ -8,12 +8,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"sqlwise/internal/access"
 	"sqlwise/internal/database"
 	"sqlwise/internal/jobs"
 	"sqlwise/internal/migration"
+	"sqlwise/internal/telemetry"
 )
 
 // Consumer consumes approved requests through the migration domain.
@@ -39,6 +41,17 @@ func (r Runner) Run(ctx context.Context, gate *database.Gate, job jobs.Job, prog
 	a, err := r.Service.RunWith(ctx, Target(gate), Batches(gate, progress), job.RequestID)
 	return classify(job, a, err)
 }
+
+// RecordFailure keeps a refused history entry for a job that failed before
+// its execution recorded an attempt; recorded executions are left alone.
+func (r Runner) RecordFailure(ctx context.Context, job jobs.Job, message string) {
+	if _, err := r.Service.RecordRefusal(ctx, job.RequestID, message); err != nil {
+		slog.WarnContext(ctx, "refused execution not recorded", "event", "migration.execution.refusal_unrecorded",
+			"database", job.DatabaseID, "job_id", job.ID, "execution_id", job.ExecutionID, "error", telemetry.RedactMessage(err.Error()))
+	}
+}
+
+var _ jobs.FailureRecorder = Runner{}
 
 // Batches runs batch templates and their compensation on the gate session.
 func Batches(gate *database.Gate, progress jobs.Progress) migration.BatchRunner {
@@ -131,6 +144,10 @@ func classify(job jobs.Job, a migration.Attempt, err error) jobs.Outcome {
 		return jobs.Success()
 	case errors.Is(err, migration.ErrRecoveryRequired) && ownPartial:
 		return jobs.Partial(or(a.Error, message))
+	case errors.Is(err, migration.ErrBatchPending) && a.ID == "":
+		// Nothing of this job ran; blocking it would stop the batch's own job
+		// from being claimed to settle the ledger.
+		return jobs.Deferred(or(message, "Waiting for another execution's batch run to settle."))
 	case errors.Is(err, migration.ErrOutcomeUnknown):
 		return jobs.Unknown(message)
 	case errors.Is(err, migration.ErrTargetUnavailable) && a.ID != "":

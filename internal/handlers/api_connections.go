@@ -120,7 +120,7 @@ func (h *ConnectionAdmin) apiDetailData(c *gin.Context, id string) (apiConnectio
 		d.Capabilities = append(d.Capabilities, apiConnectionCapability{v.Name, v.Supported})
 	}
 	if x.DBMS == database.PostgreSQL {
-		d.ReceiptSQL = database.ReceiptSetupSQL(x.Username)
+		d.ReceiptSQL = database.TargetSetupSQL(x.Username)
 	}
 	return d, nil
 }
@@ -159,6 +159,7 @@ func (h *ConnectionAdmin) apiCreate(c *gin.Context) {
 		apiConnectionFailure(c, err)
 		return
 	}
+	audit(c, "created_id", reg.ID)
 	if !h.apiFresh(c) {
 		return
 	}

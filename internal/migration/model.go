@@ -33,6 +33,10 @@ const (
 	// StatusPartiallyReverted is an interrupted compensation: only a further
 	// compensation may settle it, never a resume over reverted batches.
 	StatusPartiallyReverted Status = "partially_reverted"
+	// StatusRefused records an execution that ended before any SQL reached the
+	// target (stale head, revoked access, changed approvals, unreachable
+	// target). It is history, but it never freezes the definition.
+	StatusRefused Status = "refused"
 )
 
 // Operation is what an execution does with a migration: up applies it the
@@ -76,6 +80,10 @@ var (
 	// ErrCommitUnknown must be wrapped by TargetTx.Commit when the commit
 	// request may have reached the target but no reply confirmed it.
 	ErrCommitUnknown = errors.New("commit outcome unknown")
+	// ErrBatchPending is an unknown outcome that belongs to another
+	// execution's batch run: only that execution's own delivery can settle it,
+	// so a caller with nothing recorded should wait rather than block.
+	ErrBatchPending = fmt.Errorf("another execution's batch run is unsettled: %w", ErrOutcomeUnknown)
 )
 
 type Error struct {

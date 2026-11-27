@@ -36,7 +36,7 @@ Find **SQLWise API** in Grafana's **SQLWise** folder.
 
 The provisioned dashboard currently has 12 panels: four API/platform-pool panels and panels for job status, queue and lock wait, migration execution, retries, committed batches, and target-pool connections/acquisition wait. These worker-backed panels require the worker to be running and emitting observations; no data before observations is not proof of a broken scrape. The dashboard is not an exhaustive view of every exported metric.
 
-SQL literals and comments are masked before telemetry is emitted; query arguments and driver error text are not exported. Logs carry `correlation_id`, `trace_id`, and `span_id`; API request logs also include `method`, `route`, `status`, and `duration_ms`. `route` is the registered route pattern, not the raw URL or query string. SQL log events are `sql.start` and `sql.result`; these include the SQL fingerprint hash, rather than raw SQL text.
+SQL events include masked SQL, a fingerprint hash, and parameter types instead of values. SQL failures can include a masked server message. State-changing API calls also emit an `audit` event. See [Logging, tracing, and audit](../../docs/observability/logging-and-tracing.md) for event fields, masking rules, and sample output.
 
 ## Verify locally
 

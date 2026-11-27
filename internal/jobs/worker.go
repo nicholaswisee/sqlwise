@@ -31,6 +31,14 @@ type Runner interface {
 	Run(ctx context.Context, gate *database.Gate, job Job, progress Progress) Outcome
 }
 
+// FailureRecorder is an optional Runner extension. The worker calls it once a
+// job fails for good, including failures before the runner ever ran (gate
+// refused, target unreachable after every retry), so the domain can keep a
+// history entry for executions that never reached the target.
+type FailureRecorder interface {
+	RecordFailure(ctx context.Context, job Job, message string)
+}
+
 type Config struct {
 	// ID names this worker in claims; a stable ID lets a restart reclaim at once.
 	ID          string
@@ -141,12 +149,14 @@ claiming:
 func (w *Worker) deliver(base context.Context, c claimed) {
 	ctx := telemetry.ExtractTrace(base, c.Trace)
 	ctx = telemetry.WithCorrelation(telemetry.WithActor(ctx, c.ActorID), c.ID)
+	ctx = telemetry.WithLogFields(ctx, "database", c.DatabaseID, "job_id", c.ID, "migration_id", c.MigrationID,
+		"execution_id", c.ExecutionID, "operation", c.Operation, "attempt", c.Attempts+1)
 	ctx, span := w.tracer.Start(ctx, "job.run", trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(
 		attribute.String("sqlwise.job.id", c.ID), attribute.String("sqlwise.execution.id", c.ExecutionID),
 		attribute.String("sqlwise.job.operation", c.Operation), attribute.String("sqlwise.database.id", c.DatabaseID),
 		attribute.String("sqlwise.delivery.id", c.delivery)))
 	defer span.End()
-	log := slog.With("job_id", c.ID, "delivery_id", c.delivery, "request_id", c.RequestID, "execution_id", c.ExecutionID, "database", c.DatabaseID,
+	log := slog.With("job_id", c.ID, "delivery_id", c.delivery, "request_id", c.RequestID, "execution_id", c.ExecutionID, "migration_id", c.MigrationID, "database", c.DatabaseID,
 		"operation", c.Operation, "actor", c.ActorID, "worker", w.cfg.ID, "correlation_id", c.ID)
 	if sc := span.SpanContext(); sc.IsValid() {
 		log = log.With("trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
@@ -269,6 +279,14 @@ func (w *Worker) run(ctx context.Context, gate *database.Gate, c claimed, log *s
 // settle applies the retry policy and records the outcome.
 func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int, log *slog.Logger) {
 	ctx = context.WithoutCancel(ctx)
+	if o.Deferred {
+		jobDeferrals.WithLabelValues("batch_pending").Inc()
+		log.InfoContext(ctx, "job deferred", "event", "job.deferred", "reason", "batch_pending", "delay_ms", w.cfg.Defer.Milliseconds(), "error", telemetry.RedactMessage(o.Message))
+		if ok, err := w.store.release(ctx, c.ID, w.cfg.ID, c.Attempts, w.cfg.Defer, o.Message); err != nil || !ok {
+			log.WarnContext(ctx, "job claim lost before requeue", "event", "job.claim_lost")
+		}
+		return
+	}
 	if o.Retryable && c.previous == Blocked {
 		w.requeue(ctx, c, attempts, w.cfg.Recheck, "", "unavailable", log)
 		return
@@ -276,12 +294,15 @@ func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int,
 	if o.Retryable && o.Effect == EffectNone && attempts < c.MaxAttempts {
 		delay := w.cfg.Backoff[attempts-1]
 		jobRetries.WithLabelValues(operationLabel(c.Operation)).Inc()
-		log.WarnContext(ctx, "job retry scheduled", "event", "job.retry", "attempt", attempts, "delay_ms", delay.Milliseconds(), "error", o.Message)
+		log.WarnContext(ctx, "job retry scheduled", "event", "job.retry", "attempt", attempts, "delay_ms", delay.Milliseconds(), "error", telemetry.RedactMessage(o.Message))
 		w.requeue(ctx, c, attempts, delay, o.Message, "", log)
 		return
 	}
 	if o.Retryable {
 		o = Failure(fmt.Sprintf("%s Gave up after %d attempts.", o.Message, attempts))
+	}
+	if recorder, ok := w.runner.(FailureRecorder); ok && o.Status == Failed {
+		recorder.RecordFailure(ctx, c.Job, o.Message)
 	}
 	ok, err := w.store.finish(ctx, c.ID, w.cfg.ID, o, attempts, w.cfg.Recheck)
 	if err != nil || !ok {
@@ -297,7 +318,7 @@ func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int,
 		level = slog.LevelWarn
 	}
 	log.Log(ctx, level, "job finished", "event", "job.finished", "status", string(o.Status), "effect", string(o.Effect),
-		"attempt", attempts, "error", o.Message)
+		"attempt", attempts, "error", telemetry.RedactMessage(o.Message))
 }
 
 func (w *Worker) requeue(ctx context.Context, c claimed, attempts int, delay time.Duration, message, reason string, log *slog.Logger) {

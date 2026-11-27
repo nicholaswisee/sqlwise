@@ -8,7 +8,8 @@ Approved executions are queued durably and run by `cmd/worker`, never inside an 
 
 - One worker at a time holds a target's execution gate (a session advisory lock on a dedicated target connection) for the whole job, so the same database is serialized, including between batch commits, while different databases run in parallel.
 - Confirmed transient failures before any target write are retried at most 3 times in total, after 1 s and 2 s. SQL, access and stale-request failures are final.
-- A batch migration ("Run as checkpointed batches") commits each batch with its checkpoint and saved row values in one target transaction. If it stops after committing only some batches, those changes stay and later jobs on that database wait for recovery. An approved **resume** finishes the migration so it can enter committed history; an approved **compensate** restores saved values newest batch first and stops rather than overwrite rows changed since.
+- Migration history records successful executions and failed SQL attempts. If the worker ultimately refuses an execution before SQL runs, such as when the database version is stale, approvals change, access is revoked, or the target stays unreachable, history records it as `refused`. A refusal does not freeze the migration's SQL.
+- A batch migration ("Run as checkpointed batches") commits each batch with its checkpoint and saved row values in one target transaction. If it stops after committing only some batches, those changes stay. Later jobs on that database stay queued without using an attempt while they wait for recovery. An approved **resume** finishes the migration so it can enter committed history; an approved **compensate** restores saved values newest batch first and stops rather than overwrite rows changed since.
 
 ## Worker settings
 

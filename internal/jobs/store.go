@@ -234,6 +234,17 @@ func (s *Store) requeue(ctx context.Context, jobID, worker string, previous Stat
 	return tag.RowsAffected() == 1, err
 }
 
+// release returns a job that ran nothing to the queue as not yet started,
+// clearing a block or unknown effect it was wrongly given, without spending
+// an attempt.
+func (s *Store) release(ctx context.Context, jobID, worker string, attempts int, delay time.Duration, message string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `WITH delivery AS (`+closeDelivery("'requeued'")+`)
+		UPDATE jobs SET status='queued', effect='none', attempts=$3, next_run_at=now() + make_interval(secs => $4),
+		error_message=$5, finished_at=NULL, claimed_by=NULL, lease_until=NULL, updated_at=now()
+		WHERE id=$1 AND claimed_by=$2 AND status='running'`, jobID, worker, attempts, delay.Seconds(), nullable(clip(message)))
+	return tag.RowsAffected() == 1, err
+}
+
 // progress projects durable target progress onto the job for polling.
 func (s *Store) progress(ctx context.Context, jobID, worker string, batches, rows int64, total *int64) error {
 	_, err := s.pool.Exec(ctx, `UPDATE jobs SET committed_batches=$3, committed_rows=$4, total_rows=$5, updated_at=now()

@@ -19,3 +19,7 @@ GRANT USAGE ON SCHEMA ` + InternalSchema + ` TO ` + role + `;
 GRANT SELECT, INSERT ON ` + InternalSchema + `.migration_receipts TO ` + role + `;
 `
 }
+
+func TargetSetupSQL(migrationRole string) string {
+	return ReceiptSetupSQL(migrationRole) + "\n" + BatchSetupSQL(migrationRole)
+}

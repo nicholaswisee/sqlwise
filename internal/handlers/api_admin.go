@@ -152,7 +152,10 @@ func (h *AccessAdmin) apiCreateUser(c *gin.Context) {
 	}
 	creds, err := auth.ParseCredentials(in.Username, in.Password)
 	if err == nil {
-		_, err = h.auth.service.CreateUser(c.Request.Context(), creds)
+		var created auth.Principal
+		if created, err = h.auth.service.CreateUser(c.Request.Context(), creds); err == nil {
+			audit(c, "created_id", created.UserID)
+		}
 	}
 	h.apiMutate(c, "", err)
 }
@@ -210,7 +213,10 @@ func (h *AccessAdmin) apiCreateGroup(c *gin.Context) {
 	if !apiDecode(c, &in) {
 		return
 	}
-	_, err := h.policy.CreateGroup(c.Request.Context(), in.Name)
+	group, err := h.policy.CreateGroup(c.Request.Context(), in.Name)
+	if err == nil {
+		audit(c, "created_id", group.ID)
+	}
 	h.apiMutate(c, "", err)
 }
 func (h *AccessAdmin) apiUpdateGroup(c *gin.Context) {

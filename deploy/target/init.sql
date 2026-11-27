@@ -84,3 +84,42 @@ REVOKE ALL ON SCHEMA sqlwise_internal FROM PUBLIC;
 REVOKE ALL ON sqlwise_internal.migration_receipts FROM PUBLIC;
 GRANT USAGE ON SCHEMA sqlwise_internal TO "sqlwise_target";
 GRANT SELECT, INSERT ON sqlwise_internal.migration_receipts TO "sqlwise_target";
+
+CREATE SCHEMA IF NOT EXISTS sqlwise_internal;
+CREATE TABLE IF NOT EXISTS sqlwise_internal.batch_executions (
+		execution_id text PRIMARY KEY,
+		database_id text NOT NULL,
+		spec_sha256 text NOT NULL,
+		spec jsonb NOT NULL,
+		batch_size integer NOT NULL CHECK (batch_size BETWEEN 1 AND 100000),
+		column_type text NOT NULL,
+		upper_bound bigint,
+		total_rows bigint NOT NULL CHECK (total_rows >= 0),
+		completed_at timestamptz,
+		created_at timestamptz NOT NULL DEFAULT now()
+	);
+CREATE TABLE IF NOT EXISTS sqlwise_internal.batch_checkpoints (
+		execution_id text NOT NULL REFERENCES sqlwise_internal.batch_executions(execution_id),
+		direction text NOT NULL CHECK (direction IN ('forward', 'compensate')),
+		batch_no integer NOT NULL CHECK (batch_no >= 1),
+		first_key bigint NOT NULL,
+		last_key bigint NOT NULL,
+		row_count bigint NOT NULL CHECK (row_count >= 0),
+		committed_at timestamptz NOT NULL DEFAULT now(),
+		PRIMARY KEY (execution_id, direction, batch_no)
+	);
+CREATE TABLE IF NOT EXISTS sqlwise_internal.batch_rows (
+		execution_id text NOT NULL REFERENCES sqlwise_internal.batch_executions(execution_id),
+		batch_no integer NOT NULL CHECK (batch_no >= 1),
+		row_key bigint NOT NULL,
+		before_value text,
+		after_value text,
+		PRIMARY KEY (execution_id, row_key)
+	);
+CREATE INDEX IF NOT EXISTS batch_rows_batch_idx ON sqlwise_internal.batch_rows (execution_id, batch_no);
+REVOKE ALL ON sqlwise_internal.batch_executions FROM PUBLIC;
+GRANT SELECT, INSERT, UPDATE ON sqlwise_internal.batch_executions TO "sqlwise_target";
+REVOKE ALL ON sqlwise_internal.batch_checkpoints FROM PUBLIC;
+GRANT SELECT, INSERT, UPDATE ON sqlwise_internal.batch_checkpoints TO "sqlwise_target";
+REVOKE ALL ON sqlwise_internal.batch_rows FROM PUBLIC;
+GRANT SELECT, INSERT, UPDATE ON sqlwise_internal.batch_rows TO "sqlwise_target";

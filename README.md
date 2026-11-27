@@ -28,12 +28,13 @@ See the [architecture diagram, tech stack, and milestone features](docs/features
 
 ## Operations and testing
 
-| Guide                                                 | What it covers                                                                             |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [Migration jobs and recovery](docs/jobs.md)           | Job status, worker settings, resume and compensation, and the million-row batch benchmark. |
-| [Local observability](deploy/observability/README.md) | Grafana dashboard, Prometheus metrics, Loki logs, and Tempo traces for the API and worker. |
-| [Tests](docs/development.md#tests)                    | Go and SPA checks, database integration tests, and Playwright browser tests.               |
-| [CodeQL](docs/codeql/README.md)                       | Scan configuration, findings, and remediation evidence.                                    |
+| Guide                                                                    | What it covers                                                                             |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| [Migration jobs and recovery](docs/jobs.md)                              | Job status, worker settings, resume and compensation, and the million-row batch benchmark. |
+| [Local observability](deploy/observability/README.md)                    | Grafana dashboard, Prometheus metrics, Loki logs, and Tempo traces for the API and worker. |
+| [Logging, tracing, and audit](docs/observability/logging-and-tracing.md) | Event fields, masking rules, and sample logs and spans.                                    |
+| [Tests](docs/development.md#tests)                                       | Go and SPA checks, database integration tests, and Playwright browser tests.               |
+| [CodeQL](docs/codeql/README.md)                                          | Scan configuration, findings, and remediation evidence.                                    |
 
 ### k6 stress test
 

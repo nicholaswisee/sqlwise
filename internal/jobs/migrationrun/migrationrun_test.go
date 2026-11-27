@@ -3,6 +3,7 @@ package migrationrun_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -187,6 +188,39 @@ func TestEveryOperationIsQueuedWithItsOwnExecution(t *testing.T) {
 	}
 }
 
+// Enqueue authorizes inside its own platform transaction. Taking a second pool
+// connection for that check deadlocked once every connection held an enqueue.
+func TestConcurrentEnqueuesDoNotExhaustThePlatformPool(t *testing.T) {
+	f := newFlow(t)
+	n := int(f.p.Pool.Config().MaxConns) * 3
+	requests := make([]migration.Request, n)
+	for i := range requests {
+		table := fmt.Sprintf("w%d", i)
+		requests[i] = f.approved(t, f.define(t, table, "CREATE TABLE "+table+" (id int)", "DROP TABLE "+table), migration.OpUp)
+	}
+	ctx, cancel := context.WithTimeout(f.editor.Ctx, 15*time.Second)
+	defer cancel()
+	errs := make(chan error, n)
+	start := make(chan struct{})
+	for _, req := range requests {
+		go func() {
+			<-start
+			_, err := f.queue.Enqueue(ctx, "db", req.ID, "key-"+req.ID)
+			errs <- err
+		}()
+	}
+	close(start)
+	for range n {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent enqueue: %v", err)
+		}
+	}
+	var published int
+	if err := f.p.Pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs`).Scan(&published); err != nil || published != n {
+		t.Fatalf("%d of %d jobs published, %v", published, n, err)
+	}
+}
+
 func TestEnqueueRefusesUnapprovedRequestsAndViewers(t *testing.T) {
 	f := newFlow(t)
 	d := f.define(t, "Widgets", "CREATE TABLE widgets (id int)", "DROP TABLE widgets")
@@ -226,6 +260,45 @@ func TestRequesterRevokedAfterEnqueueWritesNothing(t *testing.T) {
 	}
 	if done.Error == "" || strings.Contains(done.Error, "SQLSTATE") {
 		t.Fatalf("job error %q must be a safe explanation", done.Error)
+	}
+	// The refusal is history: the SQL that would have run, never executed.
+	a := f.attempt(t, job.ExecutionID)
+	if a.Status != migration.StatusRefused || a.SQL != "CREATE TABLE widgets (id int)" || a.ExecutorID != f.editor.ID ||
+		a.DraftRevision != d.Revision || a.FinishedAt == nil || a.Error != done.Error {
+		t.Fatalf("refused execution = %+v", a)
+	}
+}
+
+func TestStaleExecutionIsRecordedAsRefusedAndKeepsTheDraftEditable(t *testing.T) {
+	f := newFlow(t)
+	first := f.approved(t, f.define(t, "First", "CREATE TABLE first (id int)", "DROP TABLE first"), migration.OpUp)
+	stale := f.define(t, "Second", "CREATE TABLE second (id int)", "DROP TABLE second")
+	behind := f.approved(t, stale, migration.OpUp)
+	// Both were approved against version 0 and queued before either ran.
+	ahead, job := f.enqueue(t, first), f.enqueue(t, behind)
+	f.worker(t, f.runner())
+	if done := f.settled(t, ahead.ID); done.Status != jobs.Succeeded {
+		t.Fatalf("first job = %+v", done)
+	}
+	if done := f.settled(t, job.ID); done.Status != jobs.Failed || done.Effect != jobs.EffectNone || f.has(t, "second") {
+		t.Fatalf("stale job = %+v", done)
+	}
+	a := f.attempt(t, job.ExecutionID)
+	if a.Status != migration.StatusRefused || a.SQL != "CREATE TABLE second (id int)" || a.CandidateVersion != 1 || a.RequestID != behind.ID {
+		t.Fatalf("refused execution = %+v", a)
+	}
+	h, err := f.service.History(f.auditor.Ctx, "db")
+	if err != nil || len(h.Committed) != 1 || len(h.Attempts) != 2 || h.CurrentVersion != 1 {
+		t.Fatalf("history = %+v, %v", h, err)
+	}
+	// Nothing ran, so the definition is not frozen.
+	if _, err := f.service.Update(f.editor.Ctx, "db", stale.ID, migration.UpdateInput{ExpectedRevision: stale.Revision,
+		DraftInput: migration.DraftInput{Title: "Second", SQL: "CREATE TABLE second_fixed (id int)", SQLDown: "DROP TABLE second_fixed"}}); err != nil {
+		t.Fatalf("editing a refused migration: %v", err)
+	}
+	// A repeated final failure for the same execution writes nothing more.
+	if recorded, err := f.service.RecordRefusal(t.Context(), behind.ID, "again"); err != nil || recorded {
+		t.Fatalf("second refusal record = %v, %v", recorded, err)
 	}
 }
 
@@ -795,6 +868,68 @@ func TestWorkerDeathBeforeTargetCommitIsFencedNotReplayed(t *testing.T) {
 	if a := f.attempt(t, job.ExecutionID); a.Status != migration.StatusFailed || a.ReconciledAt == nil {
 		t.Fatalf("execution = %+v", a)
 	}
+}
+
+// A job claimed ahead of a dead batch run must not block the database on the
+// batch's behalf: only the batch's own delivery can settle its ledger.
+func TestJobQueuedBehindADeadBatchRunWaitsInsteadOfBlocking(t *testing.T) {
+	f := newFlow(t)
+	f.seedAccounts(t)
+	if _, err := f.target.Exec(t.Context(), `DELETE FROM fail_switch`); err != nil {
+		t.Fatal(err)
+	}
+	spec := migration.BatchSpec{Schema: "public", Table: "accounts", Key: "id", Column: "status", Value: "archived"}
+	d, err := f.service.Create(f.editor.Ctx, "db", migration.DraftInput{Title: "Archive accounts", SQLDown: "UPDATE accounts SET status = 'active'",
+		Batch: &spec, BatchSize: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := f.approved(t, f.define(t, "Widgets", "CREATE TABLE widgets (id int)", "DROP TABLE widgets"), migration.OpUp)
+	batchReq := f.approved(t, d, migration.OpUp)
+	batch := f.enqueue(t, batchReq)
+	f.dieAfterClaim(t, batch.ID, batchReq.ID, "batch")
+	gate, err := f.gates.Gate(t.Context(), "db", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := gate.PrepareBatch(t.Context(), batch.ExecutionID, database.BatchUpdate(spec), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	died := errors.New("process ended")
+	if _, err := gate.RunBatches(t.Context(), plan, database.BatchHooks{BeforeCommit: func(n int) error {
+		if n == 3 {
+			return died
+		}
+		return nil
+	}}); !errors.Is(err, died) {
+		t.Fatal(err)
+	}
+	gate.Close()
+	queued := f.enqueue(t, next)
+	// Order the reclaimed batch after the queued job, as a busy deferral does.
+	f.p.Exec(t, `UPDATE jobs SET next_run_at = now() + interval '1 hour' WHERE id=$1`, batch.ID)
+	f.worker(t, f.runner())
+
+	if done := f.settled(t, batch.ID); done.Status != jobs.Blocked || done.Effect != jobs.EffectPartial || len(done.Recovery()) != 2 {
+		t.Fatalf("dead batch job = %+v", done)
+	}
+	waiting := jobstest.Wait(t, f.store, "db", queued.ID, 10*time.Second, func(j jobs.Job) bool { return j.Status != jobs.Running })
+	if waiting.Status != jobs.Queued || waiting.Effect != jobs.EffectNone || waiting.Attempts != 0 {
+		t.Fatalf("job behind the batch = %+v; it must wait without blocking", waiting)
+	}
+	if _, found := f.attemptMaybe(t, queued.ExecutionID); found {
+		t.Fatal("the waiting job recorded an execution")
+	}
+}
+
+func (f *flow) attemptMaybe(t *testing.T, id string) (migration.Attempt, bool) {
+	t.Helper()
+	var n int
+	if err := f.p.Pool.QueryRow(t.Context(), `SELECT count(*) FROM migration_attempts WHERE id=$1`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return migration.Attempt{}, n > 0
 }
 
 func TestWorkerDeathDuringBatchRunLeavesItPartialForApprovedRecovery(t *testing.T) {
