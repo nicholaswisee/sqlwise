@@ -13,7 +13,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"sqlwise/internal/database/dialect"
+	"sqlwise/internal/telemetry"
 )
 
 // Batch directions; compensation is driven by the migration domain.
@@ -282,35 +287,50 @@ func (g *Gate) CommitBatch(ctx context.Context, executionID, direction string,
 	if g.Lost() {
 		return Checkpoint{}, fail(ErrConnectionUnavailable, "The execution gate was lost.")
 	}
+	// One span per batch transaction; its statements are child db.query spans.
+	ctx, span := otel.Tracer("sqlwise/database").Start(ctx, "db.batch", trace.WithAttributes(
+		attribute.String("sqlwise.execution.id", executionID), attribute.String("sqlwise.batch.direction", direction)))
+	defer span.End()
+	failed := func(err error) error {
+		message := Message(err)
+		if message == "" {
+			message = "The batch stopped before it committed."
+		}
+		span.RecordError(errors.New(message))
+		span.SetStatus(codes.Error, "batch failed")
+		return err
+	}
 	tx, err := g.Begin(ctx)
 	if err != nil {
-		return Checkpoint{}, targetError(ctx, err)
+		return Checkpoint{}, failed(targetError(ctx, err))
 	}
 	rollback := func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }
 	cp, err := work(ctx, tx.(*gateTx))
 	if err != nil {
 		rollback()
-		return Checkpoint{}, batchError(ctx, err)
+		return Checkpoint{}, failed(batchError(ctx, err))
 	}
 	cp.Direction = direction
+	ctx = telemetry.WithLogFields(ctx, "batch", cp.Batch, "batch_direction", direction)
+	span.SetAttributes(attribute.Int("sqlwise.batch.number", cp.Batch), attribute.Int64("sqlwise.batch.rows", cp.Rows))
 	if cp.Rows > 0 {
 		if _, err := tx.Exec(ctx, `INSERT INTO `+batchCheckpoints+` (execution_id, direction, batch_no, first_key, last_key, row_count)
 			VALUES ($1, $2, $3, $4, $5, $6)`, executionID, direction, cp.Batch, cp.FirstKey, cp.LastKey, cp.Rows); err != nil {
 			rollback()
-			return Checkpoint{}, batchError(ctx, err)
+			return Checkpoint{}, failed(batchError(ctx, err))
 		}
 	}
 	if beforeCommit != nil {
 		if err := beforeCommit(cp.Batch); err != nil {
 			rollback()
-			return Checkpoint{}, err
+			return Checkpoint{}, failed(err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		if errors.Is(err, ErrOutcomeUnknown) {
-			return cp, fail(ErrOutcomeUnknown, fmt.Sprintf("The connection failed while committing batch %d; the ledger decides whether it committed.", cp.Batch))
+			return cp, failed(fail(ErrOutcomeUnknown, fmt.Sprintf("The connection failed while committing batch %d; the ledger decides whether it committed.", cp.Batch)))
 		}
-		return Checkpoint{}, batchError(ctx, err)
+		return Checkpoint{}, failed(batchError(ctx, err))
 	}
 	cp.CommittedAt = time.Now().UTC()
 	return cp, nil
@@ -356,6 +376,7 @@ func (g *Gate) RunBatches(ctx context.Context, plan BatchPlan, hooks BatchHooks)
 				WHERE execution_id=$1 AND direction='forward'`, plan.ExecutionID).Scan(&cp.Batch, &cursor); err != nil {
 				return cp, err
 			}
+			ctx = telemetry.WithLogFields(ctx, "batch", cp.Batch, "batch_direction", Forward)
 			err := tx.QueryRow(ctx, update, cursor, *plan.UpperBound, plan.BatchSize, spec.Value, plan.ExecutionID, cp.Batch).
 				Scan(&cp.Rows, &cp.FirstKey, &cp.LastKey)
 			return cp, err
@@ -485,6 +506,7 @@ func (g *Gate) RevertBatches(ctx context.Context, executionID string, hooks Batc
 			continue
 		}
 		_, err := g.CommitBatch(ctx, executionID, Compensate, func(ctx context.Context, tx BatchTx) (Checkpoint, error) {
+			ctx = telemetry.WithLogFields(ctx, "batch", batch.Batch, "batch_direction", Compensate)
 			restored, err := tx.Exec(ctx, restore, executionID, batch.Batch)
 			if err != nil {
 				return Checkpoint{}, err

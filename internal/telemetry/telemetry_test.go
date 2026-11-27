@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -245,5 +246,66 @@ func TestHTTPMiddlewareAuditsMutationsWithActorTargetsAndOutcome(t *testing.T) {
 	}
 	if reject["action"] != "databases.requests.reject" || reject["outcome"] != "denied" || reject["level"] != "WARN" || reject["request_id"] != "req-2" {
 		t.Errorf("reject audit = %v", reject)
+	}
+}
+
+func TestFailedSQLIsAWarningWithMaskedErrorAndParameterTypesOnly(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	tracer := PGXTracer{}
+	ctx := WithLogFields(context.Background(), "database", "db-1", "batch", 3)
+	ctx = tracer.TraceQueryStart(ctx, nil, pgx.TraceQueryStartData{SQL: "UPDATE t SET v=$1 WHERE id=$2", Args: []any{"value-canary", int64(7)}})
+	tracer.TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{Err: &pgconn.PgError{Code: "22P02", Message: `invalid input syntax for type integer: "message-canary"`}})
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want start and result lines, got %s", output.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &result); err != nil {
+		t.Fatal(err)
+	}
+	params, _ := result["params"].([]any)
+	if result["level"] != "WARN" || result["status"] != "failure" || result["sqlstate"] != "22P02" || result["batch"] != float64(3) ||
+		result["database"] != "db-1" || len(params) != 2 || params[0] != "[REDACTED string]" || params[1] != "[REDACTED int64]" ||
+		!strings.Contains(fmt.Sprint(result["error"]), "invalid input syntax for type integer: [REDACTED]") {
+		t.Fatalf("result line = %v", result)
+	}
+	for _, secret := range []string{"value-canary", "message-canary"} {
+		if strings.Contains(output.String(), secret) {
+			t.Errorf("log contains %q", secret)
+		}
+	}
+}
+
+func TestContextHandlerAddsTraceAndCorrelationOnce(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(NewContextHandler(slog.NewJSONHandler(&output, nil)))
+	traceID, _ := trace.TraceIDFromHex("0102030405060708090a0b0c0d0e0f10")
+	spanID, _ := trace.SpanIDFromHex("0102030405060708")
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled}))
+	ctx = WithCorrelation(ctx, "corr-1")
+	logger.InfoContext(ctx, "domain event", "event", "migration.execution.start")
+	logger.With("correlation_id", "job-1", "trace_id", "explicit").InfoContext(ctx, "already tagged")
+	logger.Info("no context")
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %s", output.String())
+	}
+	var first, second, third map[string]any
+	for i, target := range []*map[string]any{&first, &second, &third} {
+		if err := json.Unmarshal([]byte(lines[i]), target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if first["trace_id"] != traceID.String() || first["span_id"] != spanID.String() || first["correlation_id"] != "corr-1" {
+		t.Errorf("context line = %v", first)
+	}
+	if strings.Count(lines[1], `"correlation_id"`) != 1 || strings.Count(lines[1], `"trace_id"`) != 1 || second["correlation_id"] != "job-1" {
+		t.Errorf("pre-tagged line duplicated keys: %s", lines[1])
+	}
+	if _, ok := third["trace_id"]; ok {
+		t.Errorf("line without context got a trace: %v", third)
 	}
 }

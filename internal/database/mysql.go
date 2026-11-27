@@ -43,14 +43,14 @@ type mysqlPool struct {
 	database string
 }
 
-func (p mysqlPool) handle() Handle { return &mysqlHandle{db: p.db, database: p.database} }
+func (p mysqlPool) handle() Handle { return &mysqlHandle{db: tracedDB{p.db}, database: p.database} }
 
 func (p mysqlPool) close() { p.db.Close() }
 
 // mysqlHandle is limited to the registered database: in MySQL a schema is a
 // database, and other databases visible to the login were not granted.
 type mysqlHandle struct {
-	db       *sql.DB
+	db       tracedDB
 	database string
 }
 
@@ -89,7 +89,7 @@ func (h *mysqlHandle) Pin(ctx context.Context) (Conn, error) {
 type mysqlConn struct{ conn *sql.Conn }
 
 func (c mysqlConn) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
-	result, err := c.conn.ExecContext(ctx, sql, args...)
+	result, err := tracedConnExec(ctx, c.conn, sql, args)
 	var server *mysql.MySQLError
 	switch {
 	case err == nil:
@@ -147,7 +147,7 @@ func (h *mysqlHandle) InspectSchema(ctx context.Context, schema string) (SchemaS
 	return snapshot, nil
 }
 
-func inspectMySQL(ctx context.Context, db *sql.DB, snapshot *SchemaSnapshot) error {
+func inspectMySQL(ctx context.Context, db tracedDB, snapshot *SchemaSnapshot) error {
 	my := dialect.MySQL
 	rows, err := db.QueryContext(ctx, `SELECT c.TABLE_NAME, c.COLUMN_NAME, c.COLUMN_TYPE, c.IS_NULLABLE = 'YES', c.COLUMN_DEFAULT
 		FROM information_schema.COLUMNS c JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_TYPE = 'BASE TABLE'

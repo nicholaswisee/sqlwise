@@ -205,7 +205,8 @@ func (s *Service) recover(ctx context.Context, batches BatchRunner, r Request) (
 	})
 	if err != nil {
 		slog.WarnContext(ctx, "migration recovery refused", "event", "migration.recovery.refused", "database", r.DatabaseID,
-			"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", a.ID, "operation", string(r.Operation), "actor", r.RequestedBy)
+			"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", a.ID, "operation", string(r.Operation), "actor", r.RequestedBy,
+			"status", "refused", "error", or(Message(err), "The platform database could not be read."))
 		return Attempt{}, err
 	}
 	slog.InfoContext(ctx, "migration recovery started", "event", "migration.recovery.start", "database", r.DatabaseID,
@@ -260,8 +261,13 @@ func (s *Service) finishRecovery(ctx context.Context, batches BatchRunner, a Att
 	if ok, err := s.store.settleBatch(cleanup, a, r.ID, s.now().UTC()); err != nil || !ok {
 		return pendingRecovery(a)
 	}
-	slog.InfoContext(ctx, "migration recovery finished", "event", "migration.recovery.result", "database", r.DatabaseID,
-		"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", a.ID, "operation", string(r.Operation), "status", string(a.Status))
+	level := slog.LevelInfo
+	if a.Status != StatusSucceeded && a.Status != StatusReverted {
+		level = slog.LevelWarn
+	}
+	slog.Log(ctx, level, "migration recovery finished", "event", "migration.recovery.result", "database", r.DatabaseID,
+		"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", a.ID, "operation", string(r.Operation), "actor", r.RequestedBy,
+		"status", string(a.Status), "error", a.Error)
 	return a, outcome(a)
 }
 

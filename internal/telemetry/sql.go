@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -20,52 +21,98 @@ import (
 type queryKey struct{}
 
 type queryState struct {
-	start time.Time
-	query string
-	hash  string
-	span  trace.Span
+	start  time.Time
+	query  string
+	hash   string
+	params []string
+	span   trace.Span
+}
+
+// SQLTrace times one statement and logs its start and result separately.
+// PGXTracer uses it through pgx's hook; drivers without one (MySQL through
+// database/sql) call StartSQL and End around each statement.
+type SQLTrace struct {
+	ctx   context.Context
+	state queryState
+}
+
+// StartSQL opens a db.query span and logs sql.start. Argument values are
+// never logged; only their count and Go types are.
+func StartSQL(ctx context.Context, system, sql string, args []any) (context.Context, SQLTrace) {
+	query := RedactSQL(sql)
+	hash := sha256.Sum256([]byte(sql))
+	ctx, span := otel.Tracer("sqlwise/sql").Start(ctx, "db.query", trace.WithSpanKind(trace.SpanKindClient))
+	span.SetAttributes(attribute.String("db.system.name", system), attribute.String("db.query.text", query))
+	if namespace := logField(ctx, "database"); namespace != "" {
+		span.SetAttributes(attribute.String("db.namespace", namespace))
+	}
+	params := make([]string, len(args))
+	for i, arg := range args {
+		params[i] = fmt.Sprintf("[REDACTED %T]", arg)
+	}
+	state := queryState{start: time.Now(), query: query, hash: hex.EncodeToString(hash[:]), params: params, span: span}
+	logSQL(ctx, slog.LevelInfo, "sql.start", state, "started", 0, "", "")
+	return ctx, SQLTrace{ctx: ctx, state: state}
+}
+
+// End logs sql.result and closes the span. sqlstate and message come from
+// the server error, if any; the message is literal-masked before logging.
+// rows is -1 when the driver cannot report a count.
+func (t SQLTrace) End(rows int64, err error, sqlstate, message string) {
+	status, level := "success", slog.LevelInfo
+	if err != nil {
+		status, level = "failure", slog.LevelWarn
+		if message == "" {
+			message = "The database connection or driver failed."
+		}
+		message = RedactSQL(message)
+		t.state.span.RecordError(errors.New(message))
+		t.state.span.SetStatus(codes.Error, "query failed")
+		if sqlstate != "" {
+			t.state.span.SetAttributes(attribute.String("db.response.status_code", sqlstate))
+		}
+	}
+	if rows >= 0 {
+		t.state.span.SetAttributes(attribute.Int64("db.response.returned_rows", rows))
+	}
+	logSQL(t.ctx, level, "sql.result", t.state, status, rows, sqlstate, message)
+	t.state.span.End()
 }
 
 type PGXTracer struct{}
 
 func (PGXTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	query := RedactSQL(data.SQL)
-	hash := sha256.Sum256([]byte(data.SQL))
-	ctx, span := otel.Tracer("sqlwise/pgx").Start(ctx, "db.query", trace.WithSpanKind(trace.SpanKindClient))
-	span.SetAttributes(attribute.String("db.system.name", "postgresql"), attribute.String("db.query.text", query))
-	state := queryState{start: time.Now(), query: query, hash: hex.EncodeToString(hash[:]), span: span}
-	logSQL(ctx, "sql.start", state, "started", 0, "")
-	return context.WithValue(ctx, queryKey{}, state)
+	ctx, trace := StartSQL(ctx, "postgresql", data.SQL, data.Args)
+	return context.WithValue(ctx, queryKey{}, trace)
 }
 
 func (PGXTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
-	state, ok := ctx.Value(queryKey{}).(queryState)
+	trace, ok := ctx.Value(queryKey{}).(SQLTrace)
 	if !ok {
 		return
 	}
-	status, sqlstate := "success", ""
-	if data.Err != nil {
-		status = "failure"
-		var pgErr *pgconn.PgError
-		if errors.As(data.Err, &pgErr) {
-			sqlstate = pgErr.Code
-		}
-		state.span.SetStatus(codes.Error, "query failed")
+	sqlstate, message := "", ""
+	var pgErr *pgconn.PgError
+	if errors.As(data.Err, &pgErr) {
+		// Message only: Detail and Where can echo row values.
+		sqlstate, message = pgErr.Code, pgErr.Message
 	}
-	logSQL(ctx, "sql.result", state, status, data.CommandTag.RowsAffected(), sqlstate)
-	state.span.End()
+	trace.End(data.CommandTag.RowsAffected(), data.Err, sqlstate, message)
 }
 
-func logSQL(ctx context.Context, event string, state queryState, status string, rows int64, sqlstate string) {
+func logSQL(ctx context.Context, level slog.Level, event string, state queryState, status string, rows int64, sqlstate, message string) {
 	traceID, spanID := "", ""
 	if sc := state.span.SpanContext(); sc.IsValid() {
 		traceID, spanID = sc.TraceID().String(), sc.SpanID().String()
 	}
 	args := []any{"event", event, "actor", Actor(ctx),
 		"correlation_id", Correlation(ctx), "trace_id", traceID, "span_id", spanID,
-		"query", state.query, "sql_hash", state.hash, "status", status,
+		"query", state.query, "sql_hash", state.hash, "params", state.params, "status", status,
 		"duration_ms", time.Since(state.start).Milliseconds(), "rows", rows, "sqlstate", sqlstate}
-	slog.InfoContext(ctx, "sql statement", append(args, logFields(ctx)...)...)
+	if message != "" {
+		args = append(args, "error", message)
+	}
+	slog.Log(ctx, level, "sql statement", append(args, logFields(ctx)...)...)
 }
 
 func RedactSQL(sql string) string {

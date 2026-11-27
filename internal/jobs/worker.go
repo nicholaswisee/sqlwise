@@ -150,7 +150,7 @@ func (w *Worker) deliver(base context.Context, c claimed) {
 	ctx := telemetry.ExtractTrace(base, c.Trace)
 	ctx = telemetry.WithCorrelation(telemetry.WithActor(ctx, c.ActorID), c.ID)
 	ctx = telemetry.WithLogFields(ctx, "database", c.DatabaseID, "job_id", c.ID, "migration_id", c.MigrationID,
-		"execution_id", c.ExecutionID, "operation", c.Operation)
+		"execution_id", c.ExecutionID, "operation", c.Operation, "attempt", c.Attempts+1)
 	ctx, span := w.tracer.Start(ctx, "job.run", trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(
 		attribute.String("sqlwise.job.id", c.ID), attribute.String("sqlwise.execution.id", c.ExecutionID),
 		attribute.String("sqlwise.job.operation", c.Operation), attribute.String("sqlwise.database.id", c.DatabaseID),

@@ -111,13 +111,14 @@ func (s *Service) RunWith(ctx context.Context, target Target, batches BatchRunne
 		return s.store.insertAttempt(ctx, tx, attempt)
 	})
 	if err != nil {
-		slog.WarnContext(ctx, "migration execution refused", "event", "migration.execution.refused", "database", r.DatabaseID,
-			"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", r.ExecutionID, "actor", r.RequestedBy, "status", "refused")
+		// Not final yet: transient refusals are retried; final ones are
+		// recorded in history by RecordRefusal.
+		slog.WarnContext(ctx, "migration execution not started", "event", "migration.execution.precheck_failed", "database", r.DatabaseID,
+			"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", r.ExecutionID, "operation", string(r.Operation),
+			"actor", r.RequestedBy, "status", "not_started", "error", or(Message(err), "The platform database could not be read."))
 		return Attempt{}, err
 	}
-	slog.InfoContext(ctx, "migration execution started", "event", "migration.execution.start", "database", r.DatabaseID,
-		"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", attempt.ID, "operation", string(r.Operation),
-		"actor", r.RequestedBy, "statements", len(statements), "sql_sha256", attempt.SQLHash)
+	logAttempt(ctx, slog.LevelInfo, "migration.execution.start", attempt)
 	var kind error
 	if attempt.Batch {
 		attempt, kind = s.runBatch(ctx, batches, attempt, d)
@@ -125,10 +126,19 @@ func (s *Service) RunWith(ctx context.Context, target Target, batches BatchRunne
 		attempt, kind = s.runTransaction(execCtx, target, targetTx, attempt, statements)
 	}
 	attempt, err = s.record(ctx, attempt, kind)
-	slog.InfoContext(ctx, "migration execution finished", "event", "migration.execution.result", "database", r.DatabaseID,
-		"migration_id", r.MigrationID, "request_id", r.ID, "execution_id", attempt.ID, "operation", string(r.Operation),
-		"actor", r.RequestedBy, "status", string(attempt.Status), "failed_statement", attempt.FailedStatement)
+	level := slog.LevelInfo
+	if attempt.Status != StatusSucceeded {
+		level = slog.LevelWarn
+	}
+	logAttempt(ctx, level, "migration.execution.result", attempt)
 	return attempt, err
+}
+
+func or(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }
 
 func startTarget(ctx context.Context, target Target) (TargetTx, error) {
