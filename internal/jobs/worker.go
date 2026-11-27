@@ -31,6 +31,14 @@ type Runner interface {
 	Run(ctx context.Context, gate *database.Gate, job Job, progress Progress) Outcome
 }
 
+// FailureRecorder is an optional Runner extension. The worker calls it once a
+// job fails for good, including failures before the runner ever ran (gate
+// refused, target unreachable after every retry), so the domain can keep a
+// history entry for executions that never reached the target.
+type FailureRecorder interface {
+	RecordFailure(ctx context.Context, job Job, message string)
+}
+
 type Config struct {
 	// ID names this worker in claims; a stable ID lets a restart reclaim at once.
 	ID          string
@@ -292,6 +300,9 @@ func (w *Worker) settle(ctx context.Context, c claimed, o Outcome, attempts int,
 	}
 	if o.Retryable {
 		o = Failure(fmt.Sprintf("%s Gave up after %d attempts.", o.Message, attempts))
+	}
+	if recorder, ok := w.runner.(FailureRecorder); ok && o.Status == Failed {
+		recorder.RecordFailure(ctx, c.Job, o.Message)
 	}
 	ok, err := w.store.finish(ctx, c.ID, w.cfg.ID, o, attempts, w.cfg.Recheck)
 	if err != nil || !ok {

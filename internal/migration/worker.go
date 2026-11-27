@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"sqlwise/internal/access"
+	"sqlwise/internal/telemetry"
 )
 
 // Run executes a queued request. target must be the pinned session of the
@@ -155,12 +156,86 @@ func startTarget(ctx context.Context, target Target) (TargetTx, error) {
 	return nil, fail(kind, message+targetMessage(ctx, err)+" Nothing was executed.")
 }
 
+// RecordRefusal writes the history row of a queued execution that ended
+// without ever recording an attempt: it was refused by revalidation or its
+// target stayed unreachable. The row keeps the SQL that would have run.
+// Executions that already recorded an attempt are left untouched, so it is
+// safe to call after any final failure. Recovery operations settle the
+// execution they recover instead and are not recorded here.
+func (s *Service) RecordRefusal(ctx context.Context, requestID, reason string) (bool, error) {
+	if !validID(requestID) {
+		return false, fail(ErrNotFound, "Request not found.")
+	}
+	r, err := s.store.request(ctx, s.store.pool, "", requestID, false)
+	if err != nil {
+		return false, err
+	}
+	if r.ExecutionID == "" || r.Operation.Recovery() {
+		return false, nil
+	}
+	d, err := s.store.draft(ctx, s.store.pool, r.DatabaseID, r.MigrationID)
+	if err != nil {
+		return false, err
+	}
+	sql := d.SQL
+	if r.Operation == OpRollback {
+		sql = d.SQLDown
+	}
+	count := 1
+	if statements, err := ParsePostgres(sql); err == nil && len(statements) > 0 {
+		count = len(statements)
+	}
+	if reason == "" {
+		reason = "The execution ended before any SQL ran."
+	}
+	if len(reason) > 2000 {
+		reason = reason[:2000]
+	}
+	now := s.now().UTC()
+	a := Attempt{ID: r.ExecutionID, DatabaseID: r.DatabaseID, MigrationID: r.MigrationID, MigrationTitle: d.Title, Operation: r.Operation,
+		RequestID: r.ID, CancelsExecutionID: r.CancelsExecutionID, DraftRevision: d.Revision, CandidateVersion: r.ExpectedVersion + 1,
+		SQL: sql, SQLHash: HashSQL(sql), Dialect: d.Dialect, StatementCount: count, ExecutorID: r.RequestedBy, Status: StatusRefused,
+		Error: reason, StartedAt: now, FinishedAt: &now, Batch: d.Batch != nil && r.Operation != OpRollback}
+	recorded, err := s.store.insertRefusal(ctx, a)
+	if err != nil || !recorded {
+		return false, err
+	}
+	logAttempt(ctx, slog.LevelWarn, "migration.execution.refused", a)
+	return true, nil
+}
+
+// logAttempt writes one structured line per execution phase with every
+// identifying field of the attempt and a literal-masked copy of its SQL; the
+// exact text stays in the platform history and is identified by sql_sha256.
+func logAttempt(ctx context.Context, level slog.Level, event string, a Attempt) {
+	args := []any{"event", event, "database", a.DatabaseID, "migration_id", a.MigrationID, "migration_title", a.MigrationTitle,
+		"execution_id", a.ID, "request_id", a.RequestID, "operation", string(a.Operation), "actor", a.ExecutorID,
+		"draft_revision", a.DraftRevision, "candidate_version", a.CandidateVersion, "mode", attemptMode(a.Batch),
+		"status", string(a.Status), "statements", a.StatementCount, "sql", telemetry.RedactSQL(a.SQL), "sql_sha256", a.SQLHash}
+	if a.CancelsExecutionID != "" {
+		args = append(args, "cancels_execution_id", a.CancelsExecutionID)
+	}
+	if a.AppliedVersion != 0 {
+		args = append(args, "applied_version", a.AppliedVersion)
+	}
+	if a.FinishedAt != nil {
+		args = append(args, "duration_ms", a.FinishedAt.Sub(a.StartedAt).Milliseconds())
+	}
+	if a.FailedStatement != 0 {
+		args = append(args, "failed_statement", a.FailedStatement)
+	}
+	if a.Error != "" {
+		args = append(args, "error", a.Error)
+	}
+	slog.Log(ctx, level, "migration execution", args...)
+}
+
 // outcome maps a recorded execution to the error Run reports for it.
 func outcome(a Attempt) error {
 	switch a.Status {
 	case StatusSucceeded:
 		return nil
-	case StatusFailed:
+	case StatusFailed, StatusRefused:
 		return fail(ErrExecutionFailed, a.Error)
 	case StatusPartiallyApplied, StatusPartiallyReverted:
 		return fail(ErrRecoveryRequired, blockedMessage(a))

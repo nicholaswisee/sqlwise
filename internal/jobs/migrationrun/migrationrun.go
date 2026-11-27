@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"sqlwise/internal/access"
@@ -39,6 +40,17 @@ func (r Runner) Run(ctx context.Context, gate *database.Gate, job jobs.Job, prog
 	a, err := r.Service.RunWith(ctx, Target(gate), Batches(gate, progress), job.RequestID)
 	return classify(job, a, err)
 }
+
+// RecordFailure keeps a refused history entry for a job that failed before
+// its execution recorded an attempt; recorded executions are left alone.
+func (r Runner) RecordFailure(ctx context.Context, job jobs.Job, message string) {
+	if _, err := r.Service.RecordRefusal(ctx, job.RequestID, message); err != nil {
+		slog.WarnContext(ctx, "refused execution not recorded", "event", "migration.execution.refusal_unrecorded",
+			"database", job.DatabaseID, "job_id", job.ID, "execution_id", job.ExecutionID, "error", err.Error())
+	}
+}
+
+var _ jobs.FailureRecorder = Runner{}
 
 // Batches runs batch templates and their compensation on the gate session.
 func Batches(gate *database.Gate, progress jobs.Progress) migration.BatchRunner {

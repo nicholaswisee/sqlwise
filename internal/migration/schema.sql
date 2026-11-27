@@ -105,7 +105,7 @@ ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS recovered_by_request_id 
 ALTER TABLE migration_attempts ADD COLUMN IF NOT EXISTS last_recovery_request_id text REFERENCES migration_requests(id);
 ALTER TABLE migration_attempts DROP CONSTRAINT IF EXISTS migration_attempts_status_check;
 ALTER TABLE migration_attempts ADD CONSTRAINT migration_attempts_status_check
-    CHECK (status IN ('running', 'succeeded', 'failed', 'partially_applied', 'unknown', 'reverted', 'partially_reverted'));
+    CHECK (status IN ('running', 'succeeded', 'failed', 'partially_applied', 'unknown', 'reverted', 'partially_reverted', 'refused'));
 
 ALTER TABLE migration_drafts ADD COLUMN IF NOT EXISTS batch_spec jsonb;
 ALTER TABLE migration_drafts ADD COLUMN IF NOT EXISTS batch_size integer
@@ -177,14 +177,15 @@ CREATE OR REPLACE TRIGGER migration_attempts_immutable
     FOR EACH ROW EXECUTE FUNCTION migration_attempts_immutable();
 
 -- A definition is frozen once it has ever executed, including a failed
--- execution; corrections go through a new migration.
+-- execution; corrections go through a new migration. A refused execution
+-- never reached the target, so it does not freeze the definition.
 CREATE OR REPLACE FUNCTION migration_drafts_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'UPDATE' AND (NEW.id, NEW.database_id, NEW.dialect, NEW.created_by, NEW.created_at)
         IS DISTINCT FROM (OLD.id, OLD.database_id, OLD.dialect, OLD.created_by, OLD.created_at) THEN
         RAISE EXCEPTION 'migration identity is immutable' USING ERRCODE = '55000';
     END IF;
-    IF EXISTS (SELECT 1 FROM migration_attempts WHERE migration_id = OLD.id) THEN
+    IF EXISTS (SELECT 1 FROM migration_attempts WHERE migration_id = OLD.id AND status <> 'refused') THEN
         RAISE EXCEPTION 'executed migration is immutable' USING ERRCODE = '55000';
     END IF;
     IF TG_OP = 'DELETE' THEN

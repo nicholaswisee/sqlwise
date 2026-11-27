@@ -261,6 +261,45 @@ func TestRequesterRevokedAfterEnqueueWritesNothing(t *testing.T) {
 	if done.Error == "" || strings.Contains(done.Error, "SQLSTATE") {
 		t.Fatalf("job error %q must be a safe explanation", done.Error)
 	}
+	// The refusal is history: the SQL that would have run, never executed.
+	a := f.attempt(t, job.ExecutionID)
+	if a.Status != migration.StatusRefused || a.SQL != "CREATE TABLE widgets (id int)" || a.ExecutorID != f.editor.ID ||
+		a.DraftRevision != d.Revision || a.FinishedAt == nil || a.Error != done.Error {
+		t.Fatalf("refused execution = %+v", a)
+	}
+}
+
+func TestStaleExecutionIsRecordedAsRefusedAndKeepsTheDraftEditable(t *testing.T) {
+	f := newFlow(t)
+	first := f.approved(t, f.define(t, "First", "CREATE TABLE first (id int)", "DROP TABLE first"), migration.OpUp)
+	stale := f.define(t, "Second", "CREATE TABLE second (id int)", "DROP TABLE second")
+	behind := f.approved(t, stale, migration.OpUp)
+	// Both were approved against version 0 and queued before either ran.
+	ahead, job := f.enqueue(t, first), f.enqueue(t, behind)
+	f.worker(t, f.runner())
+	if done := f.settled(t, ahead.ID); done.Status != jobs.Succeeded {
+		t.Fatalf("first job = %+v", done)
+	}
+	if done := f.settled(t, job.ID); done.Status != jobs.Failed || done.Effect != jobs.EffectNone || f.has(t, "second") {
+		t.Fatalf("stale job = %+v", done)
+	}
+	a := f.attempt(t, job.ExecutionID)
+	if a.Status != migration.StatusRefused || a.SQL != "CREATE TABLE second (id int)" || a.CandidateVersion != 1 || a.RequestID != behind.ID {
+		t.Fatalf("refused execution = %+v", a)
+	}
+	h, err := f.service.History(f.auditor.Ctx, "db")
+	if err != nil || len(h.Committed) != 1 || len(h.Attempts) != 2 || h.CurrentVersion != 1 {
+		t.Fatalf("history = %+v, %v", h, err)
+	}
+	// Nothing ran, so the definition is not frozen.
+	if _, err := f.service.Update(f.editor.Ctx, "db", stale.ID, migration.UpdateInput{ExpectedRevision: stale.Revision,
+		DraftInput: migration.DraftInput{Title: "Second", SQL: "CREATE TABLE second_fixed (id int)", SQLDown: "DROP TABLE second_fixed"}}); err != nil {
+		t.Fatalf("editing a refused migration: %v", err)
+	}
+	// A repeated final failure for the same execution writes nothing more.
+	if recorded, err := f.service.RecordRefusal(t.Context(), behind.ID, "again"); err != nil || recorded {
+		t.Fatalf("second refusal record = %v, %v", recorded, err)
+	}
 }
 
 // ackLost runs the real execution, then reports a lost acknowledgement once.
