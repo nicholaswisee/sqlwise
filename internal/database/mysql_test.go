@@ -203,6 +203,8 @@ func TestMySQLReadsBoundedPages(t *testing.T) {
 		"UPDATE items SET label = REPEAT('x', 10000), data = REPEAT(X'AB', 5000) WHERE id = 3",
 		"CREATE TABLE keyless (v VARCHAR(10))",
 		"INSERT INTO keyless VALUES ('a'), ('b')",
+		"CREATE TABLE `Odd ``Name` (`select` INT PRIMARY KEY)",
+		"INSERT INTO `Odd ``Name` VALUES (7)",
 	)
 	reader := must[database.TableReader](t, f.open(t))
 	read := func(name string, offset, limit int) database.TablePage {
@@ -228,6 +230,9 @@ func TestMySQLReadsBoundedPages(t *testing.T) {
 	}
 	if keyless := read("keyless", 0, 50); keyless.Ordered || len(keyless.Rows) != 2 {
 		t.Fatalf("keyless = %+v", keyless)
+	}
+	if odd := read("Odd `Name", 0, 50); !odd.Ordered || len(odd.Rows) != 1 || odd.Columns[0].Name != "select" || odd.Rows[0][0].Text != "7" {
+		t.Fatalf("quoted ordinary identifier = %+v", odd)
 	}
 	for _, ref := range []database.TableRef{{Schema: f.conn.Database, Name: "missing"}, {Schema: "mysql", Name: "user"}, {Schema: "information_schema", Name: "TABLES"}, {Schema: "sqlwise_demo", Name: "customers"}} {
 		if _, err := reader.ReadTable(t.Context(), database.TableRequest{Table: ref, Limit: 50}); !errors.Is(err, database.ErrNotFound) {
