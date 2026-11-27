@@ -179,9 +179,6 @@ test("admin route document titles match their legacy page titles", async ({ page
   await page.route("**/api/v1/admin/groups/g1/members", (route) =>
     route.fulfill(envelope(groupData)),
   );
-  await page.route("**/api/v1/admin/groups/g1/databases", (route) =>
-    route.fulfill(envelope(groupData)),
-  );
   await page.route("**/api/v1/admin/databases", (route) =>
     route.fulfill(envelope({ connections: [] })),
   );
@@ -190,7 +187,6 @@ test("admin route document titles match their legacy page titles", async ({ page
     ["/admin/users", "Users | sqlwise"],
     ["/admin/groups", "Groups | sqlwise"],
     ["/admin/groups/g1/members", "Group members | sqlwise"],
-    ["/admin/groups/g1/databases", "Group database access | sqlwise"],
     ["/admin/databases", "Connections | sqlwise"],
   ];
   for (const [path, title] of routes) {
@@ -239,4 +235,56 @@ test("group leader selection shows eligible members and can be cleared", async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+});
+
+test("group database access stays on the members page when edited or removed", async ({ page }) => {
+  await mockSession(page);
+  const group = { id: "g1", name: "Operations", active: true, leader_user_id: "" };
+  const grant = {
+    group_id: "g1",
+    group_name: "Operations",
+    database_id: "db1",
+    database_name: "Demo",
+    permission: "view",
+  };
+  let grants = [grant];
+  const groupData = () => ({
+    ...snapshot,
+    groups: [group],
+    selected_group: group,
+    databases: [{ id: "db1", name: "Demo", active: true }],
+    grants,
+  });
+  await page.route("**/api/v1/admin/groups", (route) => route.fulfill(envelope(groupData())));
+  await page.route("**/api/v1/admin/groups/g1/members", (route) =>
+    route.fulfill(envelope(groupData())),
+  );
+  await page.route("**/api/v1/admin/groups/g1/databases", (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ database_id: "db1", permission: "edit" });
+    grants = [{ ...grant, permission: "edit" }];
+    return route.fulfill(envelope(groupData()));
+  });
+  await page.route("**/api/v1/admin/groups/g1/databases/remove", (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ database_id: "db1" });
+    grants = [];
+    return route.fulfill(envelope(groupData()));
+  });
+
+  await page.goto("/admin/groups");
+  await page.getByRole("link", { name: "Members and databases" }).click();
+  await expect(page.getByRole("heading", { name: "Group leader" })).toBeVisible();
+  await page.getByLabel("Registered database").selectOption("db1", { timeout: 3_000 });
+  await page.getByLabel("Permission").selectOption("edit");
+  await page.getByRole("button", { name: "Save access" }).click();
+  await expect(page.getByRole("listitem").filter({ hasText: "Demo" })).toContainText("edit");
+  await expect(page).toHaveURL(/\/admin\/groups\/g1\/members$/);
+
+  await page.reload();
+  const row = page.getByRole("listitem").filter({ hasText: "Demo" });
+  await expect(row).toContainText("edit");
+  await row.getByRole("button", { name: "Remove grant" }).click();
+  await expect(row).toHaveCount(0);
+  await expect(page).toHaveURL(/\/admin\/groups\/g1\/members$/);
 });

@@ -15,14 +15,23 @@ set -euo pipefail
 : "${K6_TARGET_RESET_HOST:=127.0.0.1}"
 : "${K6_TARGET_RESET_PORT:=18084}"
 export SQLWISE_ADMIN_USERNAME K6_TARGET_DATABASE_PREFIX K6_TARGET_USERNAME K6_TARGET_PASSWORD
-[[ "$K6_RUN_PREFIX" =~ ^[a-z0-9]{1,12}$ ]] || { echo 'K6_RUN_PREFIX must be 1-12 lowercase letters/digits' >&2; exit 2; }
-[[ "$K6_DATABASE_COUNT" =~ ^[0-9]+$ ]] && (( K6_DATABASE_COUNT >= 16 )) || { echo 'K6_DATABASE_COUNT must be at least 16' >&2; exit 2; }
+[[ "$K6_RUN_PREFIX" =~ ^[a-z0-9]{1,12}$ ]] || {
+    echo 'K6_RUN_PREFIX must be 1-12 lowercase letters/digits' >&2
+    exit 2
+}
+[[ "$K6_DATABASE_COUNT" =~ ^[0-9]+$ ]] && ((K6_DATABASE_COUNT >= 16)) || {
+    echo 'K6_DATABASE_COUNT must be at least 16' >&2
+    exit 2
+}
 command -v "$K6_BIN" >/dev/null
-[[ "$("$K6_BIN" version)" == *v1.7.1* ]] || { echo 'requires official k6 v1.7.1' >&2; exit 2; }
+[[ "$("$K6_BIN" version)" == *v1.7.1* ]] || {
+    echo 'requires official k6 v1.7.1' >&2
+    exit 2
+}
 
 compose=(docker compose --project-name sqlwise-wise-k6 -f compose.yaml -f tests/k6/compose.override.yaml)
-for ((index=0; index<K6_DATABASE_COUNT; index++)); do
-  "${compose[@]}" exec -T target createdb -U "$K6_TARGET_USERNAME" "${K6_TARGET_DATABASE_PREFIX}_${index}"
+for ((index = 0; index < K6_DATABASE_COUNT; index++)); do
+    "${compose[@]}" exec -T target createdb -U "$K6_TARGET_USERNAME" "${K6_TARGET_DATABASE_PREFIX}_${index}"
 done
 
 editor="k6e_${K6_RUN_PREFIX}"
@@ -34,29 +43,36 @@ export K6_RUN_PREFIX
 out_dir="${K6_OUT_DIR:-/tmp/sqlwise-k6-$K6_RUN_PREFIX}"
 mkdir -p "$out_dir"
 databases="$(python3 tests/k6/bootstrap.py)"
-IFS=, read -r -a db_ids <<< "$databases"
-(( ${#db_ids[@]} >= 16 )) || { echo 'bootstrap returned fewer than 16 PostgreSQL databases' >&2; exit 1; }
+IFS=, read -r -a db_ids <<<"$databases"
+((${#db_ids[@]} >= 16)) || {
+    echo 'bootstrap returned fewer than 16 PostgreSQL databases' >&2
+    exit 1
+}
 runs=()
 
 run_stage() {
-  local stage="$1" db_count="$2" vus="$3" per_db="$4" conflict="$5"
-  local suffix run_id list="" index started ended k6_status=0
-  case "$stage" in baseline) suffix=b ;; normal) suffix=n ;; overload1) suffix=o ;; overload2) suffix=p ;; recovery) suffix=r ;; conflict) suffix=c ;; *) echo "unknown stage: $stage" >&2; return 2 ;; esac
-  run_id="${K6_RUN_PREFIX}${suffix}"
-  for ((index=0; index<db_count; index++)); do
-    [[ -z "$list" ]] || list+=,
-    list+="${db_ids[index]}"
-  done
-  echo "stage=$stage databases=$db_count requests_per_database=$per_db vus=$vus"
-  K6_EDITOR="$K6_EDITOR" K6_LEADERS="$K6_LEADERS" go run ./cmd/k6fixture prepare \
-    -url "$BASE_URL" -databases "$list" -per-database "$per_db" -run "$run_id" >"$out_dir/$stage-fixtures.json"
-  started=$(date +%s.%N)
-  USERNAME="$editor" PASSWORD="$K6_EDITOR_PASSWORD" "$K6_BIN" run \
-    -e BASE_URL="$BASE_URL" -e FIXTURES="$out_dir/$stage-fixtures.json" \
-    -e VUS="$vus" -e EXPECT_CONFLICT="$conflict" \
-    -e OUT="$out_dir/$stage-summary.json" tests/k6/stage.js 2>&1 | tee "$out_dir/$stage.log" || k6_status=$?
-  ended=$(date +%s.%N)
-  if ! python3 - "$out_dir/$stage-summary.json" "$stage" "$db_count" "$per_db" "$started" "$ended" "$k6_status" "$out_dir/benchmark-failure" "$out_dir/$stage-undrained" <<'PY'
+    local stage="$1" db_count="$2" vus="$3" per_db="$4" conflict="$5"
+    local suffix run_id list="" index started ended k6_status=0
+    case "$stage" in baseline) suffix=b ;; normal) suffix=n ;; overload1) suffix=o ;; overload2) suffix=p ;; recovery) suffix=r ;; conflict) suffix=c ;; *)
+        echo "unknown stage: $stage" >&2
+        return 2
+        ;;
+    esac
+    run_id="${K6_RUN_PREFIX}${suffix}"
+    for ((index = 0; index < db_count; index++)); do
+        [[ -z "$list" ]] || list+=,
+        list+="${db_ids[index]}"
+    done
+    echo "stage=$stage databases=$db_count requests_per_database=$per_db vus=$vus"
+    K6_EDITOR="$K6_EDITOR" K6_LEADERS="$K6_LEADERS" go run ./cmd/k6fixture prepare \
+        -url "$BASE_URL" -databases "$list" -per-database "$per_db" -run "$run_id" >"$out_dir/$stage-fixtures.json"
+    started=$(date +%s.%N)
+    USERNAME="$editor" PASSWORD="$K6_EDITOR_PASSWORD" "$K6_BIN" run \
+        -e BASE_URL="$BASE_URL" -e FIXTURES="$out_dir/$stage-fixtures.json" \
+        -e VUS="$vus" -e EXPECT_CONFLICT="$conflict" \
+        -e OUT="$out_dir/$stage-summary.json" tests/k6/stage.js 2>&1 | tee "$out_dir/$stage.log" || k6_status=$?
+    ended=$(date +%s.%N)
+    if ! python3 - "$out_dir/$stage-summary.json" "$stage" "$db_count" "$per_db" "$started" "$ended" "$k6_status" "$out_dir/benchmark-failure" "$out_dir/$stage-undrained" <<'PY'; then
 import json, sys
 path, stage, databases, per_db = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 runner_elapsed = float(sys.argv[6]) - float(sys.argv[5])
@@ -99,18 +115,17 @@ if stage.startswith('overload'):
 elif threshold_breach or accounting_failure:
     raise SystemExit(f'{stage}: threshold or terminal accounting failed')
 PY
-  then
-    if [[ "$stage" != overload* ]]; then return 1; fi
-    touch "$out_dir/benchmark-failure" "$out_dir/$stage-undrained"
-  fi
-  if [[ ! -e "$out_dir/$stage-undrained" ]]; then
-    for ((index=0; index<db_count; index++)); do
-      K6_TARGET_URL="postgres://${K6_TARGET_USERNAME}:${K6_TARGET_PASSWORD}@${K6_TARGET_RESET_HOST}:${K6_TARGET_RESET_PORT}/${K6_TARGET_DATABASE_PREFIX}_${index}?sslmode=disable" \
-        go run ./cmd/k6fixture reset -run "$run_id" 2>&1 | sed 's/dropped [0-9][0-9]* k6 tables/dropped tables/'
-    done
-  else
-    echo "stage=$stage cleanup=deferred outstanding-or-unaccounted jobs" >&2
-  fi
+        if [[ "$stage" != overload* ]]; then return 1; fi
+        touch "$out_dir/benchmark-failure" "$out_dir/$stage-undrained"
+    fi
+    if [[ ! -e "$out_dir/$stage-undrained" ]]; then
+        for ((index = 0; index < db_count; index++)); do
+            K6_TARGET_URL="postgres://${K6_TARGET_USERNAME}:${K6_TARGET_PASSWORD}@${K6_TARGET_RESET_HOST}:${K6_TARGET_RESET_PORT}/${K6_TARGET_DATABASE_PREFIX}_${index}?sslmode=disable" \
+                go run ./cmd/k6fixture reset -run "$run_id" 2>&1 | sed 's/dropped [0-9][0-9]* k6 tables/dropped tables/'
+        done
+    else
+        echo "stage=$stage cleanup=deferred outstanding-or-unaccounted jobs" >&2
+    fi
 }
 
 run_stage baseline 1 1 1 false
@@ -121,6 +136,6 @@ run_stage recovery 4 4 1 false
 run_stage conflict 1 2 2 true
 printf 'Summaries: %s\n' "$out_dir"
 if [[ -e "$out_dir/benchmark-failure" ]]; then
-  echo 'benchmark_result=FAIL (overload threshold or terminal accounting breach; recovery still ran)' >&2
-  exit 1
+    echo 'benchmark_result=FAIL (overload threshold or terminal accounting breach; recovery still ran)' >&2
+    exit 1
 fi
