@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"sqlwise/internal/access"
 	"sqlwise/internal/auth"
+	"sqlwise/internal/telemetry"
 )
 
 // DatabasePermissionChecker is the target access contract for protected routes.
@@ -62,6 +63,7 @@ func requireDatabasePermissionWithFailure(validate principalValidator, checker D
 			fail(c, err)
 			return
 		}
+		c.Request = c.Request.WithContext(telemetry.WithLogFields(c.Request.Context(), "database", databaseID))
 		c.Next()
 	}
 }

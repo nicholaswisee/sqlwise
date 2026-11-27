@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -45,6 +46,7 @@ type contextKey uint8
 const (
 	correlationKey contextKey = iota
 	actorKey
+	fieldsKey
 )
 
 func WithCorrelation(ctx context.Context, id string) context.Context {
@@ -54,6 +56,16 @@ func WithCorrelation(ctx context.Context, id string) context.Context {
 func Correlation(ctx context.Context) string {
 	id, _ := ctx.Value(correlationKey).(string)
 	return id
+}
+
+// WithLogFields adds key/value pairs that every SQL log event in ctx carries.
+func WithLogFields(ctx context.Context, args ...any) context.Context {
+	return context.WithValue(ctx, fieldsKey, append(slices.Clip(logFields(ctx)), args...))
+}
+
+func logFields(ctx context.Context) []any {
+	fields, _ := ctx.Value(fieldsKey).([]any)
+	return fields
 }
 
 func WithActor(ctx context.Context, id string) context.Context {

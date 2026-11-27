@@ -141,12 +141,14 @@ claiming:
 func (w *Worker) deliver(base context.Context, c claimed) {
 	ctx := telemetry.ExtractTrace(base, c.Trace)
 	ctx = telemetry.WithCorrelation(telemetry.WithActor(ctx, c.ActorID), c.ID)
+	ctx = telemetry.WithLogFields(ctx, "database", c.DatabaseID, "job_id", c.ID, "migration_id", c.MigrationID,
+		"execution_id", c.ExecutionID, "operation", c.Operation)
 	ctx, span := w.tracer.Start(ctx, "job.run", trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(
 		attribute.String("sqlwise.job.id", c.ID), attribute.String("sqlwise.execution.id", c.ExecutionID),
 		attribute.String("sqlwise.job.operation", c.Operation), attribute.String("sqlwise.database.id", c.DatabaseID),
 		attribute.String("sqlwise.delivery.id", c.delivery)))
 	defer span.End()
-	log := slog.With("job_id", c.ID, "delivery_id", c.delivery, "request_id", c.RequestID, "execution_id", c.ExecutionID, "database", c.DatabaseID,
+	log := slog.With("job_id", c.ID, "delivery_id", c.delivery, "request_id", c.RequestID, "execution_id", c.ExecutionID, "migration_id", c.MigrationID, "database", c.DatabaseID,
 		"operation", c.Operation, "actor", c.ActorID, "worker", w.cfg.ID, "correlation_id", c.ID)
 	if sc := span.SpanContext(); sc.IsValid() {
 		log = log.With("trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
