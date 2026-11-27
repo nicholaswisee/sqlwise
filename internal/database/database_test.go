@@ -196,13 +196,13 @@ func TestCellsShowNullAndTruncation(t *testing.T) {
 	}
 }
 
-func TestDemoTargetUsesReceiptSetup(t *testing.T) {
+func TestDemoTargetUsesTargetSetup(t *testing.T) {
 	seed, err := os.ReadFile(filepath.Join("..", "..", "deploy", "target", "init.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ReplaceAll(string(seed), "\r\n", "\n"), ReceiptSetupSQL("sqlwise_target")) {
-		t.Fatal("deploy/target/init.sql must end with ReceiptSetupSQL(\"sqlwise_target\")")
+	if !strings.Contains(strings.ReplaceAll(string(seed), "\r\n", "\n"), TargetSetupSQL("sqlwise_target")) {
+		t.Fatal("deploy/target/init.sql must end with TargetSetupSQL(\"sqlwise_target\")")
 	}
 }
 

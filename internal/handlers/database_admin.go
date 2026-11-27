@@ -69,7 +69,7 @@ func (h *ConnectionAdmin) detailData(c *gin.Context, id string) (views.Connectio
 		data.Capabilities = append(data.Capabilities, views.ConnectionCapability{Name: capability.Name, Supported: capability.Supported})
 	}
 	if conn.DBMS == database.PostgreSQL {
-		data.ReceiptSQL = database.ReceiptSetupSQL(conn.Username)
+		data.ReceiptSQL = database.TargetSetupSQL(conn.Username)
 	}
 	return data, nil
 }
