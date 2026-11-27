@@ -234,6 +234,20 @@ func TestMySQLReadsBoundedPages(t *testing.T) {
 	if odd := read("Odd `Name", 0, 50); !odd.Ordered || len(odd.Rows) != 1 || odd.Columns[0].Name != "select" || odd.Rows[0][0].Text != "7" {
 		t.Fatalf("quoted ordinary identifier = %+v", odd)
 	}
+	var lowerCaseTableNames int
+	if err := f.target.QueryRow("SELECT @@lower_case_table_names").Scan(&lowerCaseTableNames); err != nil {
+		t.Fatal(err)
+	}
+	if lowerCaseTableNames == 0 {
+		f.exec(t, "CREATE TABLE `CaseTwin` (id INT PRIMARY KEY)", "INSERT INTO `CaseTwin` VALUES (1)",
+			"CREATE TABLE `casetwin` (id INT PRIMARY KEY)", "INSERT INTO `casetwin` VALUES (2)")
+		for name, value := range map[string]string{"CaseTwin": "1", "casetwin": "2"} {
+			page := read(name, 0, 50)
+			if len(page.Rows) != 1 || page.Rows[0][0].Text != value {
+				t.Fatalf("case-distinct table %q = %+v, want value %s", name, page, value)
+			}
+		}
+	}
 	for _, ref := range []database.TableRef{{Schema: f.conn.Database, Name: "missing"}, {Schema: "mysql", Name: "user"}, {Schema: "information_schema", Name: "TABLES"}, {Schema: "sqlwise_demo", Name: "customers"}} {
 		if _, err := reader.ReadTable(t.Context(), database.TableRequest{Table: ref, Limit: 50}); !errors.Is(err, database.ErrNotFound) {
 			t.Fatalf("%+v = %v", ref, err)
