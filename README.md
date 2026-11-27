@@ -24,10 +24,10 @@ sqlwise is a database management web app built for the IF3110 Web Application De
 ### Milestone 2 additions
 
 - **Responsive SPA:** Use the Go JSON API from the SPA for both existing pages, including login and administration, and new migration workflows.
-- **Rollback, forward, and history:** Define SQL up and down or mark a migration irreversible with a reason. Roll back the latest active reversible migration and reapply changes in order. Committed history is separate from attempts, and **Hide rollback** filters out canceled execution pairs without deleting records.
+- **Rollback, forward, and history:** Define SQL up and down or mark a migration irreversible with a reason. Roll back the latest active reversible migration and reapply changes in order. Committed history is separate from attempts, and **Hide rollback** filters out canceled execution pairs without deleting records. Every execution is recorded: successes, failed SQL, and executions refused before any SQL ran (stale version, changed approvals, revoked access, or an unreachable target), which keep status `refused` and do not freeze the migration's SQL.
 - **Review and approval:** Requests need approval from the leader of every group with view or edit access, including for rollback and forward.
 - **Asynchronous execution:** A durable queue and Go worker run approved migrations, report progress in the SPA, and support checkpointed batches with reviewed resume or compensation. See [Jobs and large-data benchmark](#jobs-and-large-data-benchmark).
-- **Activity logging and tracing:** Structured Go logs and OpenTelemetry traces correlate API requests, queued jobs, worker activity, and database operations.
+- **Activity logging, tracing, and audit:** Structured JSON logs (`log/slog`) and OpenTelemetry traces correlate API requests, queued jobs, worker activity, and every SQL statement on PostgreSQL and MySQL. Each state-changing API call emits an `audit` event with its actor, targets, and outcome. Credentials, session identifiers, SQL literals, and parameter values are masked. See [Logging, tracing and audit](docs/observability/logging-and-tracing.md) for the event reference and sample log and span output.
 
 Milestone 2 reviewed execution is PostgreSQL-only. MySQL connections, browsing, and existing migration records remain available, but there is no synchronous MySQL fallback.
 
